@@ -1,13 +1,16 @@
 import Stripe from "stripe";
 import { prisma } from "@quiz-battle/db";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY;
+const stripe = STRIPE_KEY ? new Stripe(STRIPE_KEY, {
   apiVersion: "2024-12-18.acacia",
-});
+}) : null;
 
 const PRICE_ID = process.env.STRIPE_PRICE_ID || "price_xxx";
 
 export async function createCheckoutSession(userId: string, email: string) {
+  if (!stripe) throw new Error("Stripe not configured");
+  
   const session = await stripe.checkout.sessions.create({
     customer_email: email,
     payment_method_types: ["card"],
@@ -29,6 +32,8 @@ export async function createCheckoutSession(userId: string, email: string) {
 }
 
 export async function createCustomerPortalSession(customerId: string) {
+  if (!stripe) throw new Error("Stripe not configured");
+  
   const session = await stripe.billingPortal.sessions.create({
     customer: customerId,
     return_url: `${process.env.FRONTEND_URL}/profile`,

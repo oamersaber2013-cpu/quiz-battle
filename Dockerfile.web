@@ -25,5 +25,5 @@ RUN npm run build
 # Expose port
 EXPOSE 3000
 
-# Start in production mode
-CMD ["npm", "run", "start"]
+# Start with PORT from environment
+CMD npm run start -- -p ${PORT:-3000}

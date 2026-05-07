@@ -150,7 +150,6 @@ export const authRouter: FastifyPluginAsync = async (app) => {
       longGames: user.longGamesRemaining,
     });
   });
-};
 
   // ─── POST /api/auth/google ────────────────────────────────────
   app.post<{ Body: { googleId: string; email: string; name: string } }>(
@@ -199,3 +198,4 @@ export const authRouter: FastifyPluginAsync = async (app) => {
       }
     }
   );
+};

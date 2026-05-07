@@ -1,0 +1,28 @@
+{
+    "workbench.editor.showTabIndex": true,
+    "dotnet.inlayHints.enableInlayHintsForIndexerParameters": true,
+    "continue.pauseCodebaseIndexOnStart": false,
+    "editor.autoIndentOnPaste": true,
+    "files.autoGuessEncoding": true,
+    "files.autoSaveWhenNoErrors": true,
+    "files.autoSaveWorkspaceFilesOnly": true,
+    "workbench.activityBar.autoHide": true,
+    "window.autoDetectColorScheme": true,
+    "chat.tools.terminal.ignoreDefaultAutoApproveRules": true,
+    "testing.automaticallyOpenPeekViewDuringAutoRun": true,
+    "dotnet.automaticallySyncWithActiveItem": true,
+    "amazonQ.suppressPrompts": {
+        "createCredentialsProfile": true,
+        "codeWhispererNewWelcomeMessage": true,
+        "codeWhispererConnectionExpired": true,
+        "amazonQWelcomePage": true,
+        "amazonQSessionConfigurationMessage": true,
+        "minIdeVersion": true,
+        "ssoCacheError": true,
+        "amazonQLspManifestMessage": true,
+        "amazonQWorkspaceLspManifestMessage": true,
+        "amazonQChatDisclaimer": true,
+        "amazonQChatPairProgramming": true,
+        "amazonQSelectDeveloperProfile": true
+    }
+}

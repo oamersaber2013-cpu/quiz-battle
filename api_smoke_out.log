@@ -1,0 +1,27 @@
+Bootstrapping API...
+Registering plugins...
+🔗 Registering routes...
+🏥 Registering health check...
+Setting up HTTP server...
+Setting up Socket.io...
+{"level":30,"time":1777789268745,"pid":17504,"hostname":"Omar-Laptop","msg":"Server listening at http://0.0.0.0:4010"}
+
+🚀 Quiz Battle API running at http://0.0.0.0:4010
+🔌 Socket.io ready
+📡 Redis: using in-memory fallback (dev mode)
+
+{"level":30,"time":1777789273539,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-1","req":{"method":"POST","url":"/api/auth/guest","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49712},"msg":"incoming request"}
+{"level":30,"time":1777789273572,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-1","res":{"statusCode":200},"responseTime":31.905600000172853,"msg":"request completed"}
+{"level":30,"time":1777789273622,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-2","req":{"method":"POST","url":"/api/games","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49713},"msg":"incoming request"}
+{"level":30,"time":1777789273628,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-2","res":{"statusCode":402},"responseTime":6.050700000021607,"msg":"request completed"}
+{"level":30,"time":1777789273634,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-3","req":{"method":"POST","url":"/api/purchase/buy","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49715},"msg":"incoming request"}
+[Purchase] User cmopdtyoo00006yjmnf42wxb3 purchased game access
+{"level":30,"time":1777789273654,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-3","res":{"statusCode":200},"responseTime":20.302799999713898,"msg":"request completed"}
+{"level":30,"time":1777789273659,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-4","req":{"method":"POST","url":"/api/games","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49716},"msg":"incoming request"}
+{"level":30,"time":1777789273680,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-4","res":{"statusCode":201},"responseTime":20.444900000002235,"msg":"request completed"}
+{"level":30,"time":1777789273683,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-5","req":{"method":"POST","url":"/api/games","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49718},"msg":"incoming request"}
+{"level":30,"time":1777789273696,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-5","res":{"statusCode":201},"responseTime":12.021500000264496,"msg":"request completed"}
+{"level":30,"time":1777789273700,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-6","req":{"method":"POST","url":"/api/games","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49719},"msg":"incoming request"}
+{"level":30,"time":1777789273703,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-6","res":{"statusCode":402},"responseTime":2.7546999999321997,"msg":"request completed"}
+{"level":30,"time":1777789273707,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-7","req":{"method":"POST","url":"/api/games","hostname":"127.0.0.1:4010","remoteAddress":"127.0.0.1","remotePort":49720},"msg":"incoming request"}
+{"level":30,"time":1777789273709,"pid":17504,"hostname":"Omar-Laptop","reqId":"req-7","res":{"statusCode":201},"responseTime":2.549000000115484,"msg":"request completed"}

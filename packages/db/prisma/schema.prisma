@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  username      String    @unique
+  email         String?   @unique
+  passwordHash  String?
+  avatarUrl     String?
+  role          String    @default("free") // guest, free, subscriber, admin
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // OAuth
+  googleId      String?   @unique
+  facebookId    String?   @unique
+  appleId       String?   @unique
+
+  // Subscription
+  stripeCustomerId    String?   @unique
+  stripeSubscriptionId String?
+  subscriptionStatus   String?   // active, canceled, past_due
+  subscriptionEndsAt   DateTime?
+
+  // Stats
+  xp                     Int       @default(0)
+  totalGamesPlayed       Int       @default(0)
+  totalQuestionsAnswered Int       @default(0)
+  totalCorrectAnswers    Int       @default(0)
+  totalWins              Int       @default(0)
+  winStreak              Int       @default(0)
+  bestWinStreak          Int       @default(0)
+
+  // Security
+  lastLoginAt            DateTime?
+  lastLoginIp            String?
+  failedLoginAttempts    Int       @default(0)
+  lockedUntil            DateTime?
+
+  // Relations
+  hostedGames   Game[]    @relation("GameHost")
+  gamePlayers   GamePlayer[]
+  achievements  UserAchievement[]
+
+  @@index([email])
+  @@index([googleId])
+  @@index([facebookId])
+}
+
+model Game {
+  id          String     @id @default(cuid())
+  hostId      String
+  host        User       @relation("GameHost", fields: [hostId], references: [id])
+  mode        String
+  difficulty  String
+  category    String?
+  subcategory String?
+  language    String     @default("en")
+  status      String     @default("lobby")
+  createdAt   DateTime   @default(now())
+  endedAt     DateTime?
+  
+  players     GamePlayer[]
+}
+
+model GamePlayer {
+  id        String   @id @default(cuid())
+  gameId    String
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team      String?
+  score     Int      @default(0)
+  joinedAt  DateTime @default(now())
+
+  @@unique([gameId, userId])
+}
+
+model Question {
+  id            String     @id @default(cuid())
+  type          String     // MultipleChoice, TrueFalse, FillBlank, etc.
+  category      String
+  subcategory   String?
+  difficulty    String
+  
+  // Bilingual Content
+  textEn        String
+  textAr        String
+  optionsEnJson String?    // JSON array of strings (null for FillBlank)
+  optionsArJson String?    // JSON array of strings
+  explanationEn String?
+  explanationAr String?
+  
+  correctAnswer String     // Can be index, text, or JSON array
+  
+  // Media
+  imageUrl      String?
+  audioUrl      String?
+  videoUrl      String?
+  
+  // Metadata
+  sourceType    String     @default("ai_generated")
+  sourceDetail  String?
+  timesUsed     Int        @default(0)
+  timesCorrect  Int        @default(0)
+  avgAnswerTime Float      @default(0)
+  
+  hash          String     @unique
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([category, difficulty])
+  @@index([type])
+  @@index([isActive])
+}
+
+// Completed game sessions for history/stats
+model GameSession {
+  id            String   @id @default(cuid())
+  joinCode      String
+  mode          String
+  difficulty    String
+  category      String?
+  totalRounds   Int
+  playedAt      DateTime @default(now())
+  endedAt       DateTime?
+  
+  // Players in this session
+  playerStats   PlayerGameStat[]
+  
+  // Questions asked
+  questionIds   String? // JSON array of question IDs
+  
+  // Winner info
+  winnerId      String?
+  winnerScore   Int?
+}
+
+// Individual player stats per game
+model PlayerGameStat {
+  id              String   @id @default(cuid())
+  gameSessionId   String
+  gameSession     GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  username        String
+  score           Int      @default(0)
+  rank            Int      @default(0)
+  correctAnswers  Int      @default(0)
+  totalAnswers    Int      @default(0)
+  avgAnswerTime   Float    @default(0)
+  
+  // Powerups used
+  powerUpsUsed    String? // JSON array
+  
+  // Team (if applicable)
+  team            String?
+  
+  joinedAt        DateTime @default(now())
+}
+
+// Leaderboard
+model Leaderboard {
+  id        String   @id @default(cuid())
+  userId    String
+  username  String
+  score     Int      @default(0)
+  wins      Int      @default(0)
+  gamesPlayed Int    @default(0)
+  winRate   Float    @default(0)
+  period    String   // daily, weekly, monthly, alltime
+  periodStart DateTime
+  periodEnd   DateTime?
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, period, periodStart])
+  @@index([period, score])
+}
+
+// Achievements
+model Achievement {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  nameEn      String
+  nameAr      String
+  descriptionEn String
+  descriptionAr String
+  iconUrl     String?
+  requirement Int      // e.g., 10 wins, 100 correct answers
+  category    String   // wins, accuracy, streak, games_played
+  createdAt   DateTime @default(now())
+
+  users       UserAchievement[]
+}
+
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  unlockedAt    DateTime @default(now())
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+}
+
+// Analytics Events
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  eventType String   // game_started, game_completed, question_answered, powerup_used
+  eventData String?  // JSON
+  sessionId String?
+  createdAt DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([userId])
+}
+
+// Rate Limiting
+model RateLimit {
+  id        String   @id @default(cuid())
+  identifier String  // IP or userId
+  endpoint  String
+  count     Int      @default(1)
+  windowStart DateTime @default(now())
+  
+  @@unique([identifier, endpoint])
+  @@index([windowStart])
+}
+
+// Admin Logs
+model AdminLog {
+  id        String   @id @default(cuid())
+  adminId   String
+  action    String   // ban_user, delete_question, etc.
+  targetType String  // user, question, game
+  targetId  String
+  details   String?  // JSON
+  createdAt DateTime @default(now())
+
+  @@index([adminId, createdAt])
+}

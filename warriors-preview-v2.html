@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎮 Quiz Battle Visual World - Character Showcase</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #08090d;
+      color: #f0f2ff;
+      min-height: 100vh;
+    }
+    
+    /* Header */
+    .header {
+      text-align: center;
+      padding: 40px 20px;
+      background: linear-gradient(180deg, rgba(108,99,255,0.1) 0%, transparent 100%);
+    }
+    .header h1 { 
+      font-size: 3rem; 
+      background: linear-gradient(135deg, #6c63ff, #a855f7, #00d4ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+    .header p { 
+      color: #8b95c4; 
+      font-size: 1.2rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    
+    /* Mode Sections */
+    .mode-showcase {
+      position: relative;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 60px 20px;
+    }
+    
+    /* Background Layers */
+    .bg-layers {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+    .bg-layer {
+      position: absolute;
+      inset: 0;
+    }
+    
+    /* SOLO - Purple Storm */
+    .solo-mode .bg-back {
+      background: linear-gradient(180deg, #1a1533 0%, #0f0d1f 50%, #161330 100%);
+    }
+    .solo-mode .bg-mid {
+      background: 
+        radial-gradient(ellipse 80% 50% at 50% 100%, rgba(108,99,255,0.2) 0%, transparent 70%),
+        radial-gradient(circle at 20% 30%, rgba(168,85,247,0.3) 0%, transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(108,99,255,0.2) 0%, transparent 40%);
+    }
+    .solo-mode .bg-fore {
+      background: 
+        radial-gradient(circle at 30% 80%, rgba(108,99,255,0.4) 0%, transparent 30%),
+        radial-gradient(circle at 70% 20%, rgba(168,85,247,0.3) 0%, transparent 30%);
+    }
+    
+    /* SURVIVAL - Red Danger */
+    .survival-mode .bg-back {
+      background: linear-gradient(180deg, #2d1818 0%, #1a0f0f 50%, #0f0a0a 100%);
+    }
+    .survival-mode .bg-mid {
+      background: 
+        radial-gradient(ellipse 100% 40% at 50% 100%, rgba(255,71,87,0.3) 0%, transparent 70%),
+        repeating-linear-gradient(0deg, transparent, transparent 50px, rgba(255,71,87,0.05) 50px, rgba(255,71,87,0.05) 100px);
+    }
+    .survival-mode .bg-fore {
+      background: 
+        radial-gradient(circle at 50% 100%, rgba(255,71,87,0.5) 0%, transparent 50%);
+    }
+    
+    /* BLITZ - Gold Speed */
+    .blitz-mode .bg-back {
+      background: linear-gradient(135deg, #2a2310 0%, #1a1708 50%, #0f0d05 100%);
+    }
+    .blitz-mode .bg-mid {
+      background: 
+        radial-gradient(circle at 30% 50%, rgba(255,215,0,0.2) 0%, transparent 50%),
+        radial-gradient(circle at 70% 50%, rgba(255,165,2,0.2) 0%, transparent 50%),
+        repeating-linear-gradient(90deg, transparent, transparent 100px, rgba(255,215,0,0.03) 100px, rgba(255,215,0,0.03) 200px);
+    }
+    .blitz-mode .bg-fore {
+      background: 
+        linear-gradient(90deg, transparent 0%, rgba(255,215,0,0.1) 50%, transparent 100%);
+    }
+    
+    /* RUSH - Cyan Flow */
+    .rush-mode .bg-back {
+      background: linear-gradient(180deg, #0a1a1f 0%, #061015 50%, #030a0d 100%);
+    }
+    .rush-mode .bg-mid {
+      background: 
+        linear-gradient(90deg, rgba(0,212,255,0.1) 0%, transparent 30%, transparent 70%, rgba(0,230,118,0.1) 100%),
+        radial-gradient(circle at 50% 50%, rgba(0,212,255,0.1) 0%, transparent 60%);
+    }
+    .rush-mode .bg-fore {
+      background: 
+        repeating-linear-gradient(90deg, transparent, transparent 50px, rgba(0,212,255,0.1) 50px, rgba(0,212,255,0.1) 52px);
+    }
+    
+    /* CONQUEST - Green Strategy */
+    .conquest-mode .bg-back {
+      background: linear-gradient(180deg, #0f241a 0%, #0a1a12 50%, #05100a 100%);
+    }
+    .conquest-mode .bg-mid {
+      background: 
+        radial-gradient(ellipse 60% 80% at 50% 50%, rgba(46,213,115,0.15) 0%, transparent 70%),
+        radial-gradient(circle at 25% 25%, rgba(30,144,255,0.2) 0%, transparent 40%),
+        radial-gradient(circle at 75% 75%, rgba(46,213,115,0.2) 0%, transparent 40%);
+    }
+    .conquest-mode .bg-fore {
+      background: 
+        linear-gradient(0deg, rgba(46,213,115,0.1) 0%, transparent 30%);
+    }
+    
+    /* MIXED - Rainbow Chaos */
+    .mixed-mode .bg-back {
+      background: linear-gradient(180deg, #1f1515 0%, #151a1f 50%, #1f1f15 100%);
+    }
+    .mixed-mode .bg-mid {
+      background: 
+        radial-gradient(circle at 30% 30%, rgba(255,107,107,0.2) 0%, transparent 40%),
+        radial-gradient(circle at 70% 30%, rgba(78,205,196,0.2) 0%, transparent 40%),
+        radial-gradient(circle at 50% 70%, rgba(255,230,109,0.2) 0%, transparent 50%);
+    }
+    .mixed-mode .bg-fore {
+      animation: hueRotate 10s linear infinite;
+      background: 
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.05) 0%, transparent 70%);
+    }
+    
+    @keyframes hueRotate {
+      from { filter: hue-rotate(0deg); }
+      to { filter: hue-rotate(360deg); }
+    }
+    
+    /* Content */
+    .showcase-content {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 60px;
+      max-width: 1200px;
+      width: 100%;
+    }
+    
+    /* Character SVG Container */
+    .character-display {
+      flex: 0 0 350px;
+      height: 350px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    
+    .character-svg {
+      width: 100%;
+      height: 100%;
+      filter: drop-shadow(0 0 30px currentColor);
+    }
+    
+    /* Character Info */
+    .character-info {
+      flex: 1;
+    }
+    
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 20px;
+    }
+    
+    .solo-mode .mode-badge { background: rgba(108,99,255,0.2); color: #a855f7; }
+    .survival-mode .mode-badge { background: rgba(255,71,87,0.2); color: #ff6b81; }
+    .blitz-mode .mode-badge { background: rgba(255,215,0,0.2); color: #ffd700; }
+    .rush-mode .mode-badge { background: rgba(0,212,255,0.2); color: #5ce1ff; }
+    .conquest-mode .mode-badge { background: rgba(46,213,115,0.2); color: #5ce67e; }
+    .mixed-mode .mode-badge { background: rgba(255,107,107,0.2); color: #ff8a8a; }
+    
+    .character-name {
+      font-size: 3.5rem;
+      font-weight: 900;
+      margin-bottom: 8px;
+      line-height: 1;
+    }
+    
+    .solo-mode .character-name { color: #a855f7; text-shadow: 0 0 40px rgba(168,85,247,0.5); }
+    .survival-mode .character-name { color: #ff6b81; text-shadow: 0 0 40px rgba(255,107,129,0.5); }
+    .blitz-mode .character-name { color: #ffd700; text-shadow: 0 0 40px rgba(255,215,0,0.5); }
+    .rush-mode .character-name { color: #5ce1ff; text-shadow: 0 0 40px rgba(0,212,255,0.5); }
+    .conquest-mode .character-name { color: #5ce67e; text-shadow: 0 0 40px rgba(46,213,115,0.5); }
+    .mixed-mode .character-name { background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #ffe66d); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    
+    .tagline {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      opacity: 0.9;
+    }
+    
+    .description {
+      font-size: 1.1rem;
+      color: #8b95c4;
+      line-height: 1.6;
+      margin-bottom: 24px;
+      max-width: 500px;
+    }
+    
+    .stats-row {
+      display: flex;
+      gap: 30px;
+      margin-bottom: 20px;
+    }
+    
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .stat-label {
+      font-size: 0.75rem;
+      color: #4a5180;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    
+    .special-power {
+      padding: 16px 20px;
+      border-radius: 12px;
+      font-weight: 600;
+      margin-top: 20px;
+    }
+    
+    .solo-mode .special-power { background: rgba(108,99,255,0.15); border: 1px solid rgba(168,85,247,0.3); }
+    .survival-mode .special-power { background: rgba(255,71,87,0.15); border: 1px solid rgba(255,107,129,0.3); }
+    .blitz-mode .special-power { background: rgba(255,215,0,0.15); border: 1px solid rgba(255,215,0,0.3); color: #ffd700; }
+    .rush-mode .special-power { background: rgba(0,212,255,0.15); border: 1px solid rgba(0,212,255,0.3); color: #5ce1ff; }
+    .conquest-mode .special-power { background: rgba(46,213,115,0.15); border: 1px solid rgba(46,213,115,0.3); color: #5ce67e; }
+    .mixed-mode .special-power { background: rgba(255,107,107,0.15); border: 1px solid rgba(255,107,107,0.3); color: #ff8a8a; }
+    
+    /* Floating Particles */
+    .particles {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    
+    .particle {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      opacity: 0.6;
+    }
+    
+    .solo-mode .particle { background: #a855f7; box-shadow: 0 0 6px #a855f7; }
+    .survival-mode .particle { background: #ff4757; box-shadow: 0 0 6px #ff4757; }
+    .blitz-mode .particle { background: #ffd700; box-shadow: 0 0 6px #ffd700; }
+    .rush-mode .particle { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
+    .conquest-mode .particle { background: #2ed573; box-shadow: 0 0 6px #2ed573; }
+    .mixed-mode .particle { animation: rainbow 3s linear infinite; }
+    
+    @keyframes rainbow {
+      0% { background: #ff6b6b; box-shadow: 0 0 6px #ff6b6b; }
+      33% { background: #4ecdc4; box-shadow: 0 0 6px #4ecdc4; }
+      66% { background: #ffe66d; box-shadow: 0 0 6px #ffe66d; }
+      100% { background: #ff6b6b; box-shadow: 0 0 6px #ff6b6b; }
+    }
+    
+    /* Responsive */
+    @media (max-width: 900px) {
+      .showcase-content {
+        flex-direction: column;
+        text-align: center;
+      }
+      .character-display {
+        flex: 0 0 250px;
+        width: 250px;
+        height: 250px;
+      }
+      .character-name {
+        font-size: 2.5rem;
+      }
+      .stats-row {
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <h1>⚔️ Quiz Battle Visual World</h1>
+    <p>Meet the characters who represent each game mode. Each with unique powers, personalities, and visual worlds.</p>
+  </div>
+
+  <!-- SOLO MODE - The Lone Knight -->
+  <section class="mode-showcase solo-mode">
+    <div class="bg-layers">
+      <div class="bg-layer bg-back"></div>
+      <div class="bg-layer bg-mid"></div>
+      <div class="bg-layer bg-fore"></div>
+    </div>
+    <div class="particles" id="solo-particles"></div>
+    <div class="showcase-content">
+      <div class="character-display">
+        <svg class="character-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="knightBody" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#4a3f8c"/>
+              <stop offset="100%" style="stop-color:#6c63ff"/>
+            </linearGradient>
+            <linearGradient id="knightSword" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" style="stop-color:#a855f7"/>
+              <stop offset="100%" style="stop-color:#6c63ff"/>
+            </linearGradient>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+              <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <circle cx="100" cy="100" r="85" fill="url(#knightBody)" opacity="0.3" filter="url(#glow)">
+            <animate attributeName="r" values="85;90;85" dur="3s" repeatCount="indefinite"/>
+          </circle>
+          <ellipse cx="100" cy="110" rx="35" ry="50" fill="url(#knightBody)"/>
+          <path d="M70,65 Q100,45 130,65 L125,95 Q100,105 75,95 Z" fill="#2d2654"/>
+          <path d="M85,75 Q100,70 115,75" stroke="#6c63ff" stroke-width="3" fill="none" filter="url(#glow)"/>
+          <ellipse cx="100" cy="80" rx="20" ry="8" fill="#a855f7" opacity="0.8" filter="url(#glow)">
+            <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite"/>
+          </ellipse>
+          <rect x="95" y="40" width="10" height="80" rx="2" fill="url(#knightSword)" filter="url(#glow)"/>
+          <rect x="92" y="115" width="16" height="6" rx="1" fill="#ffd700"/>
+          <path d="M65,100 Q50,140 55,160 L75,150" fill="#2d2654" opacity="0.8"/>
+          <path d="M135,100 Q150,140 145,160 L125,150" fill="#2d2654" opacity="0.8"/>
+        </svg>
+      </div>
+      <div class="character-info">
+        <div class="mode-badge">⚔️ Solo Mode</div>
+        <h2 class="character-name">The Lone Knight</h2>
+        <div class="tagline">"Face Yourself"</div>
+        <p class="description">A calm, elite assassin-knight wielding the Sword of Focus. Precision is their weapon. In the purple storm of floating islands, they face their greatest opponent—themselves.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-label">Fort Defense</span>
+            <span class="stat-value" style="color: #a855f7;">1.2x</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Attack Power</span>
+            <span class="stat-value" style="color: #a855f7;">1.1x</span>
+          </div>
+        </div>
+        <div class="special-power">🎯 Focus: +20% score when only one territory owned</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SURVIVAL MODE - The Reaper -->
+  <section class="mode-showcase survival-mode">
+    <div class="bg-layers">
+      <div class="bg-layer bg-back"></div>
+      <div class="bg-layer bg-mid"></div>
+      <div class="bg-layer bg-fore"></div>
+    </div>
+    <div class="particles" id="survival-particles"></div>
+    <div class="showcase-content">
+      <div class="character-display">
+        <svg class="character-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="reaperBody" cx="50%" cy="50%">
+              <stop offset="0%" style="stop-color:#2f3542"/>
+              <stop offset="100%" style="stop-color:#1a1d23"/>
+            </radialGradient>
+            <linearGradient id="reaperScythe" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" style="stop-color:#ff4757"/>
+              <stop offset="100%" style="stop-color:#ff6348"/>
+            </linearGradient>
+            <filter id="redGlow">
+              <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
+              <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <circle cx="100" cy="100" r="90" fill="#ff4757" opacity="0.1" filter="url(#redGlow)">
+            <animate attributeName="opacity" values="0.1;0.2;0.1" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <path d="M60,50 Q100,30 140,50 L135,140 Q100,150 65,140 Z" fill="url(#reaperBody)"/>
+          <path d="M50,60 Q100,20 150,60 L145,100 Q100,90 55,100 Z" fill="#1a1d23"/>
+          <ellipse cx="100" cy="80" rx="25" ry="20" fill="#2f3542"/>
+          <circle cx="90" cy="78" r="6" fill="#ff4757" filter="url(#redGlow)">
+            <animate attributeName="r" values="6;8;6" dur="1.5s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="110" cy="78" r="6" fill="#ff4757" filter="url(#redGlow)">
+            <animate attributeName="r" values="6;8;6" dur="1.5s" repeatCount="indefinite" begin="0.5s"/>
+          </circle>
+          <rect x="140" y="30" width="6" height="120" rx="3" fill="#4a4a4a"/>
+          <path d="M143,35 Q180,35 175,60 Q170,85 143,80" fill="url(#reaperScythe)" filter="url(#redGlow)"/>
+        </svg>
+      </div>
+      <div class="character-info">
+        <div class="mode-badge">💀 Survival Mode</div>
+        <h2 class="character-name">The Reaper</h2>
+        <div class="tagline">"Survive The Reaper"</div>
+        <p class="description">The dark judge who decides who survives. One wrong answer and you're eliminated. In the cracked battlefield, only the strong endure.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-label">Fort Defense</span>
+            <span class="stat-value" style="color: #ff6b81;">1.0x</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Attack Power</span>
+            <span class="stat-value" style="color: #ff6b81;">1.3x</span>
+          </div>
+        </div>
+        <div class="special-power">💀 Second Life: One free wrong answer per game</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BLITZ MODE - The Spark -->
+  <section class="mode-showcase blitz-mode">
+    <div class="bg-layers">
+      <div class="bg-layer bg-back"></div>
+      <div class="bg-layer bg-mid"></div>
+      <div class="bg-layer bg-fore"></div>
+    </div>
+    <div class="particles" id="blitz-particles"></div>
+    <div class="showcase-content">
+      <div class="character-display">
+        <svg class="character-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="sparkBody" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#fff700"/>
+              <stop offset="50%" style="stop-color:#ffd700"/>
+              <stop offset="100%" style="stop-color:#ffa502"/>
+            </linearGradient>
+            <filter id="electricGlow">
+              <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+              <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <circle cx="100" cy="100" r="80" fill="#ffd700" opacity="0.2" filter="url(#electricGlow)">
+            <animate attributeName="r" values="80;85;80" dur="0.5s" repeatCount="indefinite"/>
+          </circle>
+          <ellipse cx="100" cy="110" rx="30" ry="45" fill="url(#sparkBody)" filter="url(#electricGlow)"/>
+          <circle cx="100" cy="70" r="25" fill="#fff" filter="url(#electricGlow)"/>
+          <path d="M80,55 L75,30 M100,50 L100,25 M120,55 L125,30" stroke="#ffd700" stroke-width="4" stroke-linecap="round" filter="url(#electricGlow)">
+            <animate attributeName="d" values="M80,55 L75,30 M100,50 L100,25 M120,55 L125,30;M80,55 L70,25 M100,50 L100,20 M120,55 L130,25;M80,55 L75,30 M100,50 L100,25 M120,55 L125,30" dur="0.2s" repeatCount="indefinite"/>
+          </path>
+          <ellipse cx="92" cy="70" rx="5" ry="8" fill="#ffa502"/>
+          <ellipse cx="108" cy="70" rx="5" ry="8" fill="#ffa502"/>
+          <path d="M70,100 L50,90 M130,100 L150,90 M70,130 L50,140" stroke="#ffd700" stroke-width="3" stroke-linecap="round" filter="url(#electricGlow)">
+            <animate attributeName="opacity" values="1;0;1" dur="0.3s" repeatCount="indefinite"/>
+          </path>
+        </svg>
+      </div>
+      <div class="character-info">
+        <div class="mode-badge">⚡ Blitz Mode</div>
+        <h2 class="character-name">The Spark</h2>
+        <div class="tagline">"Race The Spark"</div>
+        <p class="description">Pure lightning energy given form. Speed is their essence. Nothing moves faster. In the gold speed dimension, time itself struggles to keep up.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-label">Fort Defense</span>
+            <span class="stat-value" style="color: #ffd700;">0.8x</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Attack Power</span>
+            <span class="stat-value" style="color: #ffd700;">1.5x</span>
+          </div>
+        </div>
+        <div class="special-power">⚡ Speed Demon: +2 seconds bonus time on every question</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RUSH MODE - The Runner -->
+  <section class="mode-showcase rush-mode">
+    <div class="bg-layers">
+      <div class="bg-layer bg-back"></div>
+      <div class="bg-layer bg-mid"></div>
+      <div class="bg-layer bg-fore"></div>
+    </div>
+    <div class="particles" id="rush-particles"></div>
+    <div class="showcase-content">
+      <div class="character-display">
+        <svg class="character-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="runnerSuit" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#00d4ff"/>
+              <stop offset="100%" style="stop-color:#00e676"/>
+            </linearGradient>
+            <filter id="cyanGlow">
+              <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+              <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <path d="M40,140 Q30,120 50,110" stroke="url(#runnerSuit)" stroke-width="8" fill="none" opacity="0.6" filter="url(#cyanGlow)"/>
+          <path d="M160,140 Q170,120 150,110" stroke="url(#runnerSuit)" stroke-width="8" fill="none" opacity="0.6" filter="url(#cyanGlow)"/>
+          <ellipse cx="100" cy="100" rx="25" ry="40" fill="url(#runnerSuit)"/>
+          <ellipse cx="100" cy="65" rx="20" ry="18" fill="#1a3d4d"/>
+          <rect x="85" y="62" width="30" height="8" rx="2" fill="#00d4ff" filter="url(#cyanGlow)"/>
+          <path d="M75,90 L50,80" stroke="url(#runnerSuit)" stroke-width="12" stroke-linecap="round"/>
+          <path d="M125,90 L150,100" stroke="url(#runnerSuit)" stroke-width="12" stroke-linecap="round"/>
+          <path d="M85,135 L70,160" stroke="url(#runnerSuit)" stroke-width="12" stroke-linecap="round"/>
+          <path d="M115,135 L140,150" stroke="url(#runnerSuit)" stroke-width="12" stroke-linecap="round"/>
+          <rect x="90" y="85" width="20" height="25" rx="5" fill="#1a3d4d"/>
+          <circle cx="100" cy="97" r="6" fill="#00e676" filter="url(#cyanGlow)">
+            <animate attributeName="opacity" values="0.8;1;0.8" dur="1s" repeatCount="indefinite"/>
+          </circle>
+        </svg>
+      </div>
+      <div class="character-info">
+        <div class="mode-badge">🏃 Rush Mode</div>
+        <h2 class="character-name">The Runner</h2>
+        <div class="tagline">"Outrun The Runner"</div>
+        <p class="description">A futuristic speedster who never stops moving. Each correct answer fuels their momentum. In the neon pathways, progress is the only direction.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-label">Fort Defense</span>
+            <span class="stat-value" style="color: #5ce1ff;">1.0x</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Attack Power</span>
+            <span class="stat-value" style="color: #5ce1ff;">1.3x</span>
+          </div>
+        </div>
+        <div class="special-power">🏃 Combo Master: +10% damage per consecutive correct answer</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONQUEST MODE - The Commander -->
+  <section class="mode-showcase conquest-mode">
+    <div class="bg-layers">
+      <div class="bg-layer bg-back"></div>
+      <div class="bg-layer bg-mid"></div>
+      <div class="bg-layer bg-fore"></div>
+    </div>
+    <div class="particles" id="conquest-particles"></div>
+    <div class="showcase-content">
+      <div class="character-display">
+        <svg class="character-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="cmdrUniform" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#2ed573"/>
+              <stop offset="100%" style="stop-color:#1e90ff"/>
+            </linearGradient>
+            <filter id="greenGlow">
+              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+              <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <ellipse cx="100" cy="160" rx="60" ry="20" fill="#2ed573" opacity="0.3" filter="url(#greenGlow)"/>
+          <path d="M70,70 L130,70 L125,140 L75,140 Z" fill="url(#cmdrUniform)"/>
+          <path d="M70,75 Q50,100 55,150 L75,140" fill="#1e6b3a"/>
+          <path d="M130,75 Q150,100 145,150 L125,140" fill="#1e6b3a"/>
+          <circle cx="100" cy="60" r="22" fill="#f5d0b5"/>
+          <circle cx="93" cy="58" r="3" fill="#2d3436"/>
+          <circle cx="107" cy="58" r="3" fill="#2d3436"/>
+          <path d="M88,52 Q93,48 98,52" stroke="#2d3436" stroke-width="2" fill="none"/>
+          <path d="M102,52 Q107,48 112,52" stroke="#2d3436" stroke-width="2" fill="none"/>
+          <path d="M95,68 Q100,72 105,68" stroke="#2d3436" stroke-width="2" fill="none"/>
+          <path d="M125,100 L160,85" stroke="url(#cmdrUniform)" stroke-width="10" stroke-linecap="round"/>
+          <circle cx="165" cy="82" r="5" fill="#f5d0b5"/>
+          <ellipse cx="100" cy="155" rx="50" ry="15" fill="#7bed9f" opacity="0.5" filter="url(#greenGlow)"/>
+          <circle cx="80" cy="150" r="4" fill="#ffd700"><animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite"/></circle>
+          <circle cx="100" cy="155" r="4" fill="#ffd700"><animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite" begin="0.5s"/></circle>
+          <circle cx="120" cy="150" r="4" fill="#ffd700"><animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite" begin="1s"/></circle>
+          <line x1="80" y1="150" x2="100" y2="155" stroke="#7bed9f" stroke-width="1" opacity="0.8"/>
+          <line x1="100" y1="155" x2="120" y2="150" stroke="#7bed9f" stroke-width="1" opacity="0.8"/>
+        </svg>
+      </div>
+      <div class="character-info">
+        <div class="mode-badge">🌍 Conquest Mode</div>
+        <h2 class="character-name">The Commander</h2>
+        <div class="tagline">"Outsmart The Commander"</div>
+        <p class="description">A brilliant strategist who controls territories with intelligence. War is chess to them. The world map is their playground.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-label">Fort Defense</span>
+            <span class="stat-value" style="color: #5ce67e;">1.3x</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Attack Power</span>
+            <span class="stat-value" style="color: #5ce67e;">1.2x</span>
+          </div>
+        </div>
+        <div class="special-power">🌍 Empire: +5% bonus for each territory owned</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MIXED MODE - The Trickster -->
+  <section class="mode-showcase mixed-mode">
+    <div class="bg-layers">
+      <div class="bg-layer bg-back"></div>
+      <div class="bg-layer bg-mid"></div>
+      <div class="bg-layer bg-fore"></div>
+    </div>
+    <div class="particles" id="mixed-particles"></div>
+    <div class="showcase-content">
+      <div class="character-display">
+        <svg class="character-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="trickLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#ff6b6b"/>
+              <stop offset="100%" style="stop-color:#4ecdc4"/>
+            </linearGradient>
+            <linearGradient id="trickRight" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#4ecdc4"/>
+              <stop offset="100%" style="stop-color:#ffe66d"/>
+            </linearGradient>
+            <filter id="rainbowGlow">
+              <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
+              <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <circle cx="100" cy="100" r="90" fill="url(#trickLeft)" opacity="0.2" filter="url(#rainbowGlow)">
+            <animate attributeName="fill" values="url(#trickLeft);url(#trickRight);url(#trickLeft)" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <ellipse cx="85" cy="110" rx="25" ry="40" fill="url(#trickLeft)"/>
+          <ellipse cx="115" cy="110" rx="25" ry="40" fill="url(#trickRight)"/>
+          <circle cx="100" cy="65" r="28" fill="#ffe66d"/>
+          <path d="M75,50 L60,20 L85,45" fill="#ff6b6b"/>
+          <path d="M125,50 L140,20 L115,45" fill="#4ecdc4"/>
+          <circle cx="60" cy="20" r="5" fill="#ff6b6b"/>
+          <circle cx="140" cy="20" r="5" fill="#4ecdc4"/>
+          <ellipse cx="88" cy="62" rx="5" ry="3" fill="#2d3436"/>
+          <path d="M108,62 Q112,65 116,62" stroke="#2d3436" stroke-width="3" fill="none"/>
+          <path d="M95,75 Q100,80 105,75" stroke="#2d3436" stroke-width="2" fill="none"/>
+          <rect x="50" y="90" width="15" height="20" rx="2" fill="#fff" transform="rotate(-15 50 90)" opacity="0.9">
+            <animateTransform attributeName="transform" type="rotate" values="-15 50 90;15 50 90;-15 50 90" dur="3s" repeatCount="indefinite"/>
+          </rect>
+          <rect x="135" y="90" width="15" height="20" rx="5" fill="#fff" transform="rotate(15 135 90)" opacity="0.9">
+            <animateTransform attributeName="transform" type="rotate" values="15 135 90;-15 135 90;15 135 90" dur="3s" repeatCount="indefinite" begin="1s"/>
+          </rect>
+        </svg>
+      </div>
+      <div class="character-info">
+        <div class="mode-badge">🌀 Mixed Mode</div>
+        <h2 class="character-name">The Trickster</h2>
+        <div class="tagline">"Challenge The Trickster"</div>
+        <p class="description">A chaotic jester who controls randomness. Unpredictable, playful, and impossible to read. In the vortex of chaos, anything can happen.</p>
+        <div class="stats-row">
+          <div class="stat">
+            <span class="stat-label">Fort Defense</span>
+            <span class="stat-value" style="color: #ff8a8a;">1.1x</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Attack Power</span>
+            <span class="stat-value" style="color: #ff8a8a;">1.2x</span>
+          </div>
+        </div>
+        <div class="special-power">🌀 Chaos: Copies a random opponent's power each turn</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- JavaScript for Particles -->
+  <script>
+    function createParticles(containerId, count, mode) {
+      const container = document.getElementById(containerId);
+      for (let i = 0; i < count; i++) {
+        const particle = document.createElement('div');
+        particle.className = 'particle';
+        particle.style.left = Math.random() * 100 + '%';
+        particle.style.top = Math.random() * 100 + '%';
+        particle.style.animationDelay = Math.random() * 5 + 's';
+        particle.style.animation = `float ${5 + Math.random() * 5}s ease-in-out infinite`;
+        container.appendChild(particle);
+      }
+    }
+    
+    // Add float animation
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes float {
+        0%, 100% { transform: translateY(0) translateX(0); opacity: 0.6; }
+        25% { transform: translateY(-30px) translateX(10px); opacity: 0.8; }
+        50% { transform: translateY(-60px) translateX(-10px); opacity: 0.4; }
+        75% { transform: translateY(-30px) translateX(5px); opacity: 0.7; }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    // Create particles for each mode
+    createParticles('solo-particles', 20, 'solo');
+    createParticles('survival-particles', 15, 'survival');
+    createParticles('blitz-particles', 25, 'blitz');
+    createParticles('rush-particles', 20, 'rush');
+    createParticles('conquest-particles', 18, 'conquest');
+    createParticles('mixed-particles', 30, 'mixed');
+  </script>
+</body>
+</html>

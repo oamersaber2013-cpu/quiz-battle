@@ -1,0 +1,36 @@
+{
+  "name": "quiz-battle",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@10.2.4",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev:api": "turbo run dev --filter=api",
+    "dev:web": "turbo run dev --filter=web",
+    "migrate": "cd packages/db && npm run migrate",
+    "migrate:deploy": "cd packages/db && npm run migrate:deploy",
+    "seed": "cd packages/db && npm run seed",
+    "deploy": "deploy.bat",
+    "test:all": "test-all.bat",
+    "start": "turbo run start --parallel"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.27.7",
+    "get-tsconfig": "^4.14.0",
+    "tsx": "^4.11.0",
+    "turbo": "^2.9.9",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎮 Quiz Battle Warriors - Character Preview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #08090d 0%, #161922 100%);
+      color: #f0f2ff;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    h1 { 
+      text-align: center; 
+      font-size: 2.5rem; 
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #6c63ff, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle { 
+      text-align: center; 
+      color: #8b95c4; 
+      margin-bottom: 40px; 
+      font-size: 1.1rem;
+    }
+    .mode-section {
+      margin-bottom: 50px;
+      padding: 30px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .mode-title {
+      font-size: 1.8rem;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .warriors-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 20px;
+    }
+    .warrior-card {
+      background: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 25px;
+      text-align: center;
+      transition: all 0.3s ease;
+    }
+    .warrior-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+    .warrior-avatar {
+      width: 100px;
+      height: 100px;
+      margin: 0 auto 15px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .warrior-name {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .warrior-desc {
+      font-size: 0.85rem;
+      color: #8b95c4;
+      margin-bottom: 12px;
+      min-height: 40px;
+    }
+    .abilities {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+    .ability {
+      font-size: 0.7rem;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.08);
+      color: #8b95c4;
+    }
+    .special-power {
+      font-size: 0.8rem;
+      padding: 10px;
+      border-radius: 10px;
+      font-weight: 600;
+      margin-top: 10px;
+    }
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 12px;
+      font-size: 0.85rem;
+    }
+    .stat {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    
+    /* Mode Colors */
+    .solo { --mode-color: #6c63ff; }
+    .survival { --mode-color: #ff4757; }
+    .blitz { --mode-color: #ffd700; }
+    .rush { --mode-color: #00d4ff; }
+    .conquest { --mode-color: #2ed573; }
+    .mixed { --mode-color: #ff6b6b; }
+    
+    .mode-section.solo { border-color: rgba(108, 99, 255, 0.2); }
+    .mode-section.survival { border-color: rgba(255, 71, 87, 0.2); }
+    .mode-section.blitz { border-color: rgba(255, 215, 0, 0.2); }
+    .mode-section.rush { border-color: rgba(0, 212, 255, 0.2); }
+    .mode-section.conquest { border-color: rgba(46, 213, 115, 0.2); }
+    .mode-section.mixed { border-color: rgba(255, 107, 107, 0.2); }
+  </style>
+</head>
+<body>
+  <h1>⚔️ Quiz Battle Warriors</h1>
+  <p class="subtitle">Choose your champion - Each warrior has unique powers!</p>
+
+  <!-- SOLO MODE -->
+  <div class="mode-section solo">
+    <h2 class="mode-title"><span>⚔️</span> SOLO MODE - The Lone Champions</h2>
+    <div class="warriors-grid">
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #6c63ff, #a855f7);">🛡️</div>
+        <div class="warrior-name" style="color: #6c63ff;">Mystic Knight</div>
+        <div class="warrior-desc">A solitary warrior bound by honor, wielding the Sword of Knowledge</div>
+        <div class="abilities">
+          <span class="ability">Knowledge Strike</span>
+          <span class="ability">Solo Focus</span>
+          <span class="ability">Wisdom Shield</span>
+        </div>
+        <div class="special-power" style="background: rgba(108, 99, 255, 0.2); color: #a855f7;">⚡ Lone Wolf: +20% score when alone</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.2x</div>
+          <div class="stat">⚔️ 1.1x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">🧭</div>
+        <div class="warrior-name" style="color: #6366f1;">Eternal Wanderer</div>
+        <div class="warrior-desc">A seeker of wisdom who travels the world alone</div>
+        <div class="abilities">
+          <span class="ability">World Traveler</span>
+          <span class="ability">Map Mastery</span>
+          <span class="ability">Explorer's Eye</span>
+        </div>
+        <div class="special-power" style="background: rgba(99, 102, 241, 0.2); color: #8b5cf6;">🗺️ Explorer: Attack any adjacent territory</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.0x</div>
+          <div class="stat">⚔️ 1.2x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #7c3aed, #a78bfa); border: 2px solid #ffd700;">🧙</div>
+        <div class="warrior-name" style="color: #7c3aed;">Ancient Scholar</div>
+        <div class="warrior-desc">Master of ancient texts and forgotten knowledge</div>
+        <div class="abilities">
+          <span class="ability">Ancient Wisdom</span>
+          <span class="ability">Text Mastery</span>
+          <span class="ability">Timeless Knowledge</span>
+        </div>
+        <div class="special-power" style="background: rgba(124, 58, 237, 0.2); color: #a78bfa;">📜 Ancient Text: 50% reveal category</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.3x</div>
+          <div class="stat">⚔️ 1.0x</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SURVIVAL MODE -->
+  <div class="mode-section survival">
+    <h2 class="mode-title"><span>💀</span> SURVIVAL MODE - The Undying Survivors</h2>
+    <div class="warriors-grid">
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: radial-gradient(circle, #ff4757, #2f3542); animation: pulse 1.5s infinite;">🦴</div>
+        <div class="warrior-name" style="color: #ff4757;">Undead Lich</div>
+        <div class="warrior-desc">A fearsome undead warrior that refuses to fall</div>
+        <div class="abilities">
+          <span class="ability">Undead Resilience</span>
+          <span class="ability">Death Ward</span>
+          <span class="ability">Soul Drain</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 71, 87, 0.2); color: #ff6b81;">💀 Second Life: One free wrong answer</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.0x</div>
+          <div class="stat">⚔️ 1.3x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #ff6348, #2f3542);">🐺</div>
+        <div class="warrior-name" style="color: #ff6348;">Shadow Hunter</div>
+        <div class="warrior-desc">A predator that thrives in high-pressure situations</div>
+        <div class="abilities">
+          <span class="ability">Precision Shot</span>
+          <span class="ability">Survival Instinct</span>
+          <span class="ability">Predator Focus</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 99, 72, 0.2); color: #ff8a6b;">🏹 Predator: +30% vs 3+ troops</div>
+        <div class="stats">
+          <div class="stat">🛡️ 0.9x</div>
+          <div class="stat">⚔️ 1.4x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #ff4757, #ffa502, #ff3838);">🐦</div>
+        <div class="warrior-name" style="color: #ffa502;">Phoenix Reborn</div>
+        <div class="warrior-desc">Rises from defeat stronger than before</div>
+        <div class="abilities">
+          <span class="ability">Rebirth</span>
+          <span class="ability">Flame Shield</span>
+          <span class="ability">Rising Power</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 165, 2, 0.2); color: #ffb84d;">🔥 Rebirth: +50% after losing</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.1x</div>
+          <div class="stat">⚔️ 1.2x</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BLITZ MODE -->
+  <div class="mode-section blitz">
+    <h2 class="mode-title"><span>⚡</span> BLITZ MODE - The Lightning Speedsters</h2>
+    <div class="warriors-grid">
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #ffd700, #ffa502); animation: flash 0.5s infinite;">🏃</div>
+        <div class="warrior-name" style="color: #ffd700;">Lightning Flash</div>
+        <div class="warrior-desc">Moves faster than the eye can see</div>
+        <div class="abilities">
+          <span class="ability">Lightning Speed</span>
+          <span class="ability">Quick Strike</span>
+          <span class="ability">Flash Step</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 215, 0, 0.2); color: #ffd700;">⚡ Speed Demon: +2 seconds bonus</div>
+        <div class="stats">
+          <div class="stat">🛡️ 0.8x</div>
+          <div class="stat">⚔️ 1.5x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: #2f3542; border: 3px solid #ffa502;">⛓️</div>
+        <div class="warrior-name" style="color: #ffa502;">Shadow Ninja</div>
+        <div class="warrior-desc">Strikes from the shadows with blinding speed</div>
+        <div class="abilities">
+          <span class="ability">Shadow Strike</span>
+          <span class="ability">Silent Kill</span>
+          <span class="ability">Smoke Bomb</span>
+        </div>
+        <div class="special-power" style="background: rgba(47, 53, 66, 0.3); color: #ffa502;">🥷 Smoke Bomb: Skip one question</div>
+        <div class="stats">
+          <div class="stat">🛡️ 0.9x</div>
+          <div class="stat">⚔️ 1.4x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #00d4ff, #ffd700);">💨</div>
+        <div class="warrior-name" style="color: #00d4ff;">Sonic Warrior</div>
+        <div class="warrior-desc">Breaks the sound barrier with every move</div>
+        <div class="abilities">
+          <span class="ability">Sonic Boom</span>
+          <span class="ability">Speed Clone</span>
+          <span class="ability">Wind Dash</span>
+        </div>
+        <div class="special-power" style="background: rgba(0, 212, 255, 0.2); color: #5ce1ff;">🌪️ Sonic Boom: Fastest = +40% damage</div>
+        <div class="stats">
+          <div class="stat">🛡️ 0.7x</div>
+          <div class="stat">⚔️ 1.6x</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RUSH MODE -->
+  <div class="mode-section rush">
+    <h2 class="mode-title"><span>🏃</span> RUSH MODE - The Quick Strikers</h2>
+    <div class="warriors-grid">
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #00d4ff, #00e676);">⚔️</div>
+        <div class="warrior-name" style="color: #00d4ff;">Rapid Striker</div>
+        <div class="warrior-desc">Delivers devastating blows in rapid succession</div>
+        <div class="abilities">
+          <span class="ability">Rapid Fire</span>
+          <span class="ability">Quick Combo</span>
+          <span class="ability">Speed Stack</span>
+        </div>
+        <div class="special-power" style="background: rgba(0, 212, 255, 0.2); color: #5ce1ff;">🎯 Combo Master: +10% per correct chain</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.0x</div>
+          <div class="stat">⚔️ 1.3x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #00e676, #00d4ff);">💨</div>
+        <div class="warrior-name" style="color: #00e676;">Territory Sprinter</div>
+        <div class="warrior-desc">Captures territories with incredible speed</div>
+        <div class="abilities">
+          <span class="ability">Quick Capture</span>
+          <span class="ability">Sprint Mode</span>
+          <span class="ability">Rapid Expansion</span>
+        </div>
+        <div class="special-power" style="background: rgba(0, 230, 118, 0.2); color: #5fff9e;">🏃 Sprinter: Attack 2 territories</div>
+        <div class="stats">
+          <div class="stat">🛡️ 0.9x</div>
+          <div class="stat">⚔️ 1.4x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #00d4ff, #00e676, #00d4ff);">🎖️</div>
+        <div class="warrior-name" style="color: #00d4ff;">Blitzkrieg Commander</div>
+        <div class="warrior-desc">Overwhelms enemies with lightning warfare</div>
+        <div class="abilities">
+          <span class="ability">Blitz Attack</span>
+          <span class="ability">Shock & Awe</span>
+          <span class="ability">Lightning War</span>
+        </div>
+        <div class="special-power" style="background: rgba(0, 212, 255, 0.2); color: #5ce1ff;">⚔️ Blitz: First attack +100% damage</div>
+        <div class="stats">
+          <div class="stat">🛡️ 0.8x</div>
+          <div class="stat">⚔️ 1.5x</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONQUEST MODE -->
+  <div class="mode-section conquest">
+    <h2 class="mode-title"><span>🌍</span> CONQUEST MODE - The World Conquerors</h2>
+    <div class="warriors-grid">
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #2ed573, #1e90ff); position: relative;">
+          🐎
+          <div style="position: absolute; inset: -4px; border: 2px dashed #ffd700; border-radius: 50%; animation: rotate 10s linear infinite;"></div>
+        </div>
+        <div class="warrior-name" style="color: #2ed573;">Genghis Khan</div>
+        <div class="warrior-desc">The great conqueror who rules vast territories</div>
+        <div class="abilities">
+          <span class="ability">Mongol Horde</span>
+          <span class="ability">Empire Builder</span>
+          <span class="ability">Vast Conquest</span>
+        </div>
+        <div class="special-power" style="background: rgba(46, 213, 115, 0.2); color: #5ce67e;">👑 Empire: +5% per owned territory</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.3x</div>
+          <div class="stat">⚔️ 1.2x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #1e90ff, #2ed573);">⚔️</div>
+        <div class="warrior-name" style="color: #1e90ff;">Imperial Caesar</div>
+        <div class="warrior-desc">Roman emperor who builds an empire through strategy</div>
+        <div class="abilities">
+          <span class="ability">Roman Legion</span>
+          <span class="ability">Imperial Strategy</span>
+          <span class="ability">Empire Defense</span>
+        </div>
+        <div class="special-power" style="background: rgba(30, 144, 255, 0.2); color: #5cb3ff;">🏛️ Legion: Forts +50% health</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.5x</div>
+          <div class="stat">⚔️ 1.0x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #2ed573, #7bed9f, #1e90ff);">🐴</div>
+        <div class="warrior-name" style="color: #7bed9f;">Strategic Napoleon</div>
+        <div class="warrior-desc">Master tactician who conquers through brilliant strategy</div>
+        <div class="abilities">
+          <span class="ability">Grand Strategy</span>
+          <span class="ability">Tactical Mastery</span>
+          <span class="ability">Art of War</span>
+        </div>
+        <div class="special-power" style="background: rgba(123, 237, 159, 0.2); color: #9cf2b8;">🎖️ Tactics: See opponent troop count</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.2x</div>
+          <div class="stat">⚔️ 1.3x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #ffd700, #2ed573);">🏺</div>
+        <div class="warrior-name" style="color: #ffd700;">Alexander the Great</div>
+        <div class="warrior-desc">Legendary conqueror who never lost a battle</div>
+        <div class="abilities">
+          <span class="ability">Undefeated</span>
+          <span class="ability">Phalanx Formation</span>
+          <span class="ability">Legendary Conquest</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 215, 0, 0.2); color: #ffe14d;">⚔️ Undefeated: +15% per win streak</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.1x</div>
+          <div class="stat">⚔️ 1.4x</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIXED MODE -->
+  <div class="mode-section mixed">
+    <h2 class="mode-title"><span>🌀</span> MIXED MODE - The Versatile Hybrids</h2>
+    <div class="warriors-grid">
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #ff6b6b, #4ecdc4, #ffe66d); animation: pulse 2s infinite;">🦁</div>
+        <div class="warrior-name" style="color: #ff6b6b;">Mythic Chimera</div>
+        <div class="warrior-desc">A hybrid beast with multiple warrior forms</div>
+        <div class="abilities">
+          <span class="ability">Form Shift</span>
+          <span class="ability">Hybrid Power</span>
+          <span class="ability">Adaptation</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 107, 107, 0.2); color: #ff8a8a;">🐉 Hybrid: Switch Solo/Team bonuses</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.1x</div>
+          <div class="stat">⚔️ 1.2x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #4ecdc4, #ff6b6b);">🌊</div>
+        <div class="warrior-name" style="color: #4ecdc4;">Eternal Shapeshifter</div>
+        <div class="warrior-desc">Adapts to any situation by changing form</div>
+        <div class="abilities">
+          <span class="ability">Form Copy</span>
+          <span class="ability">Mimicry</span>
+          <span class="ability">Adaptable</span>
+        </div>
+        <div class="special-power" style="background: rgba(78, 205, 196, 0.2); color: #71e3d5;">🎭 Mimic: Copy any opponent power</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.0x</div>
+          <div class="stat">⚔️ 1.3x</div>
+        </div>
+      </div>
+      
+      <div class="warrior-card">
+        <div class="warrior-avatar" style="background: linear-gradient(135deg, #ffe66d, #ff6b6b);">🔮</div>
+        <div class="warrior-name" style="color: #ffe66d;">Jack of All Trades</div>
+        <div class="warrior-desc">Master of many skills, specialist in adaptability</div>
+        <div class="abilities">
+          <span class="ability">Versatility</span>
+          <span class="ability">All-Rounder</span>
+          <span class="ability">Jackpot</span>
+        </div>
+        <div class="special-power" style="background: rgba(255, 230, 109, 0.2); color: #ffeb91;">🃏 Versatile: Average of all bonuses</div>
+        <div class="stats">
+          <div class="stat">🛡️ 1.15x</div>
+          <div class="stat">⚔️ 1.15x</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    @keyframes flash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    @keyframes rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</body>
+</html>

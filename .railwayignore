@@ -1,0 +1,8 @@
+apps/workers
+node_modules
+.git
+.next
+dist
+*.log
+.env
+.env.local

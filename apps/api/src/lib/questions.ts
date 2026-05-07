@@ -22,8 +22,22 @@ import {
   getEntertainmentQuestionsByDifficulty,
   getEntertainmentQuestionCount,
 } from "./entertainmentQuestionBank";
-import { prisma } from "@quiz-battle/db";
 import { getCachedQuestions, cacheQuestions } from "./cache";
+
+// Lazy load Prisma to avoid startup failures
+let prisma: any = null;
+function getPrisma() {
+  if (!prisma) {
+    try {
+      const db = require("@quiz-battle/db");
+      prisma = db.prisma;
+    } catch (err) {
+      console.warn("⚠️ Database not available, using fallback question banks");
+      prisma = null;
+    }
+  }
+  return prisma;
+}
 
 // Track used question IDs to prevent repeats
 const usedQuestionIds = new Map<string, Set<string>>(); // gameId -> Set of question IDs
@@ -207,46 +221,49 @@ async function fetchSingleCategoryQuestions(
 
   // PRIORITY 1: REAL DATABASE
   try {
-    const dbQuestions = await prisma.question.findMany({
-      where: {
-        category: targetCategory.toLowerCase(),
-        difficulty: difficulty.toLowerCase(),
-      },
-    });
-
-    if (dbQuestions.length > 0) {
-      // Filter out already used questions
-      const availableQuestions = gameId 
-        ? dbQuestions.filter(q => !isQuestionUsed(gameId, q.id))
-        : dbQuestions;
-      
-      const shuffled = [...availableQuestions].sort(() => Math.random() - 0.5);
-      const selected = shuffled.slice(0, Math.min(count, shuffled.length));
-
-      const converted = selected.map(q => {
-        const questionId = generateQuestionId();
-        if (gameId) markQuestionUsed(gameId, q.id);
-        
-        return {
-          id: questionId,
-          text: language === 'ar' ? q.textAr : q.textEn,
-          options: language === 'ar' ? JSON.parse(q.optionsArJson) : JSON.parse(q.optionsEnJson),
-          correctIndex: q.correctIndex,
-          category: targetCategory,
-          difficulty: difficulty,
-          timeLimit: getTimeLimitForDifficulty(difficulty),
-          type: q.type as QuestionType || QuestionType.MultipleChoice,
-        };
+    const db = getPrisma();
+    if (db) {
+      const dbQuestions = await db.question.findMany({
+        where: {
+          category: targetCategory.toLowerCase(),
+          difficulty: difficulty.toLowerCase(),
+        },
       });
 
-      results.push(...converted);
-      
-      // Cache the results
-      if (converted.length > 0) {
-        await cacheQuestions(cacheKey, difficulty, converted);
+      if (dbQuestions.length > 0) {
+        // Filter out already used questions
+        const availableQuestions = gameId 
+          ? dbQuestions.filter(q => !isQuestionUsed(gameId, q.id))
+          : dbQuestions;
+        
+        const shuffled = [...availableQuestions].sort(() => Math.random() - 0.5);
+        const selected = shuffled.slice(0, Math.min(count, shuffled.length));
+
+        const converted = selected.map(q => {
+          const questionId = generateQuestionId();
+          if (gameId) markQuestionUsed(gameId, q.id);
+          
+          return {
+            id: questionId,
+            text: language === 'ar' ? q.textAr : q.textEn,
+            options: language === 'ar' ? JSON.parse(q.optionsArJson) : JSON.parse(q.optionsEnJson),
+            correctIndex: q.correctIndex,
+            category: targetCategory,
+            difficulty: difficulty,
+            timeLimit: getTimeLimitForDifficulty(difficulty),
+            type: q.type as QuestionType || QuestionType.MultipleChoice,
+          };
+        });
+
+        results.push(...converted);
+        
+        // Cache the results
+        if (converted.length > 0) {
+          await cacheQuestions(cacheKey, difficulty, converted);
+        }
+        
+        if (results.length >= count) return results.slice(0, count);
       }
-      
-      if (results.length >= count) return results.slice(0, count);
     }
   } catch (err) {
     console.warn("⚠️ DB fetch error:", err);

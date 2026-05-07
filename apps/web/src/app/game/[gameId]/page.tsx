@@ -284,15 +284,14 @@ function GamePageContent() {
     if (selectedAnswer !== null || !currentQuestion) return;
     if (typeof index === 'number' && eliminatedOptions.includes(index)) return;
     
-    // Convert to number if needed for selectAnswer
+    // Convert to number if needed
     const numericIndex = typeof index === 'number' ? index : 0;
     selectAnswer(numericIndex);
     
     if (invasionState) {
-      const numIndex = typeof index === 'number' ? index : 0;
-      emitInvasionAnswer(gameId, numIndex, Date.now() - (questionStartedAt || Date.now()));
+      emitInvasionAnswer(gameId, numericIndex, Date.now() - (questionStartedAt || Date.now()));
     } else {
-      emitAnswer(gameId, currentQuestion.id, index);
+      emitAnswer(gameId, currentQuestion.id, numericIndex);
     }
   }
 

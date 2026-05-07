@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["nodejs-20_x"]
+
+[phases.install]
+cmds = ["cd ../.. && npm install"]
+
+[phases.build]
+cmds = ["cd apps/api && npm run build"]
+
+[start]
+cmd = "cd apps/api && node dist/index.js"

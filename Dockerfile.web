@@ -19,8 +19,11 @@ RUN cd packages/shared && npm run build || echo "Shared build skipped"
 # Set working directory to Web
 WORKDIR /app/apps/web
 
+# Build Next.js for production
+RUN npm run build
+
 # Expose port
 EXPOSE 3000
 
-# Start in dev mode
-CMD ["npm", "run", "dev"]
+# Start in production mode
+CMD ["npm", "run", "start"]

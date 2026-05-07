@@ -2,12 +2,17 @@ import { FastifyPluginAsync } from "fastify";
 import Stripe from "stripe";
 import { handleWebhook } from "../lib/stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY;
+const stripe = STRIPE_KEY ? new Stripe(STRIPE_KEY, {
   apiVersion: "2024-12-18.acacia",
-});
+}) : null;
 
 export const webhooksRouter: FastifyPluginAsync = async (app) => {
   app.post("/stripe", async (req, reply) => {
+    if (!stripe) {
+      return reply.status(503).send({ error: "Stripe not configured" });
+    }
+
     const sig = req.headers["stripe-signature"];
 
     if (!sig) {

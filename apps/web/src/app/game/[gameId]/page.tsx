@@ -284,7 +284,10 @@ function GamePageContent() {
     if (selectedAnswer !== null || !currentQuestion) return;
     if (typeof index === 'number' && eliminatedOptions.includes(index)) return;
     
-    selectAnswer(index);
+    // Convert to number if needed for selectAnswer
+    const numericIndex = typeof index === 'number' ? index : 0;
+    selectAnswer(numericIndex);
+    
     if (invasionState) {
       const numIndex = typeof index === 'number' ? index : 0;
       emitInvasionAnswer(gameId, numIndex, Date.now() - (questionStartedAt || Date.now()));

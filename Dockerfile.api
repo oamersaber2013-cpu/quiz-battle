@@ -27,5 +27,5 @@ WORKDIR /app/apps/api
 # Expose port
 EXPOSE 4000
 
-# Start with tsx (runs TypeScript directly)
-CMD ["npx", "tsx", "src/index.ts"]
+# Start script that runs migrations then starts server
+CMD cd /app/packages/db && npx prisma migrate deploy && cd /app/apps/api && npx tsx src/index.ts

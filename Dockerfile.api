@@ -13,10 +13,12 @@ COPY apps/api ./apps/api
 # Install dependencies
 RUN npm install
 
-# Generate Prisma client BEFORE building anything
-RUN npx prisma generate --schema=./packages/db/prisma/schema.prisma
+# Generate Prisma client from db package directory
+WORKDIR /app/packages/db
+RUN npx prisma generate
 
 # Build shared packages
+WORKDIR /app
 RUN cd packages/shared && npm run build || echo "Shared build skipped"
 
 # Set working directory to API

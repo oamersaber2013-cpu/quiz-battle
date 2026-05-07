@@ -1,0 +1,29 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY turbo.json ./
+
+# Copy all workspace packages
+COPY packages ./packages
+COPY apps/api ./apps/api
+
+# Install dependencies
+RUN npm install
+
+# Build shared packages
+RUN cd packages/shared && npm run build || echo "Shared build skipped"
+
+# Build API
+RUN cd apps/api && npm run build
+
+# Set working directory to API
+WORKDIR /app/apps/api
+
+# Expose port
+EXPOSE 4000
+
+# Start command
+CMD ["node", "dist/index.js"]

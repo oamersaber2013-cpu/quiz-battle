@@ -2,22 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy root package files
-COPY package*.json ./
-COPY turbo.json ./
+# Copy everything
+COPY . .
 
-# Copy workspace packages
-COPY packages ./packages
-
-# Copy API app
-COPY apps/api ./apps/api
-
-# Install dependencies
+# Install all dependencies from root
 RUN npm install
-
-# Build shared packages
-RUN cd packages/shared && npm run build || true
-RUN cd packages/db && npm run build || true
 
 # Build API
 WORKDIR /app/apps/api
@@ -27,4 +16,4 @@ RUN npm run build
 EXPOSE 4000
 
 # Start command
-CMD ["npm", "start"]
+CMD ["node", "dist/index.js"]

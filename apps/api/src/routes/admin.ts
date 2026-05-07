@@ -100,7 +100,6 @@ export const adminRouter: FastifyPluginAsync = async (app) => {
       return reply.status(500).send({ error: "Failed to delete question" });
     }
   });
-};
 
   // GET /api/admin/stats — Dashboard statistics
   app.get("/stats", async (req, reply) => {
@@ -131,3 +130,4 @@ export const adminRouter: FastifyPluginAsync = async (app) => {
       userRegistrations,
     });
   });
+};

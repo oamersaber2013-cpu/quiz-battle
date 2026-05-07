@@ -12,8 +12,6 @@ import { gamesRouter } from "./routes/games";
 import { authRouter } from "./routes/auth";
 import { userRouter } from "./routes/user";
 import { adminRouter } from "./routes/admin";
-import { purchaseRouter } from "./routes/purchase";
-import { webhooksRouter } from "./routes/webhooks";
 import { initSentry } from "./lib/sentry";
 import { rateLimit } from "./lib/rateLimit";
 import { sanitizeInput } from "./lib/sanitize";
@@ -79,8 +77,6 @@ async function bootstrap() {
   await app.register(gamesRouter, { prefix: "/api/games" });
   await app.register(userRouter, { prefix: "/api/user" });
   await app.register(adminRouter, { prefix: "/api/admin" });
-  await app.register(purchaseRouter, { prefix: "/api/purchase" });
-  await app.register(webhooksRouter, { prefix: "/api/webhooks" });
 
   console.log("🏥 Registering health check...");
   // Health check

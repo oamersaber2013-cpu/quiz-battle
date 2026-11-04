@@ -1,4 +1,6 @@
 import { Server } from "socket.io";
+import jwt from "jsonwebtoken";
+import { getJwtSecret } from "../lib/jwtConfig";
 import type { SafeRedis } from "../lib/redis";
 import {
   Difficulty,
@@ -16,6 +18,7 @@ import {
   startPowerUpSelectionPhase,
   handlePowerUpSelection,
   confirmPowerUpSelection,
+  getPowerUpSelectionSnapshot,
 } from "../lib/gameOrchestrator";
 import {
   initConquestGame,
@@ -29,13 +32,13 @@ import {
   selectDraftTerritory,
 } from "../lib/conquestOrchestrator";
 import {
-  createInvasionGame,
   startInvasionRound,
   recordAnswer,
   selectTerritory,
   getInvasionState,
   deleteInvasionGame,
   INVASION_TERRITORIES,
+  buildInvasionClientState,
 } from "../lib/invasionOrchestrator";
 import { GameMode } from "@quiz-battle/shared";
 import { fillWithBots, getBotInfo } from "../lib/aiBots";
@@ -49,24 +52,18 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
-      if (!token) {
-        // Allow guest access with just a guestId
-        const guestId = socket.handshake.auth?.guestId;
-        if (guestId) {
-          socket.data.userId = guestId;
-          socket.data.username = socket.handshake.auth?.username || "Guest";
-          socket.data.isGuest = true;
-          return next();
-        }
+      if (typeof token !== "string" || !token) {
         return next(new Error("Authentication required"));
       }
-
-      // In production: verify JWT here
-      // const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      // For now, accept token as userId (demo mode)
-      socket.data.userId = socket.handshake.auth?.userId || token;
-      socket.data.username = socket.handshake.auth?.username || "Player";
-      socket.data.isGuest = false;
+      // Guests also receive a signed token from /api/auth/guest. Identity comes
+      // exclusively from that signature, never handshake userId/guestId fields.
+      const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] });
+      if (typeof decoded === "string" || typeof decoded.userId !== "string" || !decoded.userId ||
+          typeof decoded.username !== "string" || !decoded.username) {
+        return next(new Error("Invalid token identity"));
+      }
+      socket.data.userId = decoded.userId;
+      socket.data.username = decoded.username;
       next();
     } catch {
       next(new Error("Invalid token"));
@@ -76,6 +73,17 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
   io.on("connection", (socket) => {
     const userId = socket.data.userId as string;
     const username = socket.data.username as string;
+    const canParticipate = (gameId: string) => {
+      const game = getActiveGame(gameId);
+      return !!(socket.rooms.has(gameId) && game?.players[userId] && !game.players[userId].isEliminated);
+    };
+    const canHostInvasion = (gameId: string) => {
+      const game = getActiveGame(gameId);
+      return canParticipate(gameId) && game?.hostId === userId && game.mode === GameMode.Conquest;
+    };
+    const syncInvasion = (gameId: string) => {
+      if (getInvasionState(gameId)) socket.emit("invasion:state", buildInvasionClientState(gameId, userId));
+    };
 
     console.log(`🔌 Connected: ${username} (${userId})`);
 
@@ -133,12 +141,24 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         await socket.join(gameId);
 
         // Sync state to new player
-        const { questions: _q, ...safeState } = activeGame;
+        const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, ...safeState } = activeGame;
+        const question = activeGame.status === GameStatus.Question && activeGame.mode !== GameMode.Conquest
+          ? activeGame.questions[activeGame.currentRound - 1]
+          : null;
+        const { correctIndex: _correct, ...currentQuestion } = question || {};
+        const viewerAnswer = activeGame.answersThisRound[userId];
         socket.emit("game:stateSync", {
           room: {
             ...safeState,
             category: activeGame.categories?.join(", "),
             players: Object.values(safeState.players),
+            powerUpSelection: getPowerUpSelectionSnapshot(gameId, userId),
+            ...(activeGame.mode !== GameMode.Conquest ? {
+              currentQuestion: question ? currentQuestion : null,
+              questionStartedAt: activeGame.questionStartTime,
+              selectedAnswer: viewerAnswer?.index ?? null,
+              answeredAt: viewerAnswer?.timestamp ?? null,
+            } : {}),
           } as any,
         });
 
@@ -149,6 +169,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
             socket.emit("conquest:state", safeConquestState(cState));
           }
         }
+        syncInvasion(gameId);
 
         // Notify others
         socket.to(gameId).emit("game:playerJoined", {
@@ -181,6 +202,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     socket.on("game:start", async ({ gameId }, cb) => {
       const game = getActiveGame(gameId);
       if (!game) { cb?.({ success: false, error: "Game not found" }); return; }
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Join the game first" }); return; }
       if (game.hostId !== userId) { cb?.({ success: false, error: "Only the host can start" }); return; }
       if (game.status !== GameStatus.Lobby) { cb?.({ success: false, error: "Game already started" }); return; }
 
@@ -244,11 +266,13 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
 
     // ─── PowerUp Selection ────────────────────────────────────
     socket.on("game:selectPowerUp", ({ gameId, powerUp }, cb) => {
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
       const result = handlePowerUpSelection(gameId, userId, powerUp);
       cb?.(result);
     });
 
     socket.on("game:confirmPowerUpSelection", ({ gameId }, cb) => {
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
       const result = confirmPowerUpSelection(io as TypedServer, redis, gameId, userId);
       cb?.(result);
     });
@@ -256,7 +280,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     // ─── Player Answer ───────────────────────────────────────
     socket.on("player:answer", async ({ gameId, questionId, answerIndex, timestamp }) => {
       const game = getActiveGame(gameId);
-      if (!game || game.status !== GameStatus.Question) return;
+      if (!game || game.status !== GameStatus.Question || !canParticipate(gameId)) return;
 
       await handlePlayerAnswer(
         game,
@@ -271,13 +295,14 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
 
     // ─── Emote ───────────────────────────────────────────────
     socket.on("game:emote", ({ gameId, emote }) => {
+      if (!canParticipate(gameId)) return;
       io.to(gameId).emit("game:emote", { userId, emote });
     });
 
     // ─── Chat Message ─────────────────────────────────────────
     socket.on("game:message", ({ gameId, message }) => {
       const game = getActiveGame(gameId);
-      if (!game) return;
+      if (!game || !socket.rooms.has(gameId)) return;
 
       const text = String(message ?? "").trim();
       if (!text) return;
@@ -306,6 +331,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     socket.on("player:powerup", async ({ gameId, type, targetUserId }, cb) => {
       const game = getActiveGame(gameId);
       if (!game) { cb?.({ success: false, error: "Game not found" }); return; }
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
 
       const result = await handlePowerUp(game, io as TypedServer, redis, userId, type, targetUserId);
       cb?.(result);
@@ -332,11 +358,21 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
 
       // Send current game state (exclude sensitive round/question state)
       const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, ...safeRoom } = game;
+      const question = game.status === GameStatus.Question && game.mode !== GameMode.Conquest
+        ? game.questions[game.currentRound - 1]
+        : null;
+      const { correctIndex: _correct, ...currentQuestion } = question || {};
       socket.emit("game:stateSync", {
         room: {
           ...safeRoom,
           category: game.categories?.join(", "),
           players: Object.values(safeRoom.players),
+          ...(game.mode !== GameMode.Conquest ? {
+            currentQuestion: question ? currentQuestion : null,
+            questionStartedAt: game.questionStartTime,
+            selectedAnswer: null,
+            answeredAt: null,
+          } : {}),
         } as any,
       });
 
@@ -346,6 +382,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
           socket.emit("conquest:state", safeConquestState(cState));
         }
       }
+      syncInvasion(gameId);
     });
 
     // ─── Leave Game ──────────────────────────────────────────
@@ -355,30 +392,36 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         game.players[userId].isConnected = false;
       }
       socket.leave(gameId);
+      socket.leave(`${gameId}_spectators`);
       socket.to(gameId).emit("game:playerLeft", { userId });
     });
 
     // ─── Conquest Handlers ────────────────────────────────────────
     socket.on("conquest:attack", async ({ gameId, targetTerritoryId, categoryId }, cb) => {
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
       const result = await handleAttack(io as TypedServer, gameId, userId, targetTerritoryId, categoryId);
       cb?.(result);
     });
 
     socket.on("conquest:duelAnswer", ({ gameId, answerIndex }) => {
+      if (!canParticipate(gameId)) return;
       handleDuelAnswer(io as TypedServer, gameId, userId, answerIndex);
     });
 
     socket.on("conquest:rebuild", async ({ gameId }, cb) => {
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
       const result = await handleRebuild(io as TypedServer, gameId, userId);
       cb?.(result);
     });
 
     socket.on("conquest:rebuildAnswer", ({ gameId, answerIndex }) => {
+      if (!canParticipate(gameId)) return;
       handleRebuildAnswer(io as TypedServer, gameId, userId, answerIndex);
     });
 
     // ─── Draft Phase (Splitting the World) ───────────────────────
     socket.on("conquest:draftAnswer", ({ gameId, answerIndex, responseTimeMs }) => {
+      if (!canParticipate(gameId)) return;
       const result = recordDraftAnswer(gameId, userId, answerIndex, responseTimeMs);
       if (!result.success) {
         socket.emit("game:error", { message: result.error || "Unable to record draft answer" });
@@ -386,62 +429,49 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     });
 
     socket.on("conquest:selectDraftTerritory", ({ gameId, territoryId }, cb) => {
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
       const result = selectDraftTerritory(io as TypedServer, gameId, userId, String(territoryId));
       cb?.(result);
     });
 
     // ─── Invasion Mode ──────────────────────────────────────────
     
-    // Initialize invasion game
-    socket.on("invasion:init", async ({ gameId, playerIds }) => {
-      console.log(`[Invasion] Initializing game ${gameId} with players:`, playerIds);
-      createInvasionGame(gameId, playerIds);
-      
-      // Send initial state to all players
-      const state = getInvasionState(gameId);
-      if (state) {
-        io.to(gameId).emit("invasion:state", {
-          territories: state.territories.map(t => ({
-            id: t.id.toString(),
-            ownerId: t.ownerId,
-            troopCount: t.troopCount,
-          })),
-          currentRound: state.currentRound,
-          totalRounds: state.totalRounds,
-          phase: state.phase,
-          currentQuestion: state.currentQuestion ? {
-            id: state.currentQuestion.id,
-            text: state.currentQuestion.text,
-            options: state.currentQuestion.options,
-            timeLimit: 15,
-          } : null,
-          lastRanking: state.lastRanking,
-          selectionPhase: {
-            isActive: state.selectionPhase.isActive,
-            pickingPlayerId: state.selectionPhase.pickingPlayerId,
-            picksRemaining: state.selectionPhase.picksRemaining,
-            turnIndex: state.selectionPhase.turnIndex,
-          },
-        });
+    // The Conquest orchestrator creates invasion from server-owned draft state.
+    // A client may request a sync but may never replace its player list or map.
+    socket.on("invasion:init", async ({ gameId }) => {
+      if (!canHostInvasion(gameId)) {
+        socket.emit("game:error", { message: "Only the host can initialize invasion" });
+        return;
       }
+      syncInvasion(gameId);
     });
     
     // Start invasion round (host only)
     socket.on("invasion:startRound", async ({ gameId }) => {
-      console.log(`[Invasion] Starting round for game ${gameId}`);
-      await startInvasionRound(gameId, io, redis);
+      if (!canHostInvasion(gameId)) {
+        socket.emit("game:error", { message: "Only the host can start invasion" });
+        return;
+      }
+      try {
+        await startInvasionRound(gameId, io, redis);
+      } catch (err) {
+        console.error("Invasion start error:", err);
+        socket.emit("game:error", { message: "Unable to start invasion round" });
+      }
     });
     
     // Record answer from player
     socket.on("invasion:answer", async ({ gameId, answer, responseTimeMs }) => {
+      if (!canParticipate(gameId)) return;
       recordAnswer(gameId, userId, answer);
       console.log(`[Invasion] Player ${userId} answered in ${responseTimeMs}ms`);
     });
     
     // Select territory
     socket.on("invasion:selectTerritory", async ({ gameId, territoryId }) => {
+      if (!canParticipate(gameId)) return;
       const parsedTerritoryId =
-        typeof territoryId === "number" ? territoryId : Number.parseInt(territoryId, 10);
+        typeof territoryId === "number" ? territoryId : Number(territoryId);
       const success = selectTerritory(gameId, userId, parsedTerritoryId, io, redis);
       if (success) {
         console.log(`[Invasion] Player ${userId} selected territory ${territoryId}`);
@@ -450,32 +480,8 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Get current invasion state
     socket.on("invasion:getState", async ({ gameId }) => {
-      const state = getInvasionState(gameId);
-      if (state) {
-        socket.emit("invasion:state", {
-          territories: state.territories.map(t => ({
-            id: t.id.toString(),
-            ownerId: t.ownerId,
-            troopCount: t.troopCount,
-          })),
-          currentRound: state.currentRound,
-          totalRounds: state.totalRounds,
-          phase: state.phase,
-          currentQuestion: state.currentQuestion ? {
-            id: state.currentQuestion.id,
-            text: state.currentQuestion.text,
-            options: state.currentQuestion.options,
-            timeLimit: 15,
-          } : null,
-          lastRanking: state.lastRanking,
-          selectionPhase: {
-            isActive: state.selectionPhase.isActive,
-            pickingPlayerId: state.selectionPhase.pickingPlayerId,
-            picksRemaining: state.selectionPhase.picksRemaining,
-            turnIndex: state.selectionPhase.turnIndex,
-          },
-        });
-      }
+      if (!socket.rooms.has(gameId)) return;
+      syncInvasion(gameId);
     });
 
     // ─── CHAOS MODE ─────────────────────────────────────────────

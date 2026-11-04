@@ -15,6 +15,7 @@ import { adminRouter } from "./routes/admin";
 import { initSentry } from "./lib/sentry";
 import { rateLimit } from "./lib/rateLimit";
 import { sanitizeInput } from "./lib/sanitize";
+import { getJwtSecret } from "./lib/jwtConfig";
 
 loadEnv({ path: resolve(__dirname, "../.env") });
 
@@ -59,7 +60,7 @@ async function bootstrap() {
 
   // JWT
   await app.register(jwt, {
-    secret: process.env.JWT_SECRET || "dev-secret-change-in-production",
+    secret: getJwtSecret(),
   });
 
   // Add JWT authentication hook

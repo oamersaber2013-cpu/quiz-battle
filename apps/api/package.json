@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc --noEmit false || echo 'Build completed with warnings' && tsc --skipLibCheck || cp -r src dist",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "jest",
@@ -37,6 +37,7 @@
     "@types/node": "^20.0.0",
     "@upstash/redis": "^1.37.0",
     "jest": "^29.7.0",
+    "socket.io-client": "^4.7.5",
     "ts-jest": "^29.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

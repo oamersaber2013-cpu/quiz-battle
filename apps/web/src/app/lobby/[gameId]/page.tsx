@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { GameStatus, GameMode } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
-import { connectSocket, emitJoinGame, emitStartGame, emitSpectateGame, emitChaosInit } from "@/lib/socket";
+import { emitStartGame, emitChaosInit } from "@/lib/socket";
+import { useGameConnection } from "@/hooks/useGameConnection";
 import { ChatWindow } from "@/components/ChatWindow";
 import { CustomModeBuilder } from "@/components/CustomModeBuilder";
 
@@ -65,7 +66,7 @@ function LobbyPageContent() {
     players, status, addToast, language, hostId
   } = useGameStore();
   
-  const [joining, setJoining] = useState(true);
+  const { joining } = useGameConnection(gameId, isSpectating);
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showCustomBuilder, setShowCustomBuilder] = useState(false);
@@ -76,77 +77,23 @@ function LobbyPageContent() {
   const isHost = !!userId && !!hostId && userId === hostId;
 
   useEffect(() => {
-    if (!userId) {
-      router.push("/");
-      return;
-    }
-
-    const socket = connectSocket(userId, username, token || undefined, isGuest);
-    let mounted = true;
-
-    async function joinRoom() {
-      if (!mounted) return;
-      
-      try {
-        if (isSpectating) {
-          emitSpectateGame(gameId);
-          if (mounted) setJoining(false);
-        } else {
-          const res = await emitJoinGame(gameId);
-          if (!mounted) return;
-          
-          if (!res.success) {
-            addToast("error", res.error || (isRTL ? "فشل الانضمام للغرفة" : "Failed to join room"));
-            router.push("/");
-          } else if (res.room) {
-            // Sync hostId & language from server immediately
-            useGameStore.getState().syncRoom({
-              ...res.room,
-              players: res.players || [],
-              currentRound: 0,
-            });
-          }
-          if (mounted) setJoining(false);
-        }
-      } catch (error) {
-        console.error("Join room error:", error);
-        if (mounted) {
-          addToast("error", isRTL ? "فشل الانضمام للغرفة" : "Failed to join room");
-          setJoining(false);
-        }
-      }
-    }
-
-    if (socket.connected) {
-      joinRoom();
-    } else {
-      socket.once("connect", joinRoom);
-    }
-
-    return () => {
-      mounted = false;
-      socket.off("connect", joinRoom);
-    };
-  }, [gameId, userId]);
-
-  useEffect(() => {
     // Redirect to game when status is anything except Lobby (for ALL modes)
-    if (status && status !== GameStatus.Lobby) {
+    if (!joining && status && status !== GameStatus.Lobby) {
       router.push(`/game/${gameId}${isSpectating ? '?spectate=true' : ''}`);
     }
-  }, [status, gameId, router, isSpectating]);
+  }, [status, gameId, router, isSpectating, joining]);
 
   async function handleStart() {
     setStarting(true);
-    
-    // If CHAOS mode, initialize chaos system first
-    if (mode === GameMode.Chaos) {
-      emitChaosInit(gameId, "RANDOM");
-    }
-    
-    const res = await emitStartGame(gameId);
-    if (!res.success) {
-      addToast("error", res.error || (isRTL ? "تعذر بدء المعركة" : "Unable to start battle"));
+    try {
+      if (mode === GameMode.Chaos) emitChaosInit(gameId, "RANDOM");
+      const res = await emitStartGame(gameId);
+      if (!res.success) {
+        addToast("error", res.error || (isRTL ? "تعذر بدء المعركة" : "Unable to start battle"));
+        setStarting(false);
+      }
+    } catch {
+      addToast("error", isRTL ? "تعذر بدء المعركة. حاول مرة أخرى." : "Unable to start battle. Please try again.");
       setStarting(false);
     }
   }

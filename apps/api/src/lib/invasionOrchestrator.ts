@@ -112,6 +112,10 @@ interface InvasionInternalState {
   gameId: string;
   territories: InvasionTerritory[];
   playerIds: string[];
+  playerNames: Record<string, string>;
+  difficulty: Difficulty;
+  language: "en" | "ar";
+  categories?: string[];
   
   // Current round question
   currentQuestion: {
@@ -120,6 +124,7 @@ interface InvasionInternalState {
     options: string[];
     correctIndex: number;
     startTime: number;
+    timeLimit: number;
   } | null;
   
   // Player responses for current question
@@ -151,6 +156,9 @@ interface InvasionInternalState {
   phase: "question" | "ranking" | "selection" | "ended";
   currentRound: number;
   totalRounds: number;
+  roundStarting: boolean;
+  questionTimer: ReturnType<typeof setTimeout> | null;
+  phaseTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export const INVASION_GAMES = new Map<string, InvasionInternalState>();
@@ -160,7 +168,16 @@ const SELECTION_TIMEOUT_MS = 10000; // 10 seconds per pick
 
 // ─── Public Functions ────────────────────────────────────────
 
-export function createInvasionGame(gameId: string, playerIds: string[]): void {
+export interface InvasionOptions {
+  difficulty?: Difficulty;
+  language?: "en" | "ar";
+  categories?: string[];
+  totalRounds?: number;
+  playerNames?: Record<string, string>;
+}
+
+export function createInvasionGame(gameId: string, playerIds: string[], options: InvasionOptions = {}): void {
+  if (INVASION_GAMES.has(gameId)) return;
   // Get scaled territories based on player count
   const territories = getInvasionTerritoriesForPlayerCount(playerIds.length);
   
@@ -182,6 +199,10 @@ export function createInvasionGame(gameId: string, playerIds: string[]): void {
     gameId,
     territories,
     playerIds,
+    playerNames: options.playerNames || {},
+    difficulty: options.difficulty || Difficulty.Medium,
+    language: options.language || "en",
+    categories: options.categories,
     currentQuestion: null,
     playerResponses: {},
     lastRanking: [],
@@ -194,7 +215,10 @@ export function createInvasionGame(gameId: string, playerIds: string[]): void {
     },
     phase: "question",
     currentRound: 1,
-    totalRounds: 10,
+    totalRounds: options.totalRounds || 10,
+    roundStarting: false,
+    questionTimer: null,
+    phaseTimer: null,
   });
 }
 
@@ -204,63 +228,30 @@ export function createInvasionGameFromConquest(
   playerIds: string[],
   playerNames: Record<string, string>,
   conquestTerritories: Record<string, string>, // territoryId -> ownerId
-  conquestForts: Record<string, string> // playerId -> territoryId
+  conquestForts: Record<string, string>, // playerId -> territoryId
+  options: InvasionOptions = {}
 ): void {
+  if (INVASION_GAMES.has(gameId)) return;
   // Get scaled territories based on player count
   const territories = getInvasionTerritoriesForPlayerCount(playerIds.length);
-  const totalTerritories = territories.length;
-  
-  // Map conquest regions to invasion territory ranges (proportional to available territories)
-  // Conquest regions: 1=NA, 2=SA, 3=EU, 4=AF, 5=RU, 6=ME, 7=IN, 8=EA, 9=SEA, 10=AU
-  const getInvasionIndicesForConquest = (conquestId: string): number[] => {
-    // Divide territories proportionally by region importance
-    const regionMappings: Record<string, number[]> = {
-      "1": [0, 1, 2],           // North America → Canada, USA, Mexico (if available)
-      "2": [3, 4, 5, 6],        // South America → Colombia, Brazil, Argentina, Chile
-      "3": [7, 8, 9],           // Europe → UK, France, Germany
-      "4": [10, 11, 12, 13, 14], // Africa → Egypt, Nigeria, DR Congo, South Africa, Madagascar
-      "5": [15],                // Russia → Russia
-      "6": [10, 15],            // Middle East → Egypt (closest match)
-      "7": [17],                // India → India
-      "8": [16, 18],            // East Asia → China, Japan
-      "9": [16, 17, 18],        // Southeast Asia → China, India, Japan (proximity)
-      "10": [19],               // Australia → Australia
-    };
-    const candidates = regionMappings[conquestId] || [];
-    // Filter to only indices that exist in our scaled territory set
-    return candidates.filter(idx => idx < totalTerritories);
-  };
-  
-  // Track which invasion territories are assigned
-  const assignedIndices = new Set<number>();
-  
-  // Assign ownership based on conquest state
-  Object.entries(conquestTerritories).forEach(([conquestTid, ownerId]) => {
-    if (!ownerId) return;
-    const invasionIndices = getInvasionIndicesForConquest(conquestTid);
-    // Find first unassigned territory in this region
-    for (const idx of invasionIndices) {
-      if (!assignedIndices.has(idx)) {
-        territories[idx].ownerId = ownerId;
-        territories[idx].troopCount = BASE_TROOPS;
-        assignedIndices.add(idx);
-        break;
-      }
+  // Both phases use the same country ids. Preserve the drafted map exactly.
+  for (const territory of territories) {
+    const ownerId = conquestTerritories[String(territory.id)];
+    if (ownerId && playerIds.includes(ownerId)) {
+      territory.ownerId = ownerId;
+      territory.troopCount = BASE_TROOPS;
     }
-  });
+  }
   
   // Ensure every player has at least one territory (fallback - spread remaining players)
   playerIds.forEach((playerId) => {
     const hasTerritory = territories.some((t: InvasionTerritory) => t.ownerId === playerId);
     if (!hasTerritory) {
       // Find first unowned territory
-      const unownedIdx = territories.findIndex((t: InvasionTerritory, idx: number) => 
-        !t.ownerId && !assignedIndices.has(idx)
-      );
+      const unownedIdx = territories.findIndex(t => !t.ownerId);
       if (unownedIdx >= 0) {
         territories[unownedIdx].ownerId = playerId;
         territories[unownedIdx].troopCount = BASE_TROOPS;
-        assignedIndices.add(unownedIdx);
       }
     }
   });
@@ -269,6 +260,10 @@ export function createInvasionGameFromConquest(
     gameId,
     territories,
     playerIds,
+    playerNames,
+    difficulty: options.difficulty || Difficulty.Medium,
+    language: options.language || "en",
+    categories: options.categories,
     currentQuestion: null,
     playerResponses: {},
     lastRanking: [],
@@ -281,7 +276,10 @@ export function createInvasionGameFromConquest(
     },
     phase: "question",
     currentRound: 1,
-    totalRounds: 10,
+    totalRounds: options.totalRounds || 10,
+    roundStarting: false,
+    questionTimer: null,
+    phaseTimer: null,
   });
 }
 
@@ -291,7 +289,9 @@ export async function startInvasionRound(
   redis: SafeRedis
 ): Promise<void> {
   const state = INVASION_GAMES.get(gameId);
-  if (!state) return;
+  if (!state || state.phase !== "question" || state.currentQuestion || state.roundStarting) return;
+  // Claim startup before the fetch so simultaneous client requests are idempotent.
+  state.roundStarting = true;
   
   // Reset for new round
   state.playerResponses = {};
@@ -306,7 +306,13 @@ export async function startInvasionRound(
   state.phase = "question";
   
   // Fetch and send question
-  const questions = await fetchQuestions(Difficulty.Medium, 1);
+  let questions: Awaited<ReturnType<typeof fetchQuestions>>;
+  try {
+    questions = await fetchQuestions(state.difficulty, 1, state.categories, undefined, state.language, gameId);
+  } finally {
+    state.roundStarting = false;
+  }
+  if (INVASION_GAMES.get(gameId) !== state || state.phase !== "question") return;
   const question = questions[0];
   if (!question) {
     console.error(`[Invasion] No question available for game ${gameId}`);
@@ -319,6 +325,7 @@ export async function startInvasionRound(
     options: question.options,
     correctIndex: question.correctIndex,
     startTime: Date.now(),
+    timeLimit: question.timeLimit,
   };
   
   // Broadcast question to all players
@@ -329,14 +336,16 @@ export async function startInvasionRound(
       id: question.id,
       text: question.text,
       options: question.options,
-      timeLimit: 15, // 15 seconds to answer
+      timeLimit: question.timeLimit,
     }
   });
   
-  // Set timeout for question phase (15 seconds)
-  setTimeout(() => {
+  // Use the question's configured deadline for both display and validation.
+  state.questionTimer = setTimeout(() => {
+    if (INVASION_GAMES.get(gameId) !== state || state.phase !== "question") return;
+    state.questionTimer = null;
     processQuestionResults(gameId, io, redis);
-  }, 15000);
+  }, question.timeLimit * 1000);
 }
 
 export function recordAnswer(
@@ -345,9 +354,12 @@ export function recordAnswer(
   answerIndex: number
 ): void {
   const state = INVASION_GAMES.get(gameId);
-  if (!state || !state.currentQuestion) return;
+  if (!state || state.phase !== "question" || !state.currentQuestion) return;
+  if (!state.playerIds.includes(playerId) || Object.prototype.hasOwnProperty.call(state.playerResponses, playerId)) return;
+  if (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= state.currentQuestion.options.length) return;
   
   const responseTimeMs = Date.now() - state.currentQuestion.startTime;
+  if (responseTimeMs < 0 || responseTimeMs >= state.currentQuestion.timeLimit * 1000) return;
   const isCorrect = answerIndex === state.currentQuestion.correctIndex;
   
   state.playerResponses[playerId] = {
@@ -363,7 +375,7 @@ async function processQuestionResults(
   redis: SafeRedis
 ): Promise<void> {
   const state = INVASION_GAMES.get(gameId);
-  if (!state) return;
+  if (!state || state.phase !== "question") return;
   
   // Filter only correct players and sort by response time
   const correctPlayers = Object.entries(state.playerResponses)
@@ -387,7 +399,7 @@ async function processQuestionResults(
     
     return {
       playerId,
-      playerName: playerId, // Would need to look up actual name
+      playerName: state.playerNames[playerId] || playerId,
       rank,
       picks,
       responseTimeMs: response.responseTimeMs,
@@ -410,14 +422,18 @@ async function processQuestionResults(
   
   // If no correct answers, skip to next round after delay
   if (ranking.length === 0) {
-    setTimeout(() => {
+    state.phaseTimer = setTimeout(() => {
+      if (INVASION_GAMES.get(gameId) !== state || state.phase !== "ranking") return;
+      state.phaseTimer = null;
       advanceToNextRound(gameId, io, redis);
     }, 3000);
     return;
   }
   
   // Start selection phase after showing ranking
-  setTimeout(() => {
+  state.phaseTimer = setTimeout(() => {
+    if (INVASION_GAMES.get(gameId) !== state || state.phase !== "ranking") return;
+    state.phaseTimer = null;
     startSelectionPhase(gameId, io, redis);
   }, 3000);
 }
@@ -428,7 +444,7 @@ function startSelectionPhase(
   redis: SafeRedis
 ): void {
   const state = INVASION_GAMES.get(gameId);
-  if (!state || state.lastRanking.length === 0) return;
+  if (!state || state.phase !== "ranking" || state.lastRanking.length === 0) return;
   
   state.phase = "selection";
   state.selectionPhase.isActive = true;
@@ -444,7 +460,9 @@ function processNextPicker(
   redis: SafeRedis
 ): void {
   const state = INVASION_GAMES.get(gameId);
-  if (!state || !state.selectionPhase.isActive) return;
+  if (!state || state.phase !== "selection" || !state.selectionPhase.isActive) return;
+  if (state.selectionPhase.timerHandle) clearTimeout(state.selectionPhase.timerHandle);
+  state.selectionPhase.timerHandle = null;
   
   const ranking = state.lastRanking;
   const turnIndex = state.selectionPhase.turnIndex;
@@ -459,7 +477,8 @@ function processNextPicker(
   const currentPicker = ranking[turnIndex];
   
   // Check if this player has picks remaining
-  if (currentPicker.picks <= 0) {
+  if (currentPicker.picks <= 0 || getSelectableTerritories(state, currentPicker.playerId).length === 0) {
+    currentPicker.picks = 0;
     // Move to next player
     state.selectionPhase.turnIndex++;
     processNextPicker(gameId, io, redis);
@@ -481,6 +500,8 @@ function processNextPicker(
   
   // Set selection timeout
   state.selectionPhase.timerHandle = setTimeout(() => {
+    if (INVASION_GAMES.get(gameId) !== state || state.phase !== "selection") return;
+    state.selectionPhase.timerHandle = null;
     // Player didn't select in time - consume one pick.
     currentPicker.picks = Math.max(0, currentPicker.picks - 1);
     state.selectionPhase.picksRemaining = currentPicker.picks;
@@ -511,7 +532,9 @@ export function selectTerritory(
   const state = INVASION_GAMES.get(gameId);
   if (!state) return false;
   if (state.phase !== "selection" || !state.selectionPhase.isActive) return false;
-  if (!Number.isFinite(territoryId)) return false;
+  if (!Number.isInteger(territoryId)) return false;
+  const ranking = state.lastRanking[state.selectionPhase.turnIndex];
+  if (!ranking || ranking.playerId !== playerId || ranking.picks <= 0) return false;
   
   // Validate it's this player's turn
   if (state.selectionPhase.pickingPlayerId !== playerId) {
@@ -556,37 +579,15 @@ export function selectTerritory(
   });
   
   // Check if player has more picks
-  const ranking = state.lastRanking.find(r => r.playerId === playerId);
-  if (ranking) {
-    ranking.picks = Math.max(0, ranking.picks - 1);
-  }
-  const picksLeft = ranking?.picks ?? 0;
+  ranking.picks = Math.max(0, ranking.picks - 1);
+  const picksLeft = ranking.picks;
   state.selectionPhase.picksRemaining = picksLeft;
 
-  if (ranking && picksLeft > 0) {
-    // Player has more picks - stay on same player
-    setTimeout(() => {
-      // Notify players whose turn it is
-      io.to(gameId).emit("invasion:turn", {
-        playerId: playerId,
-        playerName: ranking.playerName,
-        picksRemaining: picksLeft,
-        selectableTerritories: getSelectableTerritories(state, playerId),
-        timeLimit: 10,
-      });
-      
-      // Set new timeout — stay on same player; processNextPicker will check picks
-      state.selectionPhase.timerHandle = setTimeout(() => {
-        processNextPicker(gameId, io, redis);
-      }, SELECTION_TIMEOUT_MS);
-    }, 500);
-  } else {
-    // Move to next player
+  if (picksLeft <= 0) {
     state.selectionPhase.turnIndex++;
-    setTimeout(() => {
-      processNextPicker(gameId, io, redis);
-    }, 500);
   }
+  // Advance synchronously: an exhausted player must not keep a 500ms write window.
+  processNextPicker(gameId, io, redis);
   
   return true;
 }
@@ -601,12 +602,15 @@ function endSelectionPhase(
   
   state.selectionPhase.isActive = false;
   state.selectionPhase.pickingPlayerId = null;
+  state.selectionPhase.picksRemaining = 0;
   
   // Broadcast updated state
-  io.to(gameId).emit("invasion:state", buildClientState(gameId));
+  io.to(gameId).emit("invasion:state", buildInvasionClientState(gameId));
   
   // Move to next round
-  setTimeout(() => {
+  state.phaseTimer = setTimeout(() => {
+    if (INVASION_GAMES.get(gameId) !== state || state.phase !== "selection") return;
+    state.phaseTimer = null;
     advanceToNextRound(gameId, io, redis);
   }, 2000);
 }
@@ -628,7 +632,12 @@ function advanceToNextRound(
   }
   
   // Start next round
-  startInvasionRound(gameId, io, redis);
+  state.currentQuestion = null;
+  state.phase = "question";
+  startInvasionRound(gameId, io, redis).catch(err => {
+    console.error(`[Invasion] Round start failed for ${gameId}:`, err);
+    io.to(gameId).emit("game:error", { message: "Unable to start invasion round" });
+  });
 }
 
 function endInvasionGame(gameId: string, io: TypedServer): void {
@@ -652,12 +661,12 @@ function endInvasionGame(gameId: string, io: TypedServer): void {
   
   io.to(gameId).emit("invasion:gameEnd", {
     winnerId: winner ? winner[0] : "",
-    winnerName: winner ? winner[0] : "", // Would need to look up actual name
+    winnerName: winner ? state.playerNames[winner[0]] || winner[0] : "",
     finalTerritories: scores,
   });
   
   // Cleanup
-  INVASION_GAMES.delete(gameId);
+  deleteInvasionGame(gameId);
 }
 
 export function getInvasionState(gameId: string): InvasionInternalState | undefined {
@@ -665,11 +674,15 @@ export function getInvasionState(gameId: string): InvasionInternalState | undefi
 }
 
 export function deleteInvasionGame(gameId: string): void {
+  const state = INVASION_GAMES.get(gameId);
+  if (state?.questionTimer) clearTimeout(state.questionTimer);
+  if (state?.phaseTimer) clearTimeout(state.phaseTimer);
+  if (state?.selectionPhase.timerHandle) clearTimeout(state.selectionPhase.timerHandle);
   INVASION_GAMES.delete(gameId);
 }
 
 // Build client state for broadcasting
-function buildClientState(gameId: string): import("@quiz-battle/shared").InvasionClientState {
+export function buildInvasionClientState(gameId: string, viewerId?: string): import("@quiz-battle/shared").InvasionClientState {
   const state = INVASION_GAMES.get(gameId);
   if (!state) {
     return {
@@ -690,18 +703,29 @@ function buildClientState(gameId: string): import("@quiz-battle/shared").Invasio
 
   return {
     territories: state.territories.map(t => ({
+      ...t,
       id: t.id.toString(),
-      ownerId: t.ownerId,
-      troopCount: t.troopCount,
     })),
     currentRound: state.currentRound,
     totalRounds: state.totalRounds,
     phase: state.phase,
+    questionStartedAt: state.currentQuestion?.startTime,
+    currentTurn: state.selectionPhase.pickingPlayerId,
+    picksRemaining: state.selectionPhase.picksRemaining,
+    selectableTerritories: state.selectionPhase.isActive && state.selectionPhase.pickingPlayerId
+      ? getSelectableTerritories(state, state.selectionPhase.pickingPlayerId)
+      : [],
+    ...(viewerId ? {
+      selectedAnswer: state.playerResponses[viewerId]?.answer ?? null,
+      answeredAt: state.playerResponses[viewerId]
+        ? (state.currentQuestion?.startTime ?? 0) + state.playerResponses[viewerId].responseTimeMs
+        : null,
+    } : {}),
     currentQuestion: state.currentQuestion ? {
       id: state.currentQuestion.id,
       text: state.currentQuestion.text,
       options: state.currentQuestion.options,
-      timeLimit: 15,
+      timeLimit: state.currentQuestion.timeLimit,
     } : null,
     lastRanking: state.lastRanking,
     selectionPhase: {

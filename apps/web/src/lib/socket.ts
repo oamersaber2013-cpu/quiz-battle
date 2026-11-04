@@ -1,6 +1,6 @@
 "use client";
 import { io, Socket } from "socket.io-client";
-import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus } from "@quiz-battle/shared";
+import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty } from "@quiz-battle/shared";
 import { useGameStore } from "../store/gameStore";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -36,13 +36,21 @@ export function connectSocket(
   token?: string,
   isGuest?: boolean
 ): TypedSocket {
-  if (socket?.connected) return socket;
+  const auth = { token, userId, username, guestId: isGuest ? userId : undefined };
+  const previousAuth = socket?.auth as typeof auth | undefined;
+  if (socket && previousAuth?.userId === userId && previousAuth?.token === token) {
+    socket.auth = auth;
+    if (!socket.connected) socket.connect();
+    return socket;
+  }
+
+  disconnectSocket();
 
   socket = io(API_URL, {
     autoConnect: true,
     reconnection: true,
     reconnectionAttempts: 5,
-    auth: { token, userId, username, guestId: isGuest ? userId : undefined },
+    auth,
   }) as TypedSocket;
 
   registerHandlers(socket);
@@ -51,7 +59,74 @@ export function connectSocket(
 
 export function disconnectSocket() {
   socket?.disconnect();
+  socket?.removeAllListeners();
   socket = null;
+}
+
+// Room membership belongs to a socket connection, so it must be restored after
+// every reconnect as well as when a game URL is opened directly.
+export function subscribeGameRoom(
+  s: TypedSocket,
+  gameId: string,
+  isSpectating: boolean,
+  callbacks: {
+    onJoining: () => void;
+    onJoined: () => void;
+    onError: (message?: string) => void;
+  }
+): () => void {
+  let active = true;
+  let requestId = 0;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const onDisconnect = () => {
+    const currentRequest = ++requestId;
+    clearTimeout(timeout);
+    if (active) {
+      callbacks.onJoining();
+      timeout = setTimeout(() => {
+        if (active && requestId === currentRequest) callbacks.onError();
+      }, 10000);
+    }
+  };
+
+  const joinRoom = () => {
+    if (!active) return;
+    callbacks.onJoining();
+    clearTimeout(timeout);
+    const currentRequest = ++requestId;
+
+    if (isSpectating) {
+      s.emit("game:spectate", { gameId });
+      callbacks.onJoined();
+      return;
+    }
+
+    timeout = setTimeout(() => {
+      if (active && requestId === currentRequest) {
+        requestId += 1;
+        callbacks.onError();
+      }
+    }, 10000);
+
+    s.emit("game:join", { gameId }, (response) => {
+      if (!active || requestId !== currentRequest) return;
+      clearTimeout(timeout);
+      if (response.success) callbacks.onJoined();
+      else callbacks.onError(response.error);
+    });
+  };
+
+  s.on("connect", joinRoom);
+  s.on("disconnect", onDisconnect);
+  if (s.connected) joinRoom();
+  else onDisconnect();
+  return () => {
+    active = false;
+    clearTimeout(timeout);
+    s.off("connect", joinRoom);
+    s.off("disconnect", onDisconnect);
+  };
 }
 
 function registerHandlers(s: TypedSocket) {
@@ -113,12 +188,8 @@ function registerHandlers(s: TypedSocket) {
     gs.addToast("info", msg);
   });
 
-  s.on("game:powerUpSelected", ({ userId, powerUp, remainingSlots }) => {
-    const gs = useGameStore.getState();
-    if (userId === gs.userId) {
-      gs.selectPowerUp(powerUp);
-    }
-  });
+  // PowerUpSelection applies the player's click locally. Reapplying its server
+  // echo would toggle the same power-up off again; reconnect uses a full snapshot.
 
   s.on("game:powerUpSelectEnd", ({ selections }) => {
     const gs = useGameStore.getState();
@@ -388,13 +459,42 @@ function registerHandlers(s: TypedSocket) {
     setTimeout(() => {
       emitInvasionGetState(gameId);
       // Auto-start first round after brief delay to let clients transition
-      setTimeout(() => emitInvasionStartRound(gameId), 1000);
+      if (gs.hostId === gs.userId) {
+        setTimeout(() => emitInvasionStartRound(gameId), 1000);
+      }
     }, 500);
   });
 
   s.on("invasion:state", (invasionState) => {
-    console.log("[Socket] invasion:state received:", invasionState);
-    useGameStore.getState().setInvasionState(invasionState);
+    const store = useGameStore.getState();
+    store.setInvasionState({
+      ...invasionState,
+      territories: invasionState.territories.map((territory) => ({ ...territory, id: Number(territory.id) })),
+      currentTurn: invasionState.currentTurn ?? invasionState.selectionPhase.pickingPlayerId,
+      picksRemaining: invasionState.picksRemaining ?? invasionState.selectionPhase.picksRemaining,
+      selectableTerritories: invasionState.selectableTerritories || [],
+    });
+    if (invasionState.currentQuestion) {
+      const question = invasionState.currentQuestion;
+      const previous = useGameStore.getState();
+      const isSameQuestion = previous.currentQuestion?.id === question.id;
+      const startedAt = invasionState.questionStartedAt ?? (isSameQuestion ? previous.questionStartedAt : null) ?? Date.now();
+      useGameStore.setState({
+        currentQuestion: { ...question, category: "general", difficulty: Difficulty.Scholar },
+        questionStartedAt: startedAt,
+        currentRound: invasionState.currentRound,
+        totalRounds: invasionState.totalRounds,
+        selectedAnswer: invasionState.selectedAnswer === undefined
+          ? (isSameQuestion ? previous.selectedAnswer : null)
+          : invasionState.selectedAnswer,
+        answeredAt: invasionState.answeredAt === undefined
+          ? (isSameQuestion ? previous.answeredAt : null)
+          : invasionState.answeredAt,
+        timeWarpBonusSeconds: 0,
+        timeLeft: Math.max(0, Math.ceil(question.timeLimit - (Date.now() - startedAt) / 1000)),
+        status: invasionState.phase === "question" ? GameStatus.Question : GameStatus.AnswerReveal,
+      });
+    }
   });
 
   s.on("invasion:roundStart", ({ round, totalRounds, question }) => {
@@ -409,7 +509,7 @@ function registerHandlers(s: TypedSocket) {
           options: question.options,
           timeLimit: question.timeLimit || 15,
           category: "General",
-          difficulty: "Scholar" as any,
+          difficulty: Difficulty.Scholar,
         },
         round,
         totalRounds
@@ -421,6 +521,7 @@ function registerHandlers(s: TypedSocket) {
   s.on("invasion:ranking", ({ ranking, correctAnswer }) => {
     const gs = useGameStore.getState();
     const isAr = gs.language === "ar";
+    gs.setStatus(GameStatus.AnswerReveal);
     
     // Update invasion state with ranking
     if (gs.invasionState) {

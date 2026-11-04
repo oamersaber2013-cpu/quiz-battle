@@ -28,6 +28,11 @@ model User {
   subscriptionStatus   String?   // active, canceled, past_due
   subscriptionEndsAt   DateTime?
 
+  // Battle credits exposed by auth and room creation.
+  hasPurchasedGame      Boolean @default(false)
+  shortGamesRemaining   Int     @default(0)
+  longGamesRemaining    Int     @default(0)
+
   // Stats
   xp                     Int       @default(0)
   totalGamesPlayed       Int       @default(0)

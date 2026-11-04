@@ -22,6 +22,8 @@ import { soundManager } from "@/lib/sounds";
 import { QuestionTransition } from "@/components/QuestionTransition";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useGameConnection } from "@/hooks/useGameConnection";
 
 const TARGETED_POWER_UPS = new Set<PowerUpType>([
   PowerUpType.Freeze,
@@ -160,6 +162,7 @@ function GamePageContent() {
   const searchParams = useSearchParams();
   const gameId = params.gameId as string;
   const isSpectating = searchParams.get("spectate") === "true";
+  const { joining } = useGameConnection(gameId, isSpectating);
 
   const {
     userId,
@@ -238,6 +241,11 @@ function GamePageContent() {
   }, [currentQuestion?.id, mode, status]);
 
   useEffect(() => {
+    if (joining) return;
+    if (status === GameStatus.Lobby) {
+      router.replace(`/lobby/${gameId}${isSpectating ? "?spectate=true" : ""}`);
+      return;
+    }
     if (status === GameStatus.Ended) {
       router.push(`/results/${gameId}`);
       return;
@@ -255,7 +263,7 @@ function GamePageContent() {
     }
 
     setFeedbackQuote(null);
-  }, [gameId, lastAnswerResult, router, status]);
+  }, [gameId, lastAnswerResult, router, status, joining, isSpectating]);
 
   useEffect(() => {
     if (status !== GameStatus.Question) {
@@ -348,6 +356,14 @@ function GamePageContent() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (joining) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh" }}>
+        <LoadingSpinner size="lg" message={isRTL ? "جاري الاتصال بالمعركة..." : "Connecting to battle..."} />
+      </div>
+    );
+  }
 
   // Show transition overlay
   if (showTransition && currentRound > 0) {

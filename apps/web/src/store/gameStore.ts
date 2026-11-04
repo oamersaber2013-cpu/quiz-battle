@@ -349,6 +349,7 @@ export const useGameStore = create<GameStore>()(
           eliminatedOptions: [],
           timeLeft: question.timeLimit,
           questionStartedAt: Date.now(),
+          timeWarpBonusSeconds: 0,
           status: GameStatus.Question,
           activeEffects: [],
         });
@@ -376,7 +377,13 @@ export const useGameStore = create<GameStore>()(
 
       applyTimeWarpBonus: (seconds) =>
         set((state) => ({
-          timeLeft: Math.min(state.timeLeft + seconds, 60),
+          timeWarpBonusSeconds: Math.max(state.timeWarpBonusSeconds, seconds),
+          timeLeft: state.currentQuestion && state.questionStartedAt
+            ? Math.max(0, Math.ceil(
+                state.currentQuestion.timeLimit + Math.max(state.timeWarpBonusSeconds, seconds)
+                - (Date.now() - state.questionStartedAt) / 1000
+              ))
+            : Math.min(state.timeLeft + seconds, 60),
         })),
 
       setFinalResults: (results) =>
@@ -425,9 +432,23 @@ export const useGameStore = create<GameStore>()(
       syncRoom: (room) =>
         set((state) => {
           const userId = state.userId;
+          const previous = state.gameId === room.gameId ? state : initialGameState;
+          const effects = (room.activeEffects || []).filter(
+            (effect) => !effect.expiresAt || effect.expiresAt > Date.now()
+          );
+          const question = room.currentQuestion === undefined
+            ? previous.currentQuestion
+            : room.currentQuestion;
+          const questionStartedAt = room.questionStartedAt ?? previous.questionStartedAt;
+          const ownTimeWarp = effects.find(
+            (effect) => effect.type === PowerUpType.TimeWarp && effect.sourceUserId === userId
+          );
+          const timeWarpBonusSeconds = question && questionStartedAt && ownTimeWarp?.expiresAt
+            ? Math.max(0, (ownTimeWarp.expiresAt - questionStartedAt) / 1000 - question.timeLimit)
+            : room.currentQuestion === undefined ? previous.timeWarpBonusSeconds : 0;
 
           return {
-            ...state,
+            ...previous,
             gameId: room.gameId,
             joinCode: room.joinCode,
             hostId: room.hostId || null,
@@ -435,12 +456,23 @@ export const useGameStore = create<GameStore>()(
             difficulty: room.difficulty,
             category: room.category || null,
             status: room.status,
+            currentRound: room.currentRound,
+            totalRounds: room.totalRounds,
+            currentQuestion: question,
+            questionStartedAt,
+            timeWarpBonusSeconds,
+            timeLeft: question && questionStartedAt
+              ? Math.max(0, Math.ceil(question.timeLimit + timeWarpBonusSeconds - (Date.now() - questionStartedAt) / 1000))
+              : previous.timeLeft,
+            selectedAnswer: room.selectedAnswer === undefined ? previous.selectedAnswer : room.selectedAnswer,
+            answeredAt: room.answeredAt === undefined ? previous.answeredAt : room.answeredAt,
+            powerUpSelection: room.powerUpSelection
+              ? { ...previous.powerUpSelection, ...room.powerUpSelection }
+              : previous.powerUpSelection,
             players: room.players,
             currentPlayer:
               room.players.find((p) => p.userId === userId) || null,
-            activeEffects: (room.activeEffects || []).filter(
-              (e) => !e.expiresAt || e.expiresAt > Date.now()
-            ),
+            activeEffects: effects,
             language: room.language || state.language,
           };
         }),

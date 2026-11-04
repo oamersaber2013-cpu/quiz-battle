@@ -689,10 +689,26 @@ const MAX_POWERUP_SELECTIONS = 3; // Each player can pick 3 powerups
 interface PowerUpSelectionState {
   selections: Record<string, PowerUpType[]>; // userId -> selected powerups
   confirmed: Set<string>; // users who confirmed their selection
+  startedAt: number;
   timerHandle: ReturnType<typeof setTimeout> | null;
 }
 
 const powerUpSelections = new Map<string, PowerUpSelectionState>(); // gameId -> selection state
+
+export function getPowerUpSelectionSnapshot(
+  gameId: string,
+  userId: string
+): import("@quiz-battle/shared").SyncedGameRoom["powerUpSelection"] {
+  const selection = powerUpSelections.get(gameId);
+  if (!selection) return undefined;
+  return {
+    availablePowerUps: [...STARTER_POWER_UPS],
+    selectedPowerUps: [...(selection.selections[userId] || [])],
+    maxSelections: MAX_POWERUP_SELECTIONS,
+    timeLeft: Math.max(0, Math.ceil((selection.startedAt + POWERUP_SELECTION_TIME_MS - Date.now()) / 1000)),
+    isSelecting: !selection.confirmed.has(userId),
+  };
+}
 
 // Store io reference for powerup selection phase
 const ioRef = new Map<string, TypedServer>();
@@ -710,6 +726,7 @@ export function startPowerUpSelectionPhase(io: TypedServer, redis: SafeRedis, ga
   const selectionState: PowerUpSelectionState = {
     selections: {},
     confirmed: new Set(),
+    startedAt: Date.now(),
     timerHandle: null,
   };
 

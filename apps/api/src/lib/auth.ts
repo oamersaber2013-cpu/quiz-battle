@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { prisma } from "@quiz-battle/db";
+import { getJwtSecret } from "./jwtConfig";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
 const JWT_EXPIRES_IN = "7d";
 
 export interface AuthPayload {
@@ -21,12 +21,12 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export function generateToken(payload: AuthPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: JWT_EXPIRES_IN });
 }
 
 export function verifyToken(token: string): AuthPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as AuthPayload;
+    return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as AuthPayload;
   } catch {
     return null;
   }

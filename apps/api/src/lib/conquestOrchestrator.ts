@@ -35,6 +35,7 @@ interface ConquestInternalState {
   // DRAFT PHASE (Splitting the world)
   draftPhase: {
     currentRound: number;
+    questionStartedAt: number;
     question: { id: string; text: string; options: string[]; timeLimit: number; correctIndex: number } | null;
     answers: Map<string, { answer: number; responseTimeMs: number }>; // playerId -> answer
     picksRemaining: Map<string, number>; // playerId -> picks remaining this round
@@ -171,12 +172,13 @@ export async function initConquestGame(
   // Initialize draft phase with only active territories
   const draftPhase = {
     currentRound: 0,
+    questionStartedAt: 0,
     question: null as { id: string; text: string; options: string[]; timeLimit: number; correctIndex: number } | null,
     answers: new Map<string, { answer: number; responseTimeMs: number }>(),
     picksRemaining: new Map<string, number>(),
     pickOrder: [] as string[],
     currentPickerIndex: 0,
-    availableTerritories: [...activeTerritoryIds], // Copy of active territories
+    availableTerritories: activeTerritoryIds.filter(id => territories[id] === null),
     timerHandle: null as ReturnType<typeof setTimeout> | null,
   };
 
@@ -418,6 +420,10 @@ function endGame(io: TypedServer, s: ConquestInternalState) {
 }
 
 export function removeConquestGame(gameId: string) {
+  const s = games.get(gameId);
+  if (s?.draftPhase?.timerHandle) clearTimeout(s.draftPhase.timerHandle);
+  if (s?.currentBattle?.timerHandle) clearTimeout(s.currentBattle.timerHandle);
+  if (s?.rebuildSession?.timerHandle) clearTimeout(s.rebuildSession.timerHandle);
   games.delete(gameId);
 }
 
@@ -432,7 +438,8 @@ export async function startDraftRound(
 
   const questions = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language);
   const q = questions[0];
-  if (!q) return;
+  if (!q || games.get(gameId) !== s || !s.draftPhase) return;
+  if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);
 
   // Clear previous round data
   s.draftPhase.question = {
@@ -447,6 +454,7 @@ export async function startDraftRound(
   s.draftPhase.pickOrder = [];
   s.draftPhase.currentPickerIndex = 0;
   s.draftPhase.currentRound++;
+  s.draftPhase.questionStartedAt = Date.now();
 
   s.phase = "draft";
 
@@ -473,7 +481,7 @@ export function recordDraftAnswer(
   gameId: string,
   playerId: string,
   answerIndex: number,
-  responseTimeMs: number
+  _responseTimeMs: number
 ): { success: boolean; error?: string } {
   const s = games.get(gameId);
   if (!s || s.phase !== "draft" || !s.draftPhase) {
@@ -484,6 +492,12 @@ export function recordDraftAnswer(
     return { success: false, error: "Already answered" };
   }
 
+  const question = s.draftPhase.question;
+  if (!s.turnOrder.includes(playerId) || !question || !Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= question.options.length) {
+    return { success: false, error: "Invalid draft answer" };
+  }
+  const responseTimeMs = Math.max(0, Date.now() - s.draftPhase.questionStartedAt);
+  if (responseTimeMs > question.timeLimit * 1000) return { success: false, error: "Answer time expired" };
   s.draftPhase.answers.set(playerId, { answer: answerIndex, responseTimeMs });
   return { success: true };
 }
@@ -493,10 +507,12 @@ export async function processDraftRound(
   gameId: string
 ): Promise<void> {
   const s = games.get(gameId);
-  if (!s || !s.draftPhase) return;
+  if (!s || s.phase !== "draft" || !s.draftPhase) return;
 
   const q = s.draftPhase.question;
   if (!q) return;
+  if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);
+  s.draftPhase.timerHandle = null;
 
   // Calculate rankings: correct + fast answers first
   const playerIds = s.turnOrder;
@@ -569,6 +585,10 @@ export async function processDraftRound(
 
 function startNextPick(io: TypedServer, s: ConquestInternalState): void {
   if (!s.draftPhase) return;
+  if (s.draftPhase.availableTerritories.length === 0) {
+    checkDraftComplete(io, s);
+    return;
+  }
 
   const pickOrder = s.draftPhase.pickOrder;
   const currentIndex = s.draftPhase.currentPickerIndex;
@@ -627,13 +647,14 @@ export function selectDraftTerritory(
 
   // Check if territory is available
   const available = s.draftPhase.availableTerritories;
-  if (!available.includes(territoryId)) {
+  if (!available.includes(territoryId) || s.territories[territoryId] !== null) {
     return { success: false, error: "Territory not available" };
   }
+  const currentPicks = s.draftPhase.picksRemaining.get(playerId) || 0;
+  if (currentPicks <= 0) return { success: false, error: "No picks remaining" };
 
   // Claim the territory
   s.territories[territoryId] = playerId;
-  s.fortHealth[playerId] = (s.fortHealth[playerId] || 0) + 1;
   if (!s.fortTerritoryId[playerId]) {
     s.fortTerritoryId[playerId] = territoryId; // First pick is fort
   }
@@ -642,7 +663,6 @@ export function selectDraftTerritory(
   s.draftPhase.availableTerritories = available.filter(id => id !== territoryId);
 
   // Decrement picks remaining
-  const currentPicks = s.draftPhase.picksRemaining.get(playerId) || 0;
   s.draftPhase.picksRemaining.set(playerId, currentPicks - 1);
 
   // Broadcast territory claimed
@@ -669,7 +689,7 @@ export function selectDraftTerritory(
 
 function skipDraftPick(io: TypedServer, gameId: string): void {
   const s = games.get(gameId);
-  if (!s || !s.draftPhase) return;
+  if (!s || s.phase !== "draft_selection" || !s.draftPhase) return;
 
   // Move to next picker
   s.draftPhase.currentPickerIndex++;
@@ -695,7 +715,8 @@ function checkDraftComplete(io: TypedServer, s: ConquestInternalState): void {
       playerIds,
       s.playerNames,
       s.territories as Record<string, string>, // Filter out nulls via type assertion
-      s.fortTerritoryId
+      s.fortTerritoryId,
+      { difficulty: s.difficulty, language: s.language, categories: s.categories }
     );
 
     // Notify clients that invasion phase is starting

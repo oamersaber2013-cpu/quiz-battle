@@ -8,3 +8,7 @@ dist/
 !.env.example
 
 .vercel
+*.tsbuildinfo
+playwright-report/
+test-results/
+coverage/

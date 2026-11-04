@@ -208,6 +208,17 @@ export interface TeamScoreState {
 export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
   players: PlayerState[];
   activeEffects?: ActivePowerUpEffect[];
+  currentQuestion?: Omit<ClientQuestion, "correctIndex"> | null;
+  questionStartedAt?: number;
+  selectedAnswer?: number | null;
+  answeredAt?: number | null;
+  powerUpSelection?: {
+    availablePowerUps: PowerUpType[];
+    selectedPowerUps: PowerUpType[];
+    maxSelections: number;
+    timeLeft: number;
+    isSelecting: boolean;
+  };
   teams?: TeamScoreState;
   territories?: Record<string, string | null>;
   playerTerritories?: Record<string, string[]>;
@@ -270,11 +281,25 @@ export interface ConquestClientState {
 
 // Invasion Mode State (Phase 2 of conquest)
 export interface InvasionClientState {
-  territories: { id: string | number; ownerId: string | null; troopCount: number; }[];
+  territories: {
+    id: string | number;
+    ownerId: string | null;
+    troopCount: number;
+    name?: string;
+    nameAr?: string;
+    path?: string;
+    center?: { x: number; y: number };
+  }[];
   currentRound: number;
   totalRounds: number;
   phase: 'question' | 'ranking' | 'selection' | 'ended';
   currentQuestion: { id: string; text: string; options: string[]; timeLimit: number; } | null;
+  questionStartedAt?: number;
+  selectedAnswer?: number | null;
+  answeredAt?: number | null;
+  currentTurn?: string | null;
+  picksRemaining?: number;
+  selectableTerritories?: number[];
   lastRanking: { playerId: string; playerName: string; rank: number; picks: number; responseTimeMs: number; }[];
   selectionPhase: {
     isActive: boolean;

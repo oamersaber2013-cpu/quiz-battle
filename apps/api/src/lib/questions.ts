@@ -203,7 +203,7 @@ async function fetchSingleCategoryQuestions(
   const typesToGenerate = questionTypes || Array(count).fill(QuestionType.MultipleChoice);
 
   // PRIORITY 0: CHECK CACHE FIRST
-  const cacheKey = `${targetCategory}:${difficulty}`;
+  const cacheKey = `${targetCategory}:${language}:${[...(subcategories || [])].sort().join(",")}`;
   const cached = await getCachedQuestions(cacheKey, difficulty);
   if (cached && cached.length >= count) {
     const availableCached = gameId
@@ -227,6 +227,8 @@ async function fetchSingleCategoryQuestions(
         where: {
           category: targetCategory.toLowerCase(),
           difficulty: difficulty.toLowerCase(),
+          isActive: true,
+          ...(subcategories?.length ? { subcategory: { in: subcategories } } : {}),
         },
       });
 
@@ -239,20 +241,24 @@ async function fetchSingleCategoryQuestions(
         const shuffled = [...availableQuestions].sort(() => Math.random() - 0.5);
         const selected = shuffled.slice(0, Math.min(count, shuffled.length));
 
-        const converted = selected.map(q => {
-          const questionId = generateQuestionId();
+        const converted = selected.flatMap(q => {
+          const optionsJson = language === 'ar' ? q.optionsArJson : q.optionsEnJson;
+          let options: unknown;
+          try { options = JSON.parse(optionsJson || "[]"); } catch { return []; }
+          // The current live answer protocol accepts one option index.
+          const correctIndex = q.correctAnswer?.trim() ? Number(q.correctAnswer) : NaN;
+          if (!Array.isArray(options) || !options.every(o => typeof o === "string") || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length) return [];
           if (gameId) markQuestionUsed(gameId, q.id);
-          
-          return {
-            id: questionId,
+          return [{
+            id: q.id,
             text: language === 'ar' ? q.textAr : q.textEn,
-            options: language === 'ar' ? JSON.parse(q.optionsArJson) : JSON.parse(q.optionsEnJson),
-            correctIndex: q.correctIndex,
+            options,
+            correctIndex,
             category: targetCategory,
             difficulty: difficulty,
             timeLimit: getTimeLimitForDifficulty(difficulty),
             type: q.type as QuestionType || QuestionType.MultipleChoice,
-          };
+          }];
         });
 
         results.push(...converted);
@@ -359,14 +365,14 @@ async function fetchSingleCategoryQuestions(
 
   // PRIORITY 5: Final Bank Fallback
   if (remaining > 0) {
-    const pool = QUESTION_BANK[difficulty] || QUESTION_BANK[Difficulty.Novice];
+    const pool = (QUESTION_BANK[difficulty] || QUESTION_BANK[Difficulty.Novice]).map((q, index) => ({ ...q, id: `bank:${difficulty}:${index}` }));
     const availablePool = gameId
       ? pool.filter(q => !isQuestionUsed(gameId, q.id))
       : pool;
     
     const shuffled = [...availablePool].sort(() => Math.random() - 0.5);
     results.push(...shuffled.slice(0, remaining).map(q => {
-      const questionId = generateQuestionId();
+      const questionId = q.id;
       if (gameId) markQuestionUsed(gameId, questionId);
       
       return {

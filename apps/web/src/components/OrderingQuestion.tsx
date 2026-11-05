@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, Reorder, AnimatePresence } from "framer-motion";
-import { GameStatus } from "@quiz-battle/shared";
+import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
+import type { LastAnswerResult } from "@/store/gameStore";
 
 interface OrderingItem {
   id: string;
@@ -14,8 +15,8 @@ interface OrderingQuestionProps {
   question: any;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
-  lastAnswerResult: any;
+  selectedAnswer: SubmittedAnswer | null;
+  lastAnswerResult: LastAnswerResult | null;
   language: "en" | "ar";
   onSubmit: (orderedIndices: number[]) => void;
 }
@@ -23,39 +24,45 @@ interface OrderingQuestionProps {
 export function OrderingQuestion({
   question,
   status,
+  timeLeft,
   selectedAnswer,
   lastAnswerResult,
   language,
   onSubmit,
 }: OrderingQuestionProps) {
   const isAr = language === "ar";
-  const [items, setItems] = useState<OrderingItem[]>(() => {
-    // Shuffle items initially
-    const options: string[] = question.options || [];
-    return options.map((text: string, index: number) => ({
+  const options: string[] = (isAr ? question.optionsAr : question.optionsEn) || question.options || [];
+  const buildItems = (): OrderingItem[] => {
+    const source = options.map((text: string, index: number) => ({
       id: `item-${index}`,
       text,
       originalIndex: index,
-    })).sort(() => Math.random() - 0.5);
-  });
-  const [submitted, setSubmitted] = useState(false);
+    }));
+    if (Array.isArray(selectedAnswer)) {
+      return selectedAnswer.map((index) => source[index]).filter(Boolean);
+    }
+    return source.sort(() => Math.random() - 0.5);
+  };
+  const [items, setItems] = useState<OrderingItem[]>(buildItems);
+  useEffect(() => {
+    setItems(buildItems());
+  }, [question.id, selectedAnswer, language]);
 
-  const hasAnswered = selectedAnswer !== null || submitted;
-  const showResult = status === GameStatus.AnswerReveal || lastAnswerResult;
+  const hasAnswered = selectedAnswer !== null;
+  const showResult = status === GameStatus.AnswerReveal || !!lastAnswerResult;
+  const canAnswer = status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
-  const correctOrder: number[] = question.correctOrder || question.options?.map((_: string, i: number) => i);
+  const correctOrder = lastAnswerResult?.correctOrder || [];
 
   const handleSubmit = () => {
-    if (hasAnswered) return;
+    if (!canAnswer) return;
     const currentOrder = items.map((item: OrderingItem) => item.originalIndex);
-    setSubmitted(true);
     onSubmit(currentOrder);
   };
 
   const isOrderCorrect = () => {
-    const currentOrder = items.map((item: OrderingItem) => item.originalIndex);
-    return JSON.stringify(currentOrder) === JSON.stringify(correctOrder);
+    return lastAnswerResult?.correct === true;
   };
 
   const getItemPosition = (originalIndex: number) => {
@@ -64,7 +71,7 @@ export function OrderingQuestion({
 
   // Handle reorder - only allow when not answered
   const handleReorder = (newOrder: OrderingItem[]) => {
-    if (!hasAnswered) {
+    if (canAnswer) {
       setItems(newOrder);
     }
   };
@@ -96,7 +103,7 @@ export function OrderingQuestion({
               <Reorder.Item
                 key={item.id}
                 value={item}
-                disabled={hasAnswered || showResult}
+                dragListener={canAnswer}
                 className={`relative ${hasAnswered || showResult ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <motion.div
@@ -175,7 +182,7 @@ export function OrderingQuestion({
           animate={{ opacity: 1, y: 0 }}
           whileHover={!hasAnswered ? { scale: 1.02 } : {}}
           whileTap={!hasAnswered ? { scale: 0.98 } : {}}
-          disabled={hasAnswered}
+          disabled={!canAnswer}
           onClick={handleSubmit}
           className={`w-full p-4 rounded-2xl font-bold text-lg transition-all ${
             !hasAnswered
@@ -194,7 +201,7 @@ export function OrderingQuestion({
       )}
 
       {/* Results Summary */}
-      {showResult && (
+      {showResult && lastAnswerResult && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -229,7 +236,7 @@ export function OrderingQuestion({
                     <span className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold">
                       {position + 1}
                     </span>
-                    <span>{question.options[index]}</span>
+                    <span>{options[index]}</span>
                   </div>
                 ))}
               </div>

@@ -2,7 +2,7 @@
 import { useGameStore } from "@/store/gameStore";
 import { getSocket } from "@/lib/socket";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { emitConquestAttack } from "@/lib/socket";
 import { WorldMap, SoundEffects, VICTORY_STATEMENTS, DEFEAT_STATEMENTS, TERRITORIES } from "./WorldMap";
 
@@ -20,6 +20,12 @@ export function ConquestGame() {
   } = useGameStore();
 
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [draftStartTime, setDraftStartTime] = useState<number>(Date.now);
+  const draftQuestionId = conquestState?.draftPhase?.question?.id;
+  const conquestPhase = conquestState?.phase;
+  useEffect(() => {
+    if (conquestPhase === "draft" && draftQuestionId) setDraftStartTime(Date.now());
+  }, [conquestPhase, draftQuestionId]);
 
   // Handle battle results with sounds and statements
   useEffect(() => {
@@ -89,7 +95,7 @@ export function ConquestGame() {
   const isBattling = currentBattle && (currentBattle.attackerId === userId || currentBattle.defenderId === userId);
   const isRebuilding = rebuildSession && rebuildSession.playerId === userId;
 
-  const handleTerritoryClick = useCallback((tid: string) => {
+  const handleTerritoryClick = (tid: string) => {
     if (phase === "draft_selection") {
       if (draftPhase?.pickOrder[draftPhase.currentPickerIndex] !== userId) return;
       if (!draftPhase?.availableTerritories?.includes(tid)) return;
@@ -100,7 +106,7 @@ export function ConquestGame() {
     const ownerId = territoryOwners[tid];
     if (ownerId === userId) return;
     setSelectedTarget(tid);
-  }, [phase, draftPhase, territoryOwners, isMyTurn, userId, gameId]);
+  };
 
   const handleAttack = async () => {
     if (selectedTarget === null || !gameId) return;
@@ -112,11 +118,6 @@ export function ConquestGame() {
     if (!gameId) return;
     getSocket().emit("conquest:rebuild", { gameId });
   };
-
-  const [draftStartTime, setDraftStartTime] = useState<number>(Date.now());
-  useEffect(() => {
-    if (phase === "draft" && draftPhase?.question) setDraftStartTime(Date.now());
-  }, [phase, draftPhase?.question?.id]);
 
   const handleAnswer = (index: number) => {
     if (!gameId) return;

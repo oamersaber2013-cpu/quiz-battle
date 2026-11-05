@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { motion } from "framer-motion";
-import { GameStatus, ClientQuestion } from "@quiz-battle/shared";
+import { GameStatus, ClientQuestion, SubmittedAnswer } from "@quiz-battle/shared";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TRUE/FALSE QUESTION COMPONENT - Alternative question type with two choices
@@ -12,7 +12,7 @@ interface TrueFalseQuestionProps {
   question: ClientQuestion;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: { correct: boolean; correctIndex: number } | null;
   language: "en" | "ar";
   themeColor?: string;
@@ -52,7 +52,7 @@ export function TrueFalseQuestion({
   const t = TRANSLATIONS[language];
   
   const hasAnswered = selectedAnswer !== null;
-  const isRevealing = status === GameStatus.Results && lastAnswerResult !== null;
+  const isRevealing = status === GameStatus.AnswerReveal && lastAnswerResult !== null;
   
   // True = index 0, False = index 1
   const handleTrue = useCallback(() => {

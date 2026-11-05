@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { GameMode, GameStatus, GAME_MODE_CONFIG, PowerUpType, QuestionType, getRandomQuote } from "@quiz-battle/shared";
+import { GameMode, GameStatus, GAME_MODE_CONFIG, PowerUpType, QuestionType, getRandomQuote, SubmittedAnswer } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { emitAnswer, emitPowerUp, getSocket, emitInvasionAnswer } from "@/lib/socket";
 import { ChatWindow } from "@/components/ChatWindow";
@@ -22,6 +22,9 @@ import { soundManager } from "@/lib/sounds";
 import { QuestionTransition } from "@/components/QuestionTransition";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useGameConnection } from "@/hooks/useGameConnection";
+import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 
 const TARGETED_POWER_UPS = new Set<PowerUpType>([
   PowerUpType.Freeze,
@@ -160,6 +163,7 @@ function GamePageContent() {
   const searchParams = useSearchParams();
   const gameId = params.gameId as string;
   const isSpectating = searchParams.get("spectate") === "true";
+  const { joining, passwordRequired, passwordError, passwordPending, submitPassword } = useGameConnection(gameId, isSpectating);
 
   const {
     userId,
@@ -238,6 +242,11 @@ function GamePageContent() {
   }, [currentQuestion?.id, mode, status]);
 
   useEffect(() => {
+    if (joining) return;
+    if (status === GameStatus.Lobby) {
+      router.replace(`/lobby/${gameId}${isSpectating ? "?spectate=true" : ""}`);
+      return;
+    }
     if (status === GameStatus.Ended) {
       router.push(`/results/${gameId}`);
       return;
@@ -255,7 +264,7 @@ function GamePageContent() {
     }
 
     setFeedbackQuote(null);
-  }, [gameId, lastAnswerResult, router, status]);
+  }, [gameId, lastAnswerResult, router, status, joining, isSpectating]);
 
   useEffect(() => {
     if (status !== GameStatus.Question) {
@@ -279,19 +288,19 @@ function GamePageContent() {
     (player) => player.userId !== userId && !player.isEliminated && player.isConnected
   );
 
-  function handleAnswer(index: number | string | number[]) {
-    if (isFrozen || isSpectating) return;
-    if (selectedAnswer !== null || !currentQuestion) return;
-    if (typeof index === 'number' && eliminatedOptions.includes(index)) return;
-    
-    // Convert to number if needed
-    const numericIndex = typeof index === 'number' ? index : 0;
-    selectAnswer(numericIndex);
-    
-    if (invasionState) {
-      emitInvasionAnswer(gameId, numericIndex, Date.now() - (questionStartedAt || Date.now()));
+  function handleAnswer(answer: SubmittedAnswer) {
+    const state = useGameStore.getState();
+    const frozen = state.activeEffects.some((effect) => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > Date.now()));
+    if (frozen || isSpectating) return;
+    if (state.selectedAnswer !== null || !state.currentQuestion || state.status !== GameStatus.Question || state.timeLeft <= 0 || state.currentPlayer?.isEliminated) return;
+    if (typeof answer === "number" && state.eliminatedOptions.includes(answer)) return;
+    if (state.invasionState) {
+      if (typeof answer !== "number") return;
+      selectAnswer(answer);
+      emitInvasionAnswer(gameId, answer, Date.now() - (state.questionStartedAt || Date.now()));
     } else {
-      emitAnswer(gameId, currentQuestion.id, numericIndex);
+      selectAnswer(answer);
+      emitAnswer(gameId, state.currentQuestion.id, answer);
     }
   }
 
@@ -348,6 +357,18 @@ function GamePageContent() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (passwordRequired) {
+    return <RoomPasswordPrompt language={language} error={passwordError} pending={passwordPending} onSubmit={submitPassword} onCancel={() => router.push("/")} />;
+  }
+
+  if (joining) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh" }}>
+        <LoadingSpinner size="lg" message={isRTL ? "جاري الاتصال بالمعركة..." : "Connecting to battle..."} />
+      </div>
+    );
+  }
 
   // Show transition overlay
   if (showTransition && currentRound > 0) {
@@ -536,16 +557,14 @@ function GamePageContent() {
               if (isImageQuestion) {
                 return (
                   <ImageQuestion
+                    key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
                     timeLeft={timeLeft}
                     selectedAnswer={selectedAnswer}
                     lastAnswerResult={lastAnswerResult}
                     language={language}
-                    onAnswer={(index) => {
-                      selectAnswer(index);
-                      emitAnswer(gameId, currentQuestion.id, index);
-                    }}
+                    onAnswer={handleAnswer}
                   />
                 );
               }
@@ -554,16 +573,14 @@ function GamePageContent() {
               if (isAudioQuestion) {
                 return (
                   <AudioQuestion
+                    key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
                     timeLeft={timeLeft}
                     selectedAnswer={selectedAnswer}
                     lastAnswerResult={lastAnswerResult}
                     language={language}
-                    onAnswer={(index) => {
-                      selectAnswer(index);
-                      emitAnswer(gameId, currentQuestion.id, index);
-                    }}
+                    onAnswer={handleAnswer}
                   />
                 );
               }
@@ -572,16 +589,14 @@ function GamePageContent() {
               if (isTrueFalseQuestion) {
                 return (
                   <TrueFalseQuestion
+                    key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
                     timeLeft={timeLeft}
                     selectedAnswer={selectedAnswer}
                     lastAnswerResult={lastAnswerResult}
                     language={language}
-                    onAnswer={(index) => {
-                      selectAnswer(index);
-                      emitAnswer(gameId, currentQuestion.id, index);
-                    }}
+                    onAnswer={handleAnswer}
                   />
                 );
               }
@@ -590,6 +605,7 @@ function GamePageContent() {
               if (isMultiSelect) {
                 return (
                   <MultiSelectQuestion
+                    key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
                     timeLeft={timeLeft}
@@ -607,6 +623,7 @@ function GamePageContent() {
               if (isFillBlank) {
                 return (
                   <FillBlankQuestion
+                    key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
                     timeLeft={timeLeft}
@@ -624,6 +641,7 @@ function GamePageContent() {
               if (isOrdering) {
                 return (
                   <OrderingQuestion
+                    key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
                     timeLeft={timeLeft}

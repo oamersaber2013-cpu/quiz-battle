@@ -6,14 +6,16 @@
   "scripts": {
     "postinstall": "prisma generate",
     "generate": "prisma generate",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "push": "prisma db push",
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "studio": "prisma studio",
-    "seed": "tsx ../api/src/scripts/seedQuestions.ts"
+    "seed": "npm run build -w @quiz-battle/shared && prisma db seed"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0"
+    "@prisma/client": "^5.14.0",
+    "@quiz-battle/shared": "*"
   },
   "devDependencies": {
     "prisma": "^5.14.0",

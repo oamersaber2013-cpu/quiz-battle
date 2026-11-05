@@ -28,6 +28,11 @@ model User {
   subscriptionStatus   String?   // active, canceled, past_due
   subscriptionEndsAt   DateTime?
 
+  // Battle credits exposed by auth and room creation.
+  hasPurchasedGame      Boolean @default(false)
+  shortGamesRemaining   Int     @default(0)
+  longGamesRemaining    Int     @default(0)
+
   // Stats
   xp                     Int       @default(0)
   totalGamesPlayed       Int       @default(0)
@@ -124,9 +129,11 @@ model Question {
 // Completed game sessions for history/stats
 model GameSession {
   id            String   @id @default(cuid())
+  hostId        String?
   joinCode      String
   mode          String
   difficulty    String
+  language      String   @default("en")
   category      String?
   totalRounds   Int
   playedAt      DateTime @default(now())
@@ -151,6 +158,7 @@ model PlayerGameStat {
   
   userId          String
   username        String
+  avatar          String?
   score           Int      @default(0)
   rank            Int      @default(0)
   correctAnswers  Int      @default(0)

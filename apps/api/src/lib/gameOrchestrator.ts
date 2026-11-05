@@ -1,5 +1,6 @@
 import { Server, Socket } from "socket.io";
 import { initConquestGame } from "./conquestOrchestrator";
+import { registerInvasionCompletionHandler } from "./invasionOrchestrator";
 import type { SafeRedis } from "../lib/redis";
 import {
   GameMode,
@@ -10,6 +11,10 @@ import {
   ServerToClientEvents,
   ClientToServerEvents,
   getRandomQuote,
+  SubmittedAnswer,
+  toSafeClientQuestion,
+  FinalResult,
+  AnswerReveal,
 } from "@quiz-battle/shared";
 import { KEYS, getRoomState, setRoomState } from "../lib/redis";
 import { prisma } from "@quiz-battle/db";
@@ -25,6 +30,9 @@ import {
 import { fillWithBots, removeBots, getBotInfo } from "../lib/aiBots";
 import { recordAnswer } from "./antiCheat";
 import { trackEvent } from "./analytics";
+import { GameResult, saveGameSession } from "./gamePersistence";
+import { removeRoomAccess } from "./roomAccess";
+import { getAnswerFeedback, getBotAnswer, isAnswerCorrect, isSingleChoiceQuestion, normalizeSubmittedAnswer } from "./answers";
 
 function roastPlayer(io: TypedServer, gameId: string, type: "right" | "wrong", username: string, language: "en" | "ar") {
   const quote = getRandomQuote(type);
@@ -54,7 +62,7 @@ interface GameState {
   totalRounds: number;
   maxPlayers: number;
   questionStartTime: number;
-  answersThisRound: Record<string, { index: number; timestamp: number; latencyMs: number }>;
+  answersThisRound: Record<string, { index?: number; answer?: SubmittedAnswer; timestamp: number; latencyMs: number }>;
   lastAnswerByPlayer: Record<string, boolean>; // for WHOLE power-up
   activeEffects: import("@quiz-battle/shared").ActivePowerUpEffect[];
   categories?: string[];
@@ -63,10 +71,26 @@ interface GameState {
   // Conquest mode
   territories?: Record<string, string | null>; // territory id -> team/player id
   playerTerritories?: Record<string, string[]>; // playerId -> territory ids
+  finalResults?: FinalResult[];
+  resultsPersisted?: boolean;
+  isPrivate?: boolean;
+}
+
+interface ScoredAnswer {
+  userId: string;
+  answerIndex: number;
+  timestamp: number;
+  isCorrect: boolean;
+  scoreDelta: number;
+  latencyMs: number;
+  round: number;
 }
 
 // Map of active game states in memory (for this worker)
 const activeGames = new Map<string, GameState>();
+// Keep scoring history private instead of spreading it into room snapshots.
+const answerHistories = new Map<string, Map<string, ScoredAnswer[]>>();
+const resultTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
 const FREEZE_DURATION_MS = 5000;
 const SANDSTORM_DURATION_MS = 7000;
 const TIME_WARP_BONUS_MS = 5000;
@@ -87,13 +111,46 @@ export function getAllActiveGames(): GameState[] {
   return Array.from(activeGames.values());
 }
 
+export function getViewerAnswerResult(
+  gameId: string, userId: string
+): (AnswerReveal & { scoreDelta: number; newScore: number }) | null {
+  const game = activeGames.get(gameId);
+  const question = game?.questions[game.currentRound - 1];
+  const player = game?.players[userId];
+  if (!game || game.status !== GameStatus.AnswerReveal || !question || !player) return null;
+  const answer = answerHistories.get(gameId)?.get(userId)?.find(record => record.round === game.currentRound);
+  return {
+    ...getAnswerFeedback(question), correct: answer?.isCorrect ?? false,
+    scoreDelta: answer?.scoreDelta ?? 0, newScore: player.score,
+  };
+}
+
 export function setActiveGame(gameId: string, state: GameState): void {
   activeGames.set(gameId, state);
 }
 
 export function removeActiveGame(gameId: string): void {
   activeGames.delete(gameId);
+  answerHistories.delete(gameId);
+  clearResultTimers(gameId);
+  removeRoomAccess(gameId);
   clearUsedQuestions(gameId); // Clean up question tracking
+}
+
+function clearResultTimers(gameId: string): void {
+  for (const timer of resultTimers.get(gameId) || []) clearTimeout(timer);
+  resultTimers.delete(gameId);
+}
+
+function scheduleResultTask(game: GameState, delayMs: number, task: () => void): void {
+  const timers = resultTimers.get(game.gameId) || new Set<ReturnType<typeof setTimeout>>();
+  const timer = setTimeout(() => {
+    timers.delete(timer);
+    if (activeGames.get(game.gameId) === game) task();
+  }, delayMs);
+  timer.unref();
+  timers.add(timer);
+  resultTimers.set(game.gameId, timers);
 }
 
 // ─── Game Lifecycle ─────────────────────────────────────────
@@ -105,6 +162,9 @@ export async function startGame(
 ): Promise<void> {
   const game = activeGames.get(gameId);
   if (!game) return;
+  answerHistories.set(gameId, new Map());
+  game.finalResults = undefined;
+  game.resultsPersisted = undefined;
 
   // Track game start
   await trackEvent("game_started", game.hostId, { gameId, mode: game.mode, difficulty: game.difficulty });
@@ -121,7 +181,8 @@ export async function startGame(
     game.categories, 
     game.subcategories, 
     game.language,
-    gameId  // Pass gameId to track used questions
+    gameId, // Pass gameId to track used questions
+    { singleChoiceOnly: game.mode === GameMode.Chaos || game.mode === GameMode.Conquest }
   );
 
 
@@ -183,8 +244,7 @@ async function runRounds(
 
     await syncToRedis(redis, game);
 
-    // Send question to all (without correctIndex)
-    const { correctIndex, ...clientQuestion } = q;
+    const clientQuestion = toSafeClientQuestion(q);
     
 
 
@@ -235,33 +295,11 @@ async function runRounds(
       }
 
       setTimeout(() => {
+        if (game.status !== GameStatus.Question || game.questions[game.currentRound - 1]?.id !== q.id) return;
         if (game.answersThisRound[bot.userId]) return; // Already answered
-        const answerIndex = isCorrect
-          ? q.correctIndex
-          : [0, 1, 2, 3].filter((i) => i !== q.correctIndex)[Math.floor(Math.random() * 3)];
-        
-        const latencyMs = responseTime;
-        const scoreDelta = calculateScoreDelta({
-          isCorrect,
-          difficulty: game.difficulty,
-          timeLimit: clientQuestion.timeLimit,
-          latencyMs,
-          hasDoubleDown: false,
-        });
-
-        game.players[bot.userId].score += scoreDelta;
-        if (isCorrect) {
-          game.players[bot.userId].streak = (game.players[bot.userId].streak || 0) + 1;
-        } else {
-          game.players[bot.userId].streak = 0;
-        }
-
-        game.answersThisRound[bot.userId] = {
-          index: answerIndex,
-          timestamp: game.questionStartTime + responseTime,
-          latencyMs,
-        };
-        game.lastAnswerByPlayer[bot.userId] = isCorrect;
+        const answer = getBotAnswer(q, isCorrect);
+        // Bots follow the same validation and one-time reveal scoring as humans.
+        if (answer !== undefined) handlePlayerAnswer(game, io, redis, bot.userId, q.id, answer, Date.now());
       }, responseTime);
     }
 
@@ -299,7 +337,7 @@ async function runRounds(
       const wrongUsers = Object.values(game.players)
         .filter((p) => {
           const ans = game.answersThisRound[p.userId];
-          return !ans || ans.index !== correctIndex;
+          return !ans || !isAnswerCorrect(q, ans.answer ?? ans.index);
         })
         .map((p) => p.userId);
 
@@ -329,14 +367,14 @@ async function revealAnswers(
   _redis: SafeRedis,
   game: GameState,
   _questionId: string,
-  correctIndex: number
+  _correctIndex: number
 ): Promise<void> {
   // Calculate individual scores first
   const currentQuestion = game.questions[game.currentRound - 1];
 
   Object.values(game.players).forEach((player) => {
     const answer = game.answersThisRound[player.userId];
-    const isCorrect = answer?.index === correctIndex;
+    const isCorrect = isAnswerCorrect(currentQuestion, answer?.answer ?? answer?.index);
     game.lastAnswerByPlayer[player.userId] = isCorrect;
 
     const hasDoubleDown = game.activeEffects.some(
@@ -356,6 +394,19 @@ async function revealAnswers(
     player.score = Math.max(0, player.score + delta);
     if (isCorrect) player.streak++;
     else player.streak = 0;
+    if (answer) {
+      const history = answerHistories.get(game.gameId);
+      if (history) {
+        const previous = history.get(player.userId) || [];
+        previous.push({
+          userId: player.userId,
+          answerIndex: typeof (answer.answer ?? answer.index) === "number" ? (answer.answer ?? answer.index) as number : -1,
+          timestamp: answer.timestamp, isCorrect, scoreDelta: delta, latencyMs: answer.latencyMs,
+          round: game.currentRound,
+        });
+        history.set(player.userId, previous);
+      }
+    }
 
     // Conquest mode: Capture logic (Overanswer)
     if (game.mode === GameMode.Conquest && game.territories && game.playerTerritories) {
@@ -368,7 +419,7 @@ async function revealAnswers(
         const ownerAnswer = currentOwnerId
           ? game.answersThisRound[currentOwnerId]
           : undefined;
-        const ownerIsCorrect = ownerAnswer?.index === correctIndex;
+        const ownerIsCorrect = isAnswerCorrect(currentQuestion, ownerAnswer?.answer ?? ownerAnswer?.index);
 
         // If owner is wrong OR you were faster than the owner
         if (!ownerIsCorrect || (answer && ownerAnswer && answer.latencyMs < ownerAnswer.latencyMs)) {
@@ -402,14 +453,14 @@ async function revealAnswers(
       correct: isCorrect,
       scoreDelta: delta,
       newScore: player.score,
-      correctIndex,
+      ...getAnswerFeedback(currentQuestion),
     });
   });
 
   // ROAST ONE RANDOM WRONG ANSWERER
   const wrongAnswerers = Object.values(game.players).filter(p => {
     const ans = game.answersThisRound[p.userId];
-    return !ans || ans.index !== correctIndex;
+    return !ans || !isAnswerCorrect(currentQuestion, ans.answer ?? ans.index);
   });
   if (wrongAnswerers.length > 0) {
     const victim = wrongAnswerers[Math.floor(Math.random() * wrongAnswerers.length)];
@@ -432,29 +483,82 @@ async function endGame(
   redis: SafeRedis,
   game: GameState
 ): Promise<void> {
+  const answerHistory = answerHistories.get(game.gameId) || new Map<string, ScoredAnswer[]>();
+  await finishCompletedGame(io, game, computeFinalResults(game.players, answerHistory, game.difficulty));
+}
+
+async function finishCompletedGame(io: TypedServer, game: GameState, results: FinalResult[]): Promise<void> {
+  if (game.status === GameStatus.Ended && game.finalResults) return;
   game.status = GameStatus.Ended;
+  game.finalResults = results;
 
   // Track game completion
   await trackEvent("game_completed", game.hostId, { gameId: game.gameId, mode: game.mode });
 
-  // Build answer history for XP computation
-  const answerHistory = new Map<string, Array<{ userId: string; answerIndex: number; timestamp: number; isCorrect: boolean; scoreDelta: number; latencyMs: number }>>();
-  Object.values(game.players).forEach((p) => {
-    answerHistory.set(p.userId, []);
-  });
-
-  const results = computeFinalResults(game.players, answerHistory, game.difficulty);
+  const completed: GameResult = {
+    gameId: game.gameId, hostId: game.hostId, joinCode: game.joinCode,
+    mode: game.mode, difficulty: game.difficulty, language: game.language,
+    category: game.categories?.join(", "), totalRounds: game.totalRounds,
+    players: results, winnerId: results[0]?.userId, winnerScore: results[0]?.score,
+    questionIds: game.questions.map(question => question.id), endedAt: new Date(),
+  };
+  try {
+    await saveGameSession(completed);
+    game.resultsPersisted = true;
+  } catch (error) {
+    game.resultsPersisted = false;
+    console.error("[GamePersistence] Completed results are pending:", error);
+  }
 
   io.to(game.gameId).emit("game:end", {
     results,
     xpAwarded: results[0]?.xpEarned ?? 0,
+    resultsPersisted: game.resultsPersisted,
   });
 
-  // Clean up active games after 30s
-  setTimeout(() => {
-    removeActiveGame(game.gameId);
-  }, 30000);
+  if (game.resultsPersisted) {
+    scheduleResultTask(game, 30000, () => removeActiveGame(game.gameId));
+  } else {
+    // Preserve the live result during a temporary outage, with bounded retries
+    // and the room's two-hour memory limit. Never claim a failed write was saved.
+    scheduleResultTask(game, 2 * 60 * 60 * 1000, () => removeActiveGame(game.gameId));
+    const retryDelays = [5000, 15000, 30000];
+    const retry = (attempt: number) => {
+      scheduleResultTask(game, retryDelays[attempt], () => {
+        saveGameSession(completed).then(() => {
+          if (activeGames.get(game.gameId) !== game) return;
+          game.resultsPersisted = true;
+          clearResultTimers(game.gameId);
+          scheduleResultTask(game, 30000, () => removeActiveGame(game.gameId));
+        }).catch(error => {
+          console.error("[GamePersistence] Completed results retry failed:", error);
+          if (activeGames.get(game.gameId) === game && attempt + 1 < retryDelays.length) retry(attempt + 1);
+        });
+      });
+    };
+    retry(0);
+  }
 }
+
+registerInvasionCompletionHandler(async (io, completed) => {
+  const game = activeGames.get(completed.gameId);
+  if (!game || game.mode !== GameMode.Conquest) throw new Error("Conquest room is no longer available");
+  game.totalRounds = completed.totalRounds;
+  const results = completed.playerIds.map(userId => {
+    const player = game.players[userId];
+    const score = completed.scores[userId] || 0;
+    if (player) player.score = score;
+    return {
+      userId, username: player?.username || completed.playerNames[userId] || userId,
+      ...(player?.avatar ? { avatar: player.avatar } : {}),
+      score, rank: 0,
+      // Territory scoring does not track quiz-answer counts or response times.
+      correctAnswers: 0, totalAnswers: 0, avgAnswerTime: 0, xpEarned: 0,
+    };
+  }).sort((a, b) => b.score - a.score);
+  results.forEach((result, index) => result.rank = index + 1);
+  await finishCompletedGame(io, game, results);
+});
 
 // ─── Player Answer Handler ───────────────────────────────────
 
@@ -464,11 +568,15 @@ export async function handlePlayerAnswer(
   redis: SafeRedis,
   userId: string,
   questionId: string,
-  answerIndex: number,
+  submittedAnswer: SubmittedAnswer,
   clientTimestamp: number
 ): Promise<void> {
   const q = game.questions[game.currentRound - 1];
   if (!q || q.id !== questionId) return;
+  const player = game.players[userId];
+  if (game.status !== GameStatus.Question || !player || player.isEliminated || !player.isConnected) return;
+  const answer = normalizeSubmittedAnswer(q, submittedAnswer);
+  if (answer === undefined) return;
 
   // Anti-cheat: reject duplicate answers
   if (game.answersThisRound[userId]) return;
@@ -480,7 +588,7 @@ export async function handlePlayerAnswer(
   if (!isTimingValid(clientTimestamp, game.questionStartTime, getEffectiveTimeLimitMs(game, userId, q))) return;
 
   const latencyMs = Date.now() - game.questionStartTime;
-  const isCorrect = answerIndex === q.correctIndex;
+  const isCorrect = isAnswerCorrect(q, answer);
   
   // Record answer for anti-cheat analysis
   recordAnswer({
@@ -491,7 +599,11 @@ export async function handlePlayerAnswer(
     timestamp: Date.now(),
   });
   
-  game.answersThisRound[userId] = { index: answerIndex, timestamp: clientTimestamp, latencyMs };
+  game.answersThisRound[userId] = {
+    answer,
+    ...(typeof answer === "number" ? { index: answer } : {}),
+    timestamp: Date.now(), latencyMs,
+  };
 }
 
 // ─── Power-Up Handler ────────────────────────────────────────
@@ -515,6 +627,9 @@ export async function handlePowerUp(
 
   const idx = player.powerUpInventory.indexOf(type);
   if (idx === -1) return { success: false, error: "Power-up not in inventory" };
+  if (type === PowerUpType.FiftyFifty && !isSingleChoiceQuestion(game.questions[game.currentRound - 1])) {
+    return { success: false, error: "50/50 is only available for single-choice questions" };
+  }
 
   if (requiresTarget(type)) {
     if (!targetUserId) return { success: false, error: "Choose a target first" };
@@ -689,10 +804,26 @@ const MAX_POWERUP_SELECTIONS = 3; // Each player can pick 3 powerups
 interface PowerUpSelectionState {
   selections: Record<string, PowerUpType[]>; // userId -> selected powerups
   confirmed: Set<string>; // users who confirmed their selection
+  startedAt: number;
   timerHandle: ReturnType<typeof setTimeout> | null;
 }
 
 const powerUpSelections = new Map<string, PowerUpSelectionState>(); // gameId -> selection state
+
+export function getPowerUpSelectionSnapshot(
+  gameId: string,
+  userId: string
+): import("@quiz-battle/shared").SyncedGameRoom["powerUpSelection"] {
+  const selection = powerUpSelections.get(gameId);
+  if (!selection) return undefined;
+  return {
+    availablePowerUps: [...STARTER_POWER_UPS],
+    selectedPowerUps: [...(selection.selections[userId] || [])],
+    maxSelections: MAX_POWERUP_SELECTIONS,
+    timeLeft: Math.max(0, Math.ceil((selection.startedAt + POWERUP_SELECTION_TIME_MS - Date.now()) / 1000)),
+    isSelecting: !selection.confirmed.has(userId),
+  };
+}
 
 // Store io reference for powerup selection phase
 const ioRef = new Map<string, TypedServer>();
@@ -710,6 +841,7 @@ export function startPowerUpSelectionPhase(io: TypedServer, redis: SafeRedis, ga
   const selectionState: PowerUpSelectionState = {
     selections: {},
     confirmed: new Set(),
+    startedAt: Date.now(),
     timerHandle: null,
   };
 

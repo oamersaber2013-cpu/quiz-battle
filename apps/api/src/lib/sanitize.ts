@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from "express";
+import { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 
 const DANGEROUS_PATTERNS = [
   /<script[^>]*>.*?<\/script>/gi,
@@ -31,7 +31,9 @@ export function sanitizeObject(obj: any): any {
   if (obj && typeof obj === "object") {
     const sanitized: any = {};
     for (const key in obj) {
-      sanitized[key] = sanitizeObject(obj[key]);
+      // Credentials are opaque; trimming/truncating them changes what is verified.
+      sanitized[key] = ["password", "idToken", "accessToken"].includes(key) && typeof obj[key] === "string"
+        ? obj[key] : sanitizeObject(obj[key]);
     }
     return sanitized;
   }
@@ -39,7 +41,7 @@ export function sanitizeObject(obj: any): any {
   return obj;
 }
 
-export function sanitizeInput(req: Request, res: Response, next: NextFunction) {
+export function sanitizeInput(req: FastifyRequest, res: FastifyReply, next: HookHandlerDoneFunction) {
   if (req.body) {
     req.body = sanitizeObject(req.body);
   }

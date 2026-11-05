@@ -3,6 +3,8 @@ import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { useGameStore } from "@/store/gameStore";
+import { GameMode, type SavedGameResults } from "@quiz-battle/shared";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
 
 const RANK_ICONS = ["👑", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
 
@@ -24,6 +26,7 @@ const T = {
   copied: { en: "Copied!", ar: "تم النسخ!" },
   accuracy: { en: "Accuracy", ar: "الدقة" },
   mode: { en: "Mode", ar: "الوضع" },
+  territories: { en: "Territories", ar: "الأقاليم" },
 };
 
 // Simple confetti component
@@ -73,8 +76,51 @@ function Confetti() {
 export default function ResultsPage() {
   const params = useParams();
   const router = useRouter();
-  const { finalResults, userId, resetGame, language, mode } = useGameStore();
+  const gameId = params.gameId as string;
+  const { userId, token, resetGame, language: preferredLanguage } = useGameStore();
   const [shareCopied, setShareCopied] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const [resource, setResource] = useState<{ identity: string; data?: SavedGameResults; errorStatus?: number } | null>(null);
+  const identity = `${gameId}:${userId || ""}:${token || ""}`;
+  const currentResource = resource?.identity === identity ? resource : null;
+  const saved = currentResource?.data;
+  const finalResults = saved?.results || [];
+  const language = saved?.language || preferredLanguage;
+  const mode = saved?.mode;
+  const isConquest = mode === GameMode.Conquest;
+
+  useEffect(() => setHydrated(true), []);
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!userId || !token) {
+      setResource({ identity, errorStatus: 401 });
+      return;
+    }
+    const controller = new AbortController();
+    setResource(null);
+    const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+    async function loadResults() {
+      try {
+        const response = await fetch(`${API}/api/results/${encodeURIComponent(gameId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          if (!controller.signal.aborted) setResource({ identity, errorStatus: response.status });
+          return;
+        }
+        const data: SavedGameResults = await response.json();
+        if (data.gameId !== gameId || !Array.isArray(data.results) || data.results.length === 0) throw new Error("Invalid result response");
+        if (!controller.signal.aborted) setResource({ identity, data });
+      } catch {
+        if (!controller.signal.aborted) setResource({ identity, errorStatus: 503 });
+      }
+    }
+    void loadResults();
+    return () => controller.abort();
+  }, [gameId, userId, token, hydrated, retry, identity]);
 
   const myResult = finalResults.find((r) => r.userId === userId);
   const themeClass = mode ? `theme-${mode.toLowerCase()}` : "";
@@ -89,16 +135,39 @@ export default function ResultsPage() {
   function handleShare() {
     if (!myResult) return;
     const text = isRTL
-      ? `حصلت على المرتبة #${myResult.rank} بـ ${myResult.score.toLocaleString()} نقطة في Quiz Battle! 🏆`
-      : `I ranked #${myResult.rank} with ${myResult.score.toLocaleString()} points in Quiz Battle! 🏆`;
+      ? `حصلت على المرتبة #${myResult.rank} بـ ${myResult.score.toLocaleString()} ${isConquest ? "إقليم" : "نقطة"} في Quiz Battle! 🏆`
+      : `I ranked #${myResult.rank} with ${myResult.score.toLocaleString()} ${isConquest ? "territories" : "points"} in Quiz Battle! 🏆`;
     navigator.clipboard.writeText(text);
     setShareCopied(true);
     setTimeout(() => setShareCopied(false), 2000);
   }
 
-  if (finalResults.length === 0) {
-    router.push("/");
-    return null;
+  if (!hydrated || !currentResource) {
+    return <main className="page" dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", display: "flex", justifyContent: "center", alignItems: "center" }}>
+      <LoadingSpinner size="lg" message={isRTL ? "جاري تحميل النتائج المحفوظة..." : "Loading saved results..."} />
+    </main>;
+  }
+
+  if (!saved) {
+    const status = currentResource.errorStatus;
+    const message = status === 401
+      ? (isRTL ? "سجّل الدخول بالحساب الذي استخدمته في هذه المعركة لعرض النتائج." : "Sign in with the account you used in this battle to view its results.")
+      : status === 403
+        ? (isRTL ? "نتائج هذه المعركة متاحة للمشاركين والمضيف فقط." : "These results are available only to the battle participants and host.")
+        : status === 404
+          ? (isRTL ? "لا توجد نتائج محفوظة لهذه المعركة بعد." : "Saved results are not available for this battle yet.")
+          : (isRTL ? "تعذر تحميل النتائج الآن. قد يكون حفظها قيد التنفيذ. حاول مرة أخرى بعد قليل." : "Results cannot be loaded right now. They may still be saving. Please retry shortly.");
+    return <main className="page" dir={isRTL ? "rtl" : "ltr"} style={{ padding: 24 }}>
+      <div className="glass-card p-6" style={{ maxWidth: 600, margin: "40px auto" }}>
+        <h1 className="text-xl font-bold mb-3">{isRTL ? "نتائج المعركة" : "Battle results"}</h1>
+        <p role="alert" className="mb-4">{message}</p>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button className="btn btn-primary" onClick={() => setRetry((value) => value + 1)}>{isRTL ? "حاول مرة أخرى" : "Retry"}</button>
+          {status === 401 && <button className="btn btn-secondary" onClick={() => router.push("/login")}>{isRTL ? "تسجيل الدخول" : "Sign in"}</button>}
+          <button className="btn btn-secondary" onClick={() => router.push("/")}>{T.home[language]}</button>
+        </div>
+      </div>
+    </main>;
   }
 
   const winner = finalResults[0];
@@ -163,20 +232,20 @@ export default function ResultsPage() {
                 <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--clr-gold)" }}>
                   {myResult.score.toLocaleString()}
                 </div>
-                <div className="text-muted text-xs">{T.score[language]}</div>
+                <div className="text-muted text-xs">{isConquest ? T.territories[language] : T.score[language]}</div>
               </div>
-              <div className="glass-card p-4" style={{ minWidth: 90 }}>
+              {!isConquest && <div className="glass-card p-4" style={{ minWidth: 90 }}>
                 <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--clr-success)" }}>
                   {accuracy}%
                 </div>
                 <div className="text-muted text-xs">{T.accuracy[language]}</div>
-              </div>
-              <div className="glass-card p-4" style={{ minWidth: 90 }}>
+              </div>}
+              {!isConquest && <div className="glass-card p-4" style={{ minWidth: 90 }}>
                 <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--clr-secondary)" }}>
                   {(myResult.avgAnswerTime / 1000).toFixed(1)}s
                 </div>
                 <div className="text-muted text-xs">{T.avgSpeed[language]}</div>
-              </div>
+              </div>}
             </motion.div>
           )}
         </motion.div>
@@ -230,16 +299,16 @@ export default function ResultsPage() {
                     {r.username}
                     {r.userId === userId && <span className="text-muted text-sm"> {T.you[language]}</span>}
                   </div>
-                  <div className="text-xs text-muted">
+                  {!isConquest && <div className="text-xs text-muted">
                     {r.correctAnswers}/{r.totalAnswers} {isRTL ? "إجابة" : "correct"} · {(r.avgAnswerTime / 1000).toFixed(1)}s
-                  </div>
+                  </div>}
                 </div>
 
                 <div style={{ textAlign: isRTL ? "left" : "right" }}>
                   <div className="font-mono font-bold" style={{ color: i === 0 ? "var(--clr-gold)" : "var(--clr-primary)" }}>
                     {r.score.toLocaleString()}
                   </div>
-                  <div className="text-xs text-muted">{T.pts[language]}</div>
+                  <div className="text-xs text-muted">{isConquest ? T.territories[language] : T.pts[language]}</div>
                 </div>
               </motion.div>
             ))}

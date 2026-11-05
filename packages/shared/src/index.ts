@@ -106,6 +106,35 @@ export interface ClientQuestion {
   activePowerUps?: ActivePowerUpEffect[];
 }
 
+export type SubmittedAnswer = number | string | number[];
+export interface AnswerReveal {
+  correct: boolean;
+  correctIndex: number;
+  correctIndices?: number[];
+  correctOrder?: number[];
+  correctAnswer?: string;
+}
+export type SafeClientQuestion = Omit<ClientQuestion,
+  "correctIndex" | "correctIndices" | "correctOrder" | "correctAnswer" | "acceptedAnswers" |
+  "explanation" | "explanationEn" | "explanationAr">;
+
+// Explicitly allow presentation fields. Answer keys and future server metadata
+// cannot accidentally cross the question/reconnection boundary.
+export function toSafeClientQuestion(question: ClientQuestion): SafeClientQuestion {
+  const safe: SafeClientQuestion = {
+    id: question.id, category: question.category, difficulty: question.difficulty,
+    timeLimit: question.timeLimit, text: question.text, options: [...question.options],
+  };
+  const optionalFields = [
+    "topic", "subtopic", "type", "imageUrl", "audioUrl", "videoUrl", "optionImages", "hint",
+    "textEn", "textAr", "optionsEn", "optionsAr", "hintEn", "hintAr", "activePowerUps",
+  ] as const;
+  for (const field of optionalFields) {
+    if (question[field] !== undefined) (safe as unknown as Record<string, unknown>)[field] = question[field];
+  }
+  return safe;
+}
+
 export function toClientQuestion(
   question: MultilingualQuestion,
   lang: "en" | "ar" = "en"
@@ -208,6 +237,19 @@ export interface TeamScoreState {
 export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
   players: PlayerState[];
   activeEffects?: ActivePowerUpEffect[];
+  currentQuestion?: SafeClientQuestion | null;
+  questionStartedAt?: number;
+  selectedAnswer?: SubmittedAnswer | null;
+  answeredAt?: number | null;
+  lastAnswerResult?: AnswerReveal | null;
+  finalResults?: FinalResult[];
+  powerUpSelection?: {
+    availablePowerUps: PowerUpType[];
+    selectedPowerUps: PowerUpType[];
+    maxSelections: number;
+    timeLeft: number;
+    isSelecting: boolean;
+  };
   teams?: TeamScoreState;
   territories?: Record<string, string | null>;
   playerTerritories?: Record<string, string[]>;
@@ -270,11 +312,25 @@ export interface ConquestClientState {
 
 // Invasion Mode State (Phase 2 of conquest)
 export interface InvasionClientState {
-  territories: { id: string | number; ownerId: string | null; troopCount: number; }[];
+  territories: {
+    id: string | number;
+    ownerId: string | null;
+    troopCount: number;
+    name?: string;
+    nameAr?: string;
+    path?: string;
+    center?: { x: number; y: number };
+  }[];
   currentRound: number;
   totalRounds: number;
   phase: 'question' | 'ranking' | 'selection' | 'ended';
   currentQuestion: { id: string; text: string; options: string[]; timeLimit: number; } | null;
+  questionStartedAt?: number;
+  selectedAnswer?: number | null;
+  answeredAt?: number | null;
+  currentTurn?: string | null;
+  picksRemaining?: number;
+  selectableTerritories?: number[];
   lastRanking: { playerId: string; playerName: string; rank: number; picks: number; responseTimeMs: number; }[];
   selectionPhase: {
     isActive: boolean;
@@ -293,7 +349,7 @@ export interface ServerToClientEvents {
   "game:error": (data: { message: string }) => void;
   "game:countdown": (data: { seconds: number }) => void;
   "game:question": (data: {
-    question: Omit<ClientQuestion, "correctIndex">;
+    question: SafeClientQuestion;
     round: number;
     totalRounds: number;
   }) => void;
@@ -303,6 +359,9 @@ export interface ServerToClientEvents {
     scoreDelta: number;
     newScore: number;
     correctIndex: number;
+    correctIndices?: number[];
+    correctOrder?: number[];
+    correctAnswer?: string;
   }) => void;
   "game:scoreboard": (data: { players: PlayerState[] }) => void;
   "game:playerEliminated": (data: { userId: string; reason: string }) => void;
@@ -321,6 +380,7 @@ export interface ServerToClientEvents {
       xpEarned: number;
     }>;
     xpAwarded: number;
+    resultsPersisted?: boolean;
   }) => void;
   "game:emote": (data: { userId: string; emote: string }) => void;
   "game:message": (data: {
@@ -523,7 +583,7 @@ export interface ServerToClientEvents {
 
 export interface ClientToServerEvents {
   "game:join": (
-    data: { joinCode?: string; gameId?: string; userId?: string; username?: string },
+    data: { joinCode?: string; gameId?: string; userId?: string; username?: string; password?: string },
     cb?: (response: JoinResponse) => void
   ) => void;
   "game:start": (
@@ -539,7 +599,8 @@ export interface ClientToServerEvents {
   "player:answer": (data: {
     gameId: string;
     questionId: string;
-    answerIndex: number;
+    answer?: SubmittedAnswer;
+    answerIndex?: number;
     timestamp: number;
   }) => void;
   "game:emote": (data: { gameId: string; emote: string }) => void;
@@ -553,7 +614,7 @@ export interface ClientToServerEvents {
     cb?: (response: AckResponse) => void
   ) => void;
   "game:leave": (data: { gameId: string }) => void;
-  "game:spectate": (data: { gameId: string }) => void;
+  "game:spectate": (data: { gameId: string; password?: string }, cb?: (response: AckResponse) => void) => void;
   // PowerUp selection
   "game:selectPowerUp": (
     data: { gameId: string; powerUp: PowerUpType },
@@ -621,11 +682,23 @@ export interface JoinResponse {
   >;
   players?: PlayerState[];
   error?: string;
+  code?: "PASSWORD_REQUIRED" | "INVALID_PASSWORD" | "RATE_LIMITED";
 }
 
 export interface AckResponse {
   success: boolean;
   error?: string;
+  code?: "PASSWORD_REQUIRED" | "INVALID_PASSWORD" | "RATE_LIMITED";
+}
+
+export interface SavedGameResults {
+  gameId: string;
+  mode: GameMode;
+  difficulty: Difficulty;
+  language: "en" | "ar";
+  totalRounds: number;
+  endedAt: string;
+  results: FinalResult[];
 }
 
 export interface FinalResult {

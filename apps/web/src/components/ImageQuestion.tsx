@@ -1,13 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { GameStatus } from "@quiz-battle/shared";
+import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
 
 interface ImageQuestionProps {
   question: any;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: any;
   language: "en" | "ar";
   onAnswer: (index: number) => void;
@@ -60,7 +60,7 @@ export function ImageQuestion({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {(options || []).map((option: string, index: number) => {
           const selected = selectedAnswer === index;
-          const isCorrect = question.correctAnswer === index;
+          const isCorrect = lastAnswerResult?.correctIndex === index;
           const showResult = status === GameStatus.AnswerReveal || lastAnswerResult;
 
           let borderColor = "border-gray-700";

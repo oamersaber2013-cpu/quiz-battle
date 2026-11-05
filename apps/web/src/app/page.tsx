@@ -7,6 +7,7 @@ import { useGameStore } from "@/store/gameStore";
 import { connectSocket } from "@/lib/socket";
 import { ModeVisualSelector } from "@/components/ModeVisualSelector";
 import { CustomModeBuilder } from "@/components/CustomModeBuilder";
+import { isValidRoomPassword } from "@/components/RoomPasswordPrompt";
 
 // Purchase status type
 interface PurchaseStatus {
@@ -395,6 +396,10 @@ export default function HomePage() {
   const [customConfig, setCustomConfig] = useState<any>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isCreating, setIsCreating] = useState(false);
+  const [privateRoom, setPrivateRoom] = useState(false);
+  const [roomPassword, setRoomPassword] = useState("");
+
+  useEffect(() => { if (view !== "create") setRoomPassword(""); }, [view]);
 
   // Purchase status
   const [purchaseStatus, setPurchaseStatus] = useState<PurchaseStatus | null>(null);
@@ -488,6 +493,10 @@ export default function HomePage() {
   }
 
   async function handleCreateGame() {
+    if (privateRoom && !isValidRoomPassword(roomPassword)) {
+      addToast("error", isRTL ? "أدخل كلمة مرور قصيرة للغرفة." : "Enter a shorter room password.");
+      return;
+    }
     setLoading(true);
     setIsCreating(true);
     try {
@@ -515,7 +524,9 @@ export default function HomePage() {
         categories: selectedCats,
         subcategories: selectedTopics,
         username: currentName,
-        language: language // LOCK LANGUAGE
+        language: language,
+        isPrivate: privateRoom,
+        ...(privateRoom ? { password: roomPassword } : {}),
       };
       
       // Include custom configuration if Custom mode
@@ -553,6 +564,7 @@ export default function HomePage() {
         category: selectedCats.join(", "),
         language: language
       });
+      setRoomPassword("");
       router.push(`/lobby/${game.gameId}`);
     } catch {
       addToast("error", isRTL ? "فشل في إنشاء اللعبة" : "Failed to create game");
@@ -1122,6 +1134,22 @@ export default function HomePage() {
                   </div>
                 </div>
 
+                <div className="glass-card p-5 mb-6">
+                  <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 700 }}>
+                    <input type="checkbox" name="privateRoom" checked={privateRoom} onChange={(event) => {
+                      setPrivateRoom(event.target.checked);
+                      if (!event.target.checked) setRoomPassword("");
+                    }} />
+                    🔒 {isRTL ? "غرفة خاصة بكلمة مرور" : "Private room with a password"}
+                  </label>
+                  {privateRoom && <div className="mt-3">
+                    <label htmlFor="create-room-password">{isRTL ? "كلمة مرور الغرفة" : "Room password"}</label>
+                    <input id="create-room-password" type="password" autoComplete="off" value={roomPassword} onChange={(event) => setRoomPassword(event.target.value)} className="input w-full mt-2" />
+                    <p className="text-muted text-sm mt-2">{isRTL ? "شارك كلمة المرور مع من تدعوهم للعب أو المشاهدة." : "Share the password with the people you invite to play or watch."}</p>
+                    {roomPassword.length > 0 && !isValidRoomPassword(roomPassword) && <p role="alert" className="text-sm mt-2">{isRTL ? "كلمة المرور طويلة جداً. استخدم كلمة مرور أقصر." : "Password is too long. Please use a shorter password."}</p>}
+                  </div>}
+                </div>
+
                 {/* Summary */}
                 <div className="glass-card p-5 mb-6" style={{ background: "rgba(108,99,255,0.08)", border: "1px solid rgba(108,99,255,0.3)" }}>
                   <div className="text-sm font-bold mb-3" style={{ color: "var(--clr-primary)" }}>
@@ -1169,7 +1197,7 @@ export default function HomePage() {
                   <button
                     className="btn btn-primary btn-lg"
                     onClick={handleCreateGame}
-                    disabled={loading || isCreating}
+                    disabled={loading || isCreating || (privateRoom && !isValidRoomPassword(roomPassword))}
                     style={{ height: 60, fontSize: "1.2rem", fontWeight: 900, flex: 2, boxShadow: "0 12px 40px rgba(108,99,255,0.5)" }}
                   >
                     {isCreating ? (

@@ -380,6 +380,7 @@ export interface ServerToClientEvents {
       xpEarned: number;
     }>;
     xpAwarded: number;
+    resultsPersisted?: boolean;
   }) => void;
   "game:emote": (data: { userId: string; emote: string }) => void;
   "game:message": (data: {
@@ -582,7 +583,7 @@ export interface ServerToClientEvents {
 
 export interface ClientToServerEvents {
   "game:join": (
-    data: { joinCode?: string; gameId?: string; userId?: string; username?: string },
+    data: { joinCode?: string; gameId?: string; userId?: string; username?: string; password?: string },
     cb?: (response: JoinResponse) => void
   ) => void;
   "game:start": (
@@ -613,7 +614,7 @@ export interface ClientToServerEvents {
     cb?: (response: AckResponse) => void
   ) => void;
   "game:leave": (data: { gameId: string }) => void;
-  "game:spectate": (data: { gameId: string }) => void;
+  "game:spectate": (data: { gameId: string; password?: string }, cb?: (response: AckResponse) => void) => void;
   // PowerUp selection
   "game:selectPowerUp": (
     data: { gameId: string; powerUp: PowerUpType },
@@ -681,11 +682,23 @@ export interface JoinResponse {
   >;
   players?: PlayerState[];
   error?: string;
+  code?: "PASSWORD_REQUIRED" | "INVALID_PASSWORD" | "RATE_LIMITED";
 }
 
 export interface AckResponse {
   success: boolean;
   error?: string;
+  code?: "PASSWORD_REQUIRED" | "INVALID_PASSWORD" | "RATE_LIMITED";
+}
+
+export interface SavedGameResults {
+  gameId: string;
+  mode: GameMode;
+  difficulty: Difficulty;
+  language: "en" | "ar";
+  totalRounds: number;
+  endedAt: string;
+  results: FinalResult[];
 }
 
 export interface FinalResult {

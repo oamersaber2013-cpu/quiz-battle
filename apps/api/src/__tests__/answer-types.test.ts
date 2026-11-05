@@ -1,5 +1,6 @@
 jest.mock("@quiz-battle/db", () => ({ prisma: {} }));
 jest.mock("../lib/analytics", () => ({ trackEvent: jest.fn(async () => {}) }));
+jest.mock("../lib/gamePersistence", () => ({ saveGameSession: jest.fn(async () => {}) }));
 jest.mock("../lib/aiBots", () => ({ removeBots: jest.fn(), getBotInfo: jest.fn() }));
 jest.mock("../lib/questions", () => ({
   fetchQuestions: jest.fn(), clearUsedQuestions: jest.fn(),
@@ -8,8 +9,9 @@ jest.mock("../lib/questions", () => ({
 
 import { Difficulty, GameMode, GameStatus, QuestionType } from "@quiz-battle/shared";
 import { fetchQuestions } from "../lib/questions";
-import { getViewerAnswerResult, handlePlayerAnswer, removeActiveGame, setActiveGame, startGame } from "../lib/gameOrchestrator";
+import { getActiveGame, getViewerAnswerResult, handlePlayerAnswer, removeActiveGame, setActiveGame, startGame } from "../lib/gameOrchestrator";
 import { SafeRedis } from "../lib/redis";
+import { saveGameSession } from "../lib/gamePersistence";
 
 describe("Typed answers through a live round", () => {
   const emit = jest.fn();
@@ -22,6 +24,7 @@ describe("Typed answers through a live round", () => {
     jest.useFakeTimers();
     jest.setSystemTime(100000);
     emit.mockClear();
+    (saveGameSession as jest.Mock).mockClear().mockResolvedValue(undefined);
     game = {
       gameId: "answer-room", joinCode: "TYPED", hostId: "human", mode: GameMode.Classic,
       difficulty: Difficulty.Sage, language: "en", status: GameStatus.Lobby,
@@ -163,5 +166,47 @@ describe("Typed answers through a live round", () => {
     expect(fetchQuestions).toHaveBeenLastCalledWith(
       Difficulty.Sage, 1, undefined, undefined, "en", game.gameId, { singleChoiceOnly: true }
     );
+  });
+
+  it("persists actual completed standings before notifying players", async () => {
+    await begin(QuestionType.FillBlank, { correctAnswer: "Paris" }, []);
+    await handlePlayerAnswer(game, io, redis, "human", "typed-q", "Paris", Date.now());
+    await jest.advanceTimersByTimeAsync(5000);
+    await running;
+    const saved = (saveGameSession as jest.Mock).mock.calls[0]?.[0];
+    expect(saved).toMatchObject({ gameId: game.gameId, hostId: "human", language: "en" });
+    expect(saved.players[0]).toMatchObject({ userId: "human", correctAnswers: 1, totalAnswers: 1 });
+    const endCall = emit.mock.calls.findIndex(([event]) => event === "game:end");
+    expect((saveGameSession as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(emit.mock.invocationCallOrder[endCall]);
+    expect(emit.mock.calls[endCall][1].resultsPersisted).toBe(true);
+  });
+
+  it("keeps live results usable after a failed save and retries without duplicate end events", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    (saveGameSession as jest.Mock).mockRejectedValueOnce(new Error("Database unavailable")).mockResolvedValue(undefined);
+    await begin(QuestionType.MultipleChoice, { correctIndex: 1 });
+    await handlePlayerAnswer(game, io, redis, "human", "typed-q", 1, Date.now());
+    await jest.advanceTimersByTimeAsync(4000);
+    await running;
+    expect(game.resultsPersisted).toBe(false);
+    expect(getActiveGame(game.gameId)?.finalResults).toHaveLength(1);
+    expect(emit.mock.calls.find(([event]) => event === "game:end")![1].resultsPersisted).toBe(false);
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(saveGameSession).toHaveBeenCalledTimes(2);
+    expect(game.resultsPersisted).toBe(true);
+    expect(emit.mock.calls.filter(([event]) => event === "game:end")).toHaveLength(1);
+  });
+
+  it("bounds unsaved results memory to two hours after all retries fail", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    (saveGameSession as jest.Mock).mockRejectedValue(new Error("Database unavailable"));
+    await begin(QuestionType.MultipleChoice, { correctIndex: 1 });
+    await handlePlayerAnswer(game, io, redis, "human", "typed-q", 1, Date.now());
+    await jest.advanceTimersByTimeAsync(65000);
+    await running;
+    expect(saveGameSession).toHaveBeenCalledTimes(4);
+    expect(getActiveGame(game.gameId)?.resultsPersisted).toBe(false);
+    await jest.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+    expect(getActiveGame(game.gameId)).toBeUndefined();
   });
 });

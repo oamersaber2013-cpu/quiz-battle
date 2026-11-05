@@ -5,6 +5,23 @@ import { fetchQuestions } from "./questions";
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
+export interface InvasionCompletion {
+  gameId: string;
+  playerIds: string[];
+  playerNames: Record<string, string>;
+  scores: Record<string, number>;
+  totalRounds: number;
+}
+let completionHandler: ((io: TypedServer, completed: InvasionCompletion) => Promise<void>) | undefined;
+
+// The room orchestrator owns participant identity and durable finalization.
+// Registering a callback keeps this module independent of its parent module.
+export function registerInvasionCompletionHandler(
+  handler: (io: TypedServer, completed: InvasionCompletion) => Promise<void>
+): void {
+  completionHandler = handler;
+}
+
 // ─── Invasion Territory Definition ───────────────────────────
 export interface InvasionTerritory {
   id: number;
@@ -642,7 +659,7 @@ function advanceToNextRound(
 
 function endInvasionGame(gameId: string, io: TypedServer): void {
   const state = INVASION_GAMES.get(gameId);
-  if (!state) return;
+  if (!state || state.phase === "ended") return;
   
   state.phase = "ended";
   
@@ -659,14 +676,24 @@ function endInvasionGame(gameId: string, io: TypedServer): void {
   // Find winner
   const winner = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
   
-  io.to(gameId).emit("invasion:gameEnd", {
-    winnerId: winner ? winner[0] : "",
-    winnerName: winner ? state.playerNames[winner[0]] || winner[0] : "",
-    finalTerritories: scores,
-  });
-  
-  // Cleanup
-  deleteInvasionGame(gameId);
+  const finalize = async () => {
+    try {
+      await completionHandler?.(io, {
+        gameId, playerIds: [...state.playerIds], playerNames: { ...state.playerNames },
+        scores, totalRounds: state.totalRounds,
+      });
+    } catch (error) {
+      console.error("[Invasion] Results finalization failed:", error);
+      io.to(gameId).emit("game:error", { message: "Unable to finalize invasion results" });
+    }
+    io.to(gameId).emit("invasion:gameEnd", {
+      winnerId: winner ? winner[0] : "",
+      winnerName: winner ? state.playerNames[winner[0]] || winner[0] : "",
+      finalTerritories: scores,
+    });
+    if (INVASION_GAMES.get(gameId) === state) deleteInvasionGame(gameId);
+  };
+  void finalize();
 }
 
 export function getInvasionState(gameId: string): InvasionInternalState | undefined {

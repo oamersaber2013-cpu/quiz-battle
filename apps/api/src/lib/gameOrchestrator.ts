@@ -1,5 +1,6 @@
 import { Server, Socket } from "socket.io";
 import { initConquestGame } from "./conquestOrchestrator";
+import { registerInvasionCompletionHandler } from "./invasionOrchestrator";
 import type { SafeRedis } from "../lib/redis";
 import {
   GameMode,
@@ -29,6 +30,8 @@ import {
 import { fillWithBots, removeBots, getBotInfo } from "../lib/aiBots";
 import { recordAnswer } from "./antiCheat";
 import { trackEvent } from "./analytics";
+import { GameResult, saveGameSession } from "./gamePersistence";
+import { removeRoomAccess } from "./roomAccess";
 import { getAnswerFeedback, getBotAnswer, isAnswerCorrect, isSingleChoiceQuestion, normalizeSubmittedAnswer } from "./answers";
 
 function roastPlayer(io: TypedServer, gameId: string, type: "right" | "wrong", username: string, language: "en" | "ar") {
@@ -69,6 +72,8 @@ interface GameState {
   territories?: Record<string, string | null>; // territory id -> team/player id
   playerTerritories?: Record<string, string[]>; // playerId -> territory ids
   finalResults?: FinalResult[];
+  resultsPersisted?: boolean;
+  isPrivate?: boolean;
 }
 
 interface ScoredAnswer {
@@ -85,6 +90,7 @@ interface ScoredAnswer {
 const activeGames = new Map<string, GameState>();
 // Keep scoring history private instead of spreading it into room snapshots.
 const answerHistories = new Map<string, Map<string, ScoredAnswer[]>>();
+const resultTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
 const FREEZE_DURATION_MS = 5000;
 const SANDSTORM_DURATION_MS = 7000;
 const TIME_WARP_BONUS_MS = 5000;
@@ -126,7 +132,25 @@ export function setActiveGame(gameId: string, state: GameState): void {
 export function removeActiveGame(gameId: string): void {
   activeGames.delete(gameId);
   answerHistories.delete(gameId);
+  clearResultTimers(gameId);
+  removeRoomAccess(gameId);
   clearUsedQuestions(gameId); // Clean up question tracking
+}
+
+function clearResultTimers(gameId: string): void {
+  for (const timer of resultTimers.get(gameId) || []) clearTimeout(timer);
+  resultTimers.delete(gameId);
+}
+
+function scheduleResultTask(game: GameState, delayMs: number, task: () => void): void {
+  const timers = resultTimers.get(game.gameId) || new Set<ReturnType<typeof setTimeout>>();
+  const timer = setTimeout(() => {
+    timers.delete(timer);
+    if (activeGames.get(game.gameId) === game) task();
+  }, delayMs);
+  timer.unref();
+  timers.add(timer);
+  resultTimers.set(game.gameId, timers);
 }
 
 // ─── Game Lifecycle ─────────────────────────────────────────
@@ -140,6 +164,7 @@ export async function startGame(
   if (!game) return;
   answerHistories.set(gameId, new Map());
   game.finalResults = undefined;
+  game.resultsPersisted = undefined;
 
   // Track game start
   await trackEvent("game_started", game.hostId, { gameId, mode: game.mode, difficulty: game.difficulty });
@@ -458,25 +483,82 @@ async function endGame(
   redis: SafeRedis,
   game: GameState
 ): Promise<void> {
+  const answerHistory = answerHistories.get(game.gameId) || new Map<string, ScoredAnswer[]>();
+  await finishCompletedGame(io, game, computeFinalResults(game.players, answerHistory, game.difficulty));
+}
+
+async function finishCompletedGame(io: TypedServer, game: GameState, results: FinalResult[]): Promise<void> {
+  if (game.status === GameStatus.Ended && game.finalResults) return;
   game.status = GameStatus.Ended;
+  game.finalResults = results;
 
   // Track game completion
   await trackEvent("game_completed", game.hostId, { gameId: game.gameId, mode: game.mode });
 
-  const answerHistory = answerHistories.get(game.gameId) || new Map<string, ScoredAnswer[]>();
-  const results = computeFinalResults(game.players, answerHistory, game.difficulty);
-  game.finalResults = results;
+  const completed: GameResult = {
+    gameId: game.gameId, hostId: game.hostId, joinCode: game.joinCode,
+    mode: game.mode, difficulty: game.difficulty, language: game.language,
+    category: game.categories?.join(", "), totalRounds: game.totalRounds,
+    players: results, winnerId: results[0]?.userId, winnerScore: results[0]?.score,
+    questionIds: game.questions.map(question => question.id), endedAt: new Date(),
+  };
+  try {
+    await saveGameSession(completed);
+    game.resultsPersisted = true;
+  } catch (error) {
+    game.resultsPersisted = false;
+    console.error("[GamePersistence] Completed results are pending:", error);
+  }
 
   io.to(game.gameId).emit("game:end", {
     results,
     xpAwarded: results[0]?.xpEarned ?? 0,
+    resultsPersisted: game.resultsPersisted,
   });
 
-  // Clean up active games after 30s
-  setTimeout(() => {
-    removeActiveGame(game.gameId);
-  }, 30000);
+  if (game.resultsPersisted) {
+    scheduleResultTask(game, 30000, () => removeActiveGame(game.gameId));
+  } else {
+    // Preserve the live result during a temporary outage, with bounded retries
+    // and the room's two-hour memory limit. Never claim a failed write was saved.
+    scheduleResultTask(game, 2 * 60 * 60 * 1000, () => removeActiveGame(game.gameId));
+    const retryDelays = [5000, 15000, 30000];
+    const retry = (attempt: number) => {
+      scheduleResultTask(game, retryDelays[attempt], () => {
+        saveGameSession(completed).then(() => {
+          if (activeGames.get(game.gameId) !== game) return;
+          game.resultsPersisted = true;
+          clearResultTimers(game.gameId);
+          scheduleResultTask(game, 30000, () => removeActiveGame(game.gameId));
+        }).catch(error => {
+          console.error("[GamePersistence] Completed results retry failed:", error);
+          if (activeGames.get(game.gameId) === game && attempt + 1 < retryDelays.length) retry(attempt + 1);
+        });
+      });
+    };
+    retry(0);
+  }
 }
+
+registerInvasionCompletionHandler(async (io, completed) => {
+  const game = activeGames.get(completed.gameId);
+  if (!game || game.mode !== GameMode.Conquest) throw new Error("Conquest room is no longer available");
+  game.totalRounds = completed.totalRounds;
+  const results = completed.playerIds.map(userId => {
+    const player = game.players[userId];
+    const score = completed.scores[userId] || 0;
+    if (player) player.score = score;
+    return {
+      userId, username: player?.username || completed.playerNames[userId] || userId,
+      ...(player?.avatar ? { avatar: player.avatar } : {}),
+      score, rank: 0,
+      // Territory scoring does not track quiz-answer counts or response times.
+      correctAnswers: 0, totalAnswers: 0, avgAnswerTime: 0, xpEarned: 0,
+    };
+  }).sort((a, b) => b.score - a.score);
+  results.forEach((result, index) => result.rank = index + 1);
+  await finishCompletedGame(io, game, results);
+});
 
 // ─── Player Answer Handler ───────────────────────────────────
 

@@ -33,6 +33,22 @@ return 400 and access-token requests return 503 until actual provider-token
 verification is implemented. Account IDs/names supplied by callers are not
 authentication credentials.
 
+## Private rooms and saved results
+
+Private creation requires a password of 1 to 72 UTF-8 bytes. Exact spaces are
+preserved; the server keeps only a bcrypt hash outside serialized room state.
+Players and spectators receive password prompts, with at most five failed
+attempts per signed identity/room each minute. Successful access survives socket
+reconnects; explicit spectator leave revokes its grant. The UI never writes a room
+password to browser storage. Active private-room access does not survive a server
+restart because active rooms are still in memory.
+
+Saved results use the account/guest JWT that played the match. The endpoint
+allows the saved host and participants, not a user ID supplied in a query. A
+spectator's room password does not grant access to durable participant results.
+Apply all Prisma migrations before deploying this source. A temporary failed
+save returns a retryable unavailable response instead of claiming it was saved.
+
 ## Other boundaries
 
 Registration and login validate body shapes and password lengths before database

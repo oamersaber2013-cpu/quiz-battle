@@ -45,6 +45,7 @@ import {
 } from "../lib/invasionOrchestrator";
 import { GameMode } from "@quiz-battle/shared";
 import { fillWithBots, getBotInfo } from "../lib/aiBots";
+import { authorizeRoomAccess, revokeRoomAccess } from "../lib/roomAccess";
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
@@ -55,6 +56,7 @@ function roomSnapshot(game: NonNullable<ReturnType<typeof getActiveGame>>, viewe
   return {
     gameId: game.gameId, joinCode: game.joinCode, hostId: game.hostId,
     mode: game.mode, difficulty: game.difficulty, status: game.status,
+    isPrivate: !!game.isPrivate,
     currentRound: game.currentRound, totalRounds: game.totalRounds, maxPlayers: game.maxPlayers,
     category: game.categories?.join(", "), language: game.language,
     players: Object.values(game.players), activeEffects: game.activeEffects,
@@ -105,6 +107,10 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
       const game = getActiveGame(gameId);
       return canParticipate(gameId) && game?.hostId === userId && game.mode === GameMode.Conquest;
     };
+    const canHostChaos = (gameId: string) => {
+      const game = getActiveGame(gameId);
+      return canParticipate(gameId) && game?.hostId === userId && game.mode === GameMode.Chaos;
+    };
     const syncInvasion = (gameId: string) => {
       if (getInvasionState(gameId)) socket.emit("invasion:state", buildInvasionClientState(gameId, userId));
     };
@@ -112,7 +118,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     console.log(`🔌 Connected: ${username} (${userId})`);
 
     // ─── Join Game ─────────────────────────────────────────
-    socket.on("game:join", async ({ gameId }, cb) => {
+    socket.on("game:join", async ({ gameId, password }, cb) => {
       try {
         if (!gameId) {
           cb?.({ success: false, error: "Game ID is required" });
@@ -134,6 +140,9 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
           cb?.({ success: false, error: "Game not found" });
           return;
         }
+        const access = await authorizeRoomAccess(activeGame, userId, password);
+        if (!access.success) { cb?.(access); return; }
+        if (getActiveGame(gameId) !== activeGame) { cb?.({ success: false, error: "Game not found" }); return; }
 
         if (activeGame.status !== GameStatus.Lobby && !activeGame.players[userId]) {
           cb?.({ success: false, error: "Game already in progress" });
@@ -346,12 +355,20 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
 
 
     // ─── Spectate ────────────────────────────────────────────
-    socket.on("game:spectate", async ({ gameId }) => {
+    socket.on("game:spectate", async ({ gameId, password }, cb) => {
       const game = getActiveGame(gameId);
       if (!game) {
-        socket.emit("game:error", { message: "Game not found" });
+        if (cb) cb({ success: false, error: "Game not found" });
+        else socket.emit("game:error", { message: "Game not found" });
         return;
       }
+      const access = await authorizeRoomAccess(game, userId, password);
+      if (!access.success) {
+        if (cb) cb(access);
+        else socket.emit("game:error", { message: access.error || "Room password required" });
+        return;
+      }
+      if (getActiveGame(gameId) !== game) { cb?.({ success: false, error: "Game not found" }); return; }
 
       await socket.join(gameId);
       await socket.join(`${gameId}_spectators`);
@@ -375,16 +392,19 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         }
       }
       syncInvasion(gameId);
+      cb?.({ success: true });
     });
 
     // ─── Leave Game ──────────────────────────────────────────
     socket.on("game:leave", async ({ gameId }) => {
+      if (!socket.rooms.has(gameId)) return;
       const game = getActiveGame(gameId);
       if (game?.players[userId]) {
         game.players[userId].isConnected = false;
       }
       socket.leave(gameId);
       socket.leave(`${gameId}_spectators`);
+      revokeRoomAccess(gameId, userId);
       socket.to(gameId).emit("game:playerLeft", { userId });
     });
 
@@ -480,6 +500,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Initialize CHAOS game
     socket.on("chaos:init", async ({ gameId, personality }) => {
+      if (!canHostChaos(gameId)) return;
       const { initializeChaosV2 } = await import("../lib/chaosEngineV2");
       const state = initializeChaosV2(gameId, (personality as import("../lib/chaosEngineV2").ChaosPersonality) || "RANDOM");
       
@@ -495,6 +516,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Record drama event (tab visibility, inactivity)
     socket.on("chaos:drama", async ({ gameId, type }) => {
+      if (!canParticipate(gameId)) return;
       const { recordDramaV2 } = await import("../lib/chaosEngineV2");
       const drama = recordDramaV2(gameId, type as import("../lib/chaosEngineV2").DramaType, userId, username);
       
@@ -510,6 +532,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Start voting session
     socket.on("chaos:startVoting", async ({ gameId, dramaEventId, targetPlayerId, targetUsername }) => {
+      if (!canHostChaos(gameId)) return;
       const { getChaosV2 } = await import("../lib/chaosEngineV2");
       const state = getChaosV2(gameId);
       if (!state) return;
@@ -533,6 +556,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Cast vote
     socket.on("chaos:vote", async ({ gameId, vote }) => {
+      if (!canParticipate(gameId)) return;
       const { handleCastVote } = await import("../lib/chaosOrchestrator");
       const success = handleCastVote(gameId, userId, vote as import("../lib/chaosEngineV2").VoteOption, io);
       
@@ -543,6 +567,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Activate trap round
     socket.on("chaos:activateTrap", async ({ gameId, targetPlayerId }) => {
+      if (!canHostChaos(gameId)) return;
       const { initializeTrap } = await import("../lib/trapSystem");
       const totalPlayers = Object.keys(getActiveGame(gameId)?.players || {}).length;
       
@@ -558,12 +583,14 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Record player answer with mode (SAFE/RISK)
     socket.on("chaos:answer", async ({ gameId, questionId, answerIndex, mode }) => {
+      if (!canParticipate(gameId)) return;
       // Store answer mode for trap calculation - actual scoring handled by regular answer flow
       console.log(`[CHAOS] Player ${username} answered with mode: ${mode}`);
     });
     
     // Evaluate trap outcome
     socket.on("chaos:evaluateTrap", async ({ gameId }) => {
+      if (!canHostChaos(gameId)) return;
       const { evaluateTrap } = await import("../lib/trapSystem");
       const outcome = await evaluateTrap(gameId, io);
       
@@ -572,6 +599,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Get chaos state
     socket.on("chaos:getState", async ({ gameId }) => {
+      if (!socket.rooms.has(gameId)) return;
       const { getChaosStatsV2 } = await import("../lib/chaosEngineV2");
       const stats = getChaosStatsV2(gameId);
       
@@ -588,6 +616,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     
     // Get target advantages (hint, time bonus)
     socket.on("chaos:getAdvantages", async ({ gameId }) => {
+      if (!canParticipate(gameId)) return;
       const { getTargetAdvantages } = await import("../lib/trapSystem");
       const advantages = getTargetAdvantages(gameId, userId);
       

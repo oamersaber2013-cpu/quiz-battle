@@ -24,6 +24,7 @@ import { QuestionTransition } from "@/components/QuestionTransition";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGameConnection } from "@/hooks/useGameConnection";
+import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 
 const TARGETED_POWER_UPS = new Set<PowerUpType>([
   PowerUpType.Freeze,
@@ -162,7 +163,7 @@ function GamePageContent() {
   const searchParams = useSearchParams();
   const gameId = params.gameId as string;
   const isSpectating = searchParams.get("spectate") === "true";
-  const { joining } = useGameConnection(gameId, isSpectating);
+  const { joining, passwordRequired, passwordError, passwordPending, submitPassword } = useGameConnection(gameId, isSpectating);
 
   const {
     userId,
@@ -356,6 +357,10 @@ function GamePageContent() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (passwordRequired) {
+    return <RoomPasswordPrompt language={language} error={passwordError} pending={passwordPending} onSubmit={submitPassword} onCancel={() => router.push("/")} />;
+  }
 
   if (joining) {
     return (

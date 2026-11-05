@@ -19,6 +19,7 @@ import { fetchQuestions } from "../lib/questions";
 import { createInvasionGame, deleteInvasionGame, getInvasionState } from "../lib/invasionOrchestrator";
 import { SafeRedis } from "../lib/redis";
 import { registerSocketHandlers } from "../socket";
+import { protectRoom, removeRoomAccess } from "../lib/roomAccess";
 
 describe("Socket.IO transport", () => {
   let io: Server;
@@ -79,6 +80,7 @@ describe("Socket.IO transport", () => {
   afterEach(() => {
     clients.splice(0).forEach(client => client.disconnect());
     deleteInvasionGame("wire-room");
+    removeRoomAccess("wire-room");
   });
 
   afterAll(async () => {
@@ -136,5 +138,46 @@ describe("Socket.IO transport", () => {
     expect((await question).question.text).toBe("سؤال الغزو");
     expect(fetchQuestions).toHaveBeenCalledTimes(1);
     expect(fetchQuestions).toHaveBeenCalledWith(Difficulty.Medium, 1, undefined, undefined, "ar", "wire-room", { singleChoiceOnly: true });
+  });
+
+  it("requires the private password before room admission and remembers an authenticated participant", async () => {
+    game.status = GameStatus.Lobby;
+    game.isPrivate = true;
+    delete game.players.player;
+    await protectRoom("wire-room", "  private secret  ");
+    const player = await connect("player");
+    const received: unknown[] = [];
+    player.on("game:stateSync", state => received.push(state));
+    const attempt = (password?: string) => new Promise<any>(resolve => player.emit("game:join", { gameId: "wire-room", password }, resolve));
+    expect(await attempt()).toMatchObject({ success: false, code: "PASSWORD_REQUIRED" });
+    expect(game.players.player).toBeUndefined();
+    expect(received).toHaveLength(0);
+    expect(await attempt("wrong")).toMatchObject({ success: false, code: "INVALID_PASSWORD" });
+    expect(await attempt("  private secret  ")).toMatchObject({ success: true });
+    expect(received).toHaveLength(1);
+    player.disconnect();
+    const restored = await connect("player");
+    expect((await join(restored)).gameId).toBe("wire-room");
+  });
+
+  it("protects spectators too, restores their grant, and revokes it when they leave", async () => {
+    game.isPrivate = true;
+    await protectRoom("wire-room", "spectator-password");
+    const spectator = await connect("spectator");
+    const received: any[] = [];
+    spectator.on("game:stateSync", state => received.push(state));
+    const watch = (client: Socket, password?: string) => new Promise<any>(resolve => client.emit("game:spectate", { gameId: "wire-room", password }, resolve));
+    expect(await watch(spectator)).toMatchObject({ success: false, code: "PASSWORD_REQUIRED" });
+    expect(received).toHaveLength(0);
+    expect(await watch(spectator, "wrong")).toMatchObject({ success: false, code: "INVALID_PASSWORD" });
+    expect(await watch(spectator, "spectator-password")).toEqual({ success: true });
+    expect(received[0].room.selectedAnswer).toBeNull();
+    expect(received[0].room).not.toHaveProperty("passwordHash");
+    spectator.disconnect();
+    const restored = await connect("spectator");
+    expect(await watch(restored)).toEqual({ success: true });
+    restored.emit("game:leave", { gameId: "wire-room" });
+    // Event ordering on this socket guarantees leave is processed before spectate.
+    expect(await watch(restored)).toMatchObject({ success: false, code: "PASSWORD_REQUIRED" });
   });
 });

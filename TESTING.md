@@ -14,6 +14,8 @@ npm run build
 Shared declarations are built before dependent checks. Web route types are
 generated before its TypeScript check. Production builds fail on compiler
 errors; source files are never copied into `dist` as a fallback.
+API Jest uses at most two workers to bound TypeScript transpilation memory on
+Windows and CI; no forced-exit option hides teardown problems.
 
 On Windows, `npm run test:all` runs these checks followed by the browser suite.
 To run the browser suite separately against the production build in PowerShell:
@@ -44,11 +46,12 @@ npm run seed
 
 Set `DATABASE_URL` for that isolated database before either command. Seeding
 upserts the existing bilingual question dataset and does not delete records.
-The opt-in `npm run test:integration` uses a separate PGlite runtime to apply the
-real migrations/seed and run actual Prisma/auth/Socket.IO flows, including four
-Arabic matches with numeric, text, multi-select and ordering answers. See
+The opt-in `npm run test:integration` supports native PostgreSQL on Windows x64
+and a separate PGlite runtime. It applies the real migrations/seed and runs actual
+Prisma/auth/Socket.IO flows, including five Arabic matches, private-room
+admission, saved-result access after expiry and API/database restart. See
 [scripts/INTEGRATION.md](scripts/INTEGRATION.md) for runtime setup and engine
 limitations. It preserves the tracked local DB and uses no production destination.
 
-Native PostgreSQL, live OAuth/payment-provider verification, production Redis
-and deployed multi-instance behavior require separate release checks.
+Hosted PostgreSQL TLS/HA/load behavior, live OAuth/payment-provider verification,
+production Redis and deployed active-match recovery require separate release checks.

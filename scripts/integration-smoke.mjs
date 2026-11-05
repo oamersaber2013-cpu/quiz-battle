@@ -7,27 +7,28 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { startNativePostgres } from "./native-postgres.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const runtime = process.env.PGLITE_TEST_RUNTIME;
-if (!runtime) throw new Error("Set PGLITE_TEST_RUNTIME to a separate folder containing the pinned PGlite test packages. See scripts/INTEGRATION.md.");
+const backend = process.env.INTEGRATION_DB || "pglite";
+assert.ok(["pglite", "native"].includes(backend), "INTEGRATION_DB must be pglite or native");
+const runtime = backend === "native" ? process.env.NATIVE_POSTGRES_TEST_RUNTIME : process.env.PGLITE_TEST_RUNTIME;
+if (!runtime) throw new Error(`Set ${backend === "native" ? "NATIVE_POSTGRES_TEST_RUNTIME" : "PGLITE_TEST_RUNTIME"} to the separate pinned runtime folder. See scripts/INTEGRATION.md.`);
 const runtimeRequire = createRequire(path.join(path.resolve(runtime), "package.json"));
 const require = createRequire(path.join(repo, "package.json"));
-const { PGlite } = runtimeRequire("@electric-sql/pglite");
-const { PGLiteSocketServer } = runtimeRequire("@electric-sql/pglite-socket");
 const { io: connect } = require("socket.io-client");
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const protectedPath = path.join(repo, "packages/db/prisma/dev.db");
 const hashFile = async () => createHash("sha256").update(await readFile(protectedPath)).digest("hex");
 const protectedHash = await hashFile();
-const runtimeVersion = JSON.parse(await readFile(path.join(path.resolve(runtime), "node_modules/@electric-sql/pglite/package.json"), "utf8")).version;
-const report = { status: "running", startedAt: new Date().toISOString(), engine: null, runtime: { pglite: runtimeVersion }, checks: [] };
+const report = { status: "running", startedAt: new Date().toISOString(), backend, engine: null, runtime: {}, checks: [] };
 const saveReport = async () => {
   if (process.env.INTEGRATION_REPORT) await writeFile(path.resolve(process.env.INTEGRATION_REPORT), JSON.stringify(report, null, 2) + "\n");
 };
 await saveReport();
 const sockets = [];
 const eventCleanups = new Set();
+const completedMatches = [];
 let api;
 let apiLog = "";
 let server;
@@ -42,7 +43,7 @@ async function freePort() {
 }
 
 async function runNode(label, args, env) {
-  const child = spawn(process.execPath, args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, args, { cwd: repo, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
   const capture = chunk => { output = (output + chunk).slice(-18000); };
   child.stdout.on("data", capture); child.stderr.on("data", capture);
@@ -53,7 +54,7 @@ async function runNode(label, args, env) {
   // PGlite's wire multiplexer shares a backend session across CLI processes.
   // Reset disconnected clients' prepared names before the next CLI connects.
   // Native PostgreSQL discards them when its client session closes.
-  await db.exec("DEALLOCATE ALL");
+  if (!db.native) await db.exec("DEALLOCATE ALL");
   report.checks.push({ name: label, passed: true });
   console.log(`PASS ${label}`);
 }
@@ -89,6 +90,32 @@ async function openSocket(base, identity) {
   return socket;
 }
 
+async function startApi(env) {
+  apiLog = "";
+  api = spawn(process.execPath, ["--import", "tsx", path.join(repo, "apps/api/src/index.ts")], {
+    cwd: repo, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const capture = chunk => { apiLog = (apiLog + chunk).slice(-18000); };
+  api.stdout.on("data", capture); api.stderr.on("data", capture);
+  const base = `http://127.0.0.1:${env.PORT}`;
+  let ready = false;
+  for (let i = 0; i < 300; i++) {
+    if (api.exitCode !== null || api.signalCode !== null) throw new Error(`API exited: ${apiLog}`);
+    try { const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(500) }); if (response.ok) { ready = true; break; } } catch {}
+    await delay(200);
+  }
+  assert.ok(ready, `API did not become ready: ${apiLog}`);
+  return base;
+}
+
+async function stopApi() {
+  if (api && api.exitCode === null && api.signalCode === null) {
+    api.kill();
+    await Promise.race([new Promise(resolve => api.once("exit", resolve)), delay(5000)]);
+    assert.ok(api.exitCode !== null || api.signalCode !== null, "Temporary API did not stop");
+  }
+}
+
 const ack = async (socket, name, data) => {
   const response = await socket.timeout(10000).emitWithAck(name, data);
   assert.equal(response.success, true, `${name}: ${JSON.stringify(response)}`);
@@ -106,16 +133,49 @@ async function playRound(base, host, guest, config) {
   const room = await request(base, "POST", "/api/games/", {
     mode: "classic", difficulty: config.difficulty || "master", rounds: 1,
     categories: [config.category], language: "ar",
+    ...(config.password ? { isPrivate: true, password: config.password } : {}),
   }, host.token, 201);
   assert.equal((await request(base, "GET", `/api/games/join/${room.joinCode}`)).gameId, room.gameId);
   const first = await openSocket(base, host);
   const second = await openSocket(base, guest);
   try {
     await ack(first, "game:join", { gameId: room.gameId });
-    await ack(second, "game:join", { gameId: room.gameId });
+    if (config.password) {
+      await request(base, "GET", `/api/games/${room.gameId}`, null, null, 401);
+      await request(base, "GET", `/api/games/${room.gameId}`, null, config.outsider.token, 403);
+      const missing = await second.timeout(10000).emitWithAck("game:join", { gameId: room.gameId });
+      assert.equal(missing.success, false); assert.equal(missing.code, "PASSWORD_REQUIRED");
+      const wrong = await second.timeout(10000).emitWithAck("game:join", { gameId: room.gameId, password: config.password.trim() });
+      assert.equal(wrong.success, false); assert.equal(wrong.code, "INVALID_PASSWORD");
+    }
+    await ack(second, "game:join", { gameId: room.gameId, ...(config.password ? { password: config.password } : {}) });
+    if (config.password) {
+      const metadata = await request(base, "GET", `/api/games/${room.gameId}`, null, guest.token);
+      assert.ok(!("password" in metadata) && !("passwordHash" in metadata));
+      assert.ok(!JSON.stringify(metadata).includes(config.password.trim()), "Private room metadata exposed its password");
+      await ack(second, "game:join", { gameId: room.gameId });
+      const observer = await openSocket(base, config.outsider);
+      const missing = await observer.timeout(10000).emitWithAck("game:spectate", { gameId: room.gameId });
+      assert.equal(missing.success, false); assert.equal(missing.code, "PASSWORD_REQUIRED");
+      await ack(observer, "game:spectate", { gameId: room.gameId, password: config.password });
+      observer.disconnect();
+      const reconnected = await openSocket(base, config.outsider);
+      await ack(reconnected, "game:spectate", { gameId: room.gameId });
+      reconnected.emit("game:leave", { gameId: room.gameId });
+      await delay(100);
+      reconnected.disconnect();
+      const revoked = await openSocket(base, config.outsider);
+      const denial = await revoked.timeout(10000).emitWithAck("game:spectate", { gameId: room.gameId });
+      assert.equal(denial.success, false); assert.equal(denial.code, "PASSWORD_REQUIRED");
+      revoked.disconnect();
+    }
     const selecting = event(first, "game:powerUpSelectStart");
     await ack(first, "game:start", { gameId: room.gameId });
     await selecting;
+    if (config.password) {
+      const listing = await request(base, "GET", "/api/games/active");
+      assert.ok(!listing.some(game => game.gameId === room.gameId), "A private room appeared in the public listing");
+    }
     const firstQuestion = event(first, "game:question");
     const secondQuestion = event(second, "game:question");
     const firstEnd = event(first, "game:end", 45000);
@@ -174,24 +234,50 @@ async function playRound(base, host, guest, config) {
     assert.equal(completed, 1, "Game completion did not persist its analytics event");
     report.checks.push({ name: config.name, passed: true });
     console.log(`PASS ${config.name}`);
+    return { gameId: room.gameId, endedAt: Date.now(), results: end1.results };
   } finally {
     first.disconnect(); second.disconnect();
   }
 }
 
 try {
-  db = await PGlite.create();
-  report.engine = (await db.query("SELECT version()")).rows[0].version;
   const dbPort = await freePort();
-  server = new PGLiteSocketServer({ db, host: "127.0.0.1", port: dbPort, maxConnections: 10 });
-  await server.start();
+  let databaseUrl;
+  if (backend === "native") {
+    const native = await startNativePostgres(runtime, dbPort, repo);
+    ({ db, server } = native);
+    databaseUrl = server.url;
+    report.runtime = native.metadata;
+    assert.equal((await db.query("SHOW fsync")).rows[0].fsync, "on");
+    const { PrismaClient } = require("@prisma/client");
+    const independent = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+    try {
+      const primaryPid = (await db.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const otherPid = (await independent.$queryRawUnsafe("SELECT pg_backend_pid() AS pid"))[0].pid;
+      assert.notEqual(primaryPid, otherPid, "Native clients unexpectedly shared one backend session");
+    } finally { await independent.$disconnect(); }
+    report.checks.push({ name: "native PostgreSQL fsync and independent backend sessions", passed: true });
+    console.log("PASS native PostgreSQL fsync and independent backend sessions");
+  } else {
+    const { PGlite } = runtimeRequire("@electric-sql/pglite");
+    const { PGLiteSocketServer } = runtimeRequire("@electric-sql/pglite-socket");
+    db = await PGlite.create();
+    server = new PGLiteSocketServer({ db, host: "127.0.0.1", port: dbPort, maxConnections: 10 });
+    await server.start();
+    databaseUrl = `postgresql://postgres:postgres@127.0.0.1:${dbPort}/postgres?sslmode=disable&connection_limit=1`;
+    report.runtime.pglite = JSON.parse(await readFile(path.join(path.resolve(runtime), "node_modules/@electric-sql/pglite/package.json"), "utf8")).version;
+  }
+  report.engine = (await db.query("SELECT version()")).rows[0].version;
   const apiPort = await freePort();
   const env = {
     ...process.env,
-    DATABASE_URL: `postgresql://postgres:postgres@127.0.0.1:${dbPort}/postgres?sslmode=disable&connection_limit=1`,
-    PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: "1", JWT_SECRET: randomBytes(32).toString("hex"), NODE_ENV: "test", PORT: String(apiPort),
+    DATABASE_URL: databaseUrl,
+    JWT_SECRET: randomBytes(32).toString("hex"), NODE_ENV: "test", PORT: String(apiPort),
+    QUIZ_INTEGRATION_DISPOSABLE: "1",
     REDIS_URL: "redis://127.0.0.1:1", OPENAI_API_KEY: "", HUGGINGFACE_API_TOKEN: "", SENTRY_DSN: "",
   };
+  if (backend === "native") delete env.PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK;
+  else env.PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK = "1";
   const prismaCli = path.join(repo, "node_modules/prisma/build/index.js");
   const schema = path.join(repo, "packages/db/prisma/schema.prisma");
   await runNode("apply repository migrations", [prismaCli, "migrate", "deploy", "--schema", schema], env);
@@ -203,18 +289,20 @@ try {
   assert.equal(Number((await db.query('SELECT count(*) FROM "Question"')).rows[0].count), seedCount);
   report.seededQuestions = seedCount;
   report.appliedMigrations = Number((await db.query('SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL')).rows[0].count);
+  await runNode("durable result writes are idempotent", ["--import", "tsx", "--eval", `
+    const { saveGameSession } = require('./apps/api/src/lib/gamePersistence.ts');
+    const { prisma } = require('@quiz-battle/db');
+    if (process.env.QUIZ_INTEGRATION_DISPOSABLE !== '1') throw Error('Disposable runner required');
+    const result = { gameId:'integration-idempotent-results',hostId:'integration-host',joinCode:'REPLAY',mode:'classic',difficulty:'scholar',language:'ar',totalRounds:1,
+      players:[{userId:'integration-host',username:'Host',score:100,rank:1,correctAnswers:1,totalAnswers:1,avgAnswerTime:500,xpEarned:0},
+      {userId:'integration-player',username:'Player',score:0,rank:2,correctAnswers:0,totalAnswers:1,avgAnswerTime:500,xpEarned:0}] };
+    (async()=>{ await saveGameSession(result); await saveGameSession(result); })()
+      .catch(error=>{ console.error(error);process.exitCode=1; }).finally(()=>prisma.$disconnect());
+  `], env);
+  assert.equal(Number((await db.query('SELECT count(*) FROM "GameSession" WHERE id=$1', ["integration-idempotent-results"])).rows[0].count), 1);
+  assert.equal(Number((await db.query('SELECT count(*) FROM "PlayerGameStat" WHERE "gameSessionId"=$1', ["integration-idempotent-results"])).rows[0].count), 2);
 
-  api = spawn(process.execPath, ["--import", "tsx", path.join(repo, "apps/api/src/index.ts")], { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
-  const capture = chunk => { apiLog = (apiLog + chunk).slice(-18000); };
-  api.stdout.on("data", capture); api.stderr.on("data", capture);
-  const base = `http://127.0.0.1:${apiPort}`;
-  let ready = false;
-  for (let i = 0; i < 300; i++) {
-    if (api.exitCode !== null) throw new Error(`API exited: ${apiLog}`);
-    try { const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(500) }); if (response.ok) { ready = true; break; } } catch {}
-    await delay(200);
-  }
-  assert.ok(ready, `API did not become ready: ${apiLog}`);
+  let base = await startApi(env);
   const host = await request(base, "POST", "/api/auth/guest", {});
   const guest = await request(base, "POST", "/api/auth/guest", {});
   assert.notEqual(host.userId, guest.userId);
@@ -230,13 +318,14 @@ try {
   assert.equal(users[0].hasPurchasedGame, false);
   assert.equal(users[0].shortGamesRemaining, 0);
   assert.equal(users[0].longGamesRemaining, 0);
+  const outsider = await request(base, "POST", "/api/auth/guest", {});
   report.checks.push({ name: "guest, registration, login, refresh and persisted account defaults", passed: true });
   console.log("PASS guest, registration, login, refresh and persisted account defaults");
 
-  await playRound(base, host, guest, {
+  completedMatches.push(await playRound(base, host, guest, {
     name: "two signed players complete a seeded Arabic round with legacy numeric answers",
     category: "science", difficulty: "scholar", legacy: true,
-  });
+  }));
   const fixtures = [
     {
       id: "integration-fill-blank", type: "fill_blank", category: "integration_fill_blank",
@@ -262,15 +351,45 @@ try {
       fixture.id, fixture.type, fixture.category, "master", fixture.textEn, fixture.textAr,
       JSON.stringify(fixture.optionsEn), JSON.stringify(fixture.optionsAr), JSON.stringify(fixture.persisted), fixture.id,
     ]);
-    await playRound(base, host, guest, {
+    completedMatches.push(await playRound(base, host, guest, {
       ...fixture, name: `${fixture.type}: malformed retry, typed scoring, duplicate protection and safe question sync`,
-    });
+    }));
   }
   report.typedQuestionFixtures = fixtures.length;
+  completedMatches.push(await playRound(base, host, guest, {
+    name: "private room password, listing, participant and spectator grants",
+    category: "science", difficulty: "scholar", legacy: true,
+    password: "  Test Only Private Room 19!  ", outsider,
+  }));
+  const expired = completedMatches[0];
+  await delay(Math.max(0, expired.endedAt + 31000 - Date.now()));
+  await request(base, "GET", `/api/games/${expired.gameId}`, null, host.token, 404);
+  const saved = await request(base, "GET", `/api/results/${expired.gameId}`, null, host.token);
+  assert.deepEqual(saved.results, expired.results);
+  assert.equal(saved.language, "ar");
+  await request(base, "GET", `/api/results/${expired.gameId}`, null, null, 401);
+  await request(base, "GET", `/api/results/${expired.gameId}`, null, outsider.token, 403);
+  await request(base, "GET", "/api/results/does-not-exist", null, host.token, 404);
+  report.checks.push({ name: "participant-protected results survive in-memory expiry", passed: true });
+  console.log("PASS participant-protected results survive in-memory expiry");
+  await stopApi();
+  if (backend === "native") await server.restart();
+  else await db.exec("DEALLOCATE ALL");
+  base = await startApi(env);
+  for (const match of completedMatches) {
+    const restored = await request(base, "GET", `/api/results/${match.gameId}`, null, guest.token);
+    assert.deepEqual(restored.results, match.results);
+    await request(base, "GET", `/api/results/${match.gameId}`, null, outsider.token, 403);
+  }
+  report.checks.push({ name: backend === "native" ? "results survive native PostgreSQL and API restart with outsider denial" : "results survive API restart with outsider denial", passed: true });
+  console.log(`PASS ${report.checks.at(-1).name}`);
+  report.completedMatches = completedMatches.length;
   report.protectedDatabaseSha256 = protectedHash;
   assert.equal(await hashFile(), protectedHash, "Tracked dev.db changed");
   report.checks.push({ name: "tracked dev.db remains unchanged", passed: true });
-  report.limits = ["PostgreSQL WASM/PGlite wire path; not native PostgreSQL deployment equivalence", "Disconnected CLI clients require DEALLOCATE ALL between phases because PGlite multiplexes one backend session", "One Prisma connection; no SSL, production concurrency or Redis durability proof", "No payment or OAuth provider requests"];
+  report.limits = backend === "native"
+    ? ["Native Windows PostgreSQL testing binary; not a hosted production deployment", "No SSL, HA, production load or Redis durability proof", "No payment or OAuth provider requests"]
+    : ["PostgreSQL WASM/PGlite wire path; not native PostgreSQL deployment equivalence", "Disconnected CLI/API clients require DEALLOCATE ALL between phases because PGlite multiplexes one backend session", "One Prisma connection; no SSL, production concurrency or Redis durability proof", "No payment or OAuth provider requests"];
   report.status = "passed";
 } catch (error) {
   report.status = "failed";
@@ -282,10 +401,7 @@ try {
   try {
     for (const cleanup of eventCleanups) cleanup();
     sockets.forEach(socket => socket.disconnect());
-    if (api && api.exitCode === null) {
-      api.kill();
-      await Promise.race([new Promise(resolve => api.once("exit", resolve)), delay(5000)]);
-    }
+    await stopApi();
     if (server) await server.stop();
     if (db) await db.close();
     assert.equal(await hashFile(), protectedHash, "Tracked dev.db changed during the integration run");

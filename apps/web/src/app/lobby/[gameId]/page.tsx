@@ -5,6 +5,7 @@ import { GameStatus, GameMode } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { emitStartGame, emitChaosInit } from "@/lib/socket";
 import { useGameConnection } from "@/hooks/useGameConnection";
+import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 import { ChatWindow } from "@/components/ChatWindow";
 import { CustomModeBuilder } from "@/components/CustomModeBuilder";
 
@@ -66,7 +67,7 @@ function LobbyPageContent() {
     players, status, addToast, language, hostId
   } = useGameStore();
   
-  const { joining } = useGameConnection(gameId, isSpectating);
+  const { joining, passwordRequired, passwordError, passwordPending, submitPassword } = useGameConnection(gameId, isSpectating);
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showCustomBuilder, setShowCustomBuilder] = useState(false);
@@ -104,6 +105,10 @@ function LobbyPageContent() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+
+  if (passwordRequired) {
+    return <RoomPasswordPrompt language={language} error={passwordError} pending={passwordPending} onSubmit={submitPassword} onCancel={() => router.push("/")} />;
+  }
 
   if (joining) {
     return (

@@ -72,12 +72,14 @@ export function subscribeGameRoom(
   callbacks: {
     onJoining: () => void;
     onJoined: () => void;
-    onError: (message?: string) => void;
-  }
+    onError: (message?: string, code?: import("@quiz-battle/shared").AckResponse["code"]) => void;
+  },
+  options: { password?: string } = {}
 ): () => void {
   let active = true;
   let requestId = 0;
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let password = options.password;
 
   const onDisconnect = () => {
     const currentRequest = ++requestId;
@@ -96,12 +98,6 @@ export function subscribeGameRoom(
     clearTimeout(timeout);
     const currentRequest = ++requestId;
 
-    if (isSpectating) {
-      s.emit("game:spectate", { gameId });
-      callbacks.onJoined();
-      return;
-    }
-
     timeout = setTimeout(() => {
       if (active && requestId === currentRequest) {
         requestId += 1;
@@ -109,12 +105,16 @@ export function subscribeGameRoom(
       }
     }, 10000);
 
-    s.emit("game:join", { gameId }, (response) => {
+    const acknowledge = (response: import("@quiz-battle/shared").AckResponse) => {
       if (!active || requestId !== currentRequest) return;
       clearTimeout(timeout);
+      password = undefined;
       if (response.success) callbacks.onJoined();
-      else callbacks.onError(response.error);
-    });
+      else callbacks.onError(response.error, response.code);
+    };
+    const request = { gameId, ...(password === undefined ? {} : { password }) };
+    if (isSpectating) s.emit("game:spectate", request, acknowledge);
+    else s.emit("game:join", request, acknowledge);
   };
 
   s.on("connect", joinRoom);

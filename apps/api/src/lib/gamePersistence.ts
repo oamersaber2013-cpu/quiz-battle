@@ -1,16 +1,20 @@
 import { prisma } from "@quiz-battle/db";
-import { GameRoom, GameMode, Difficulty, QuestionCategory } from "@quiz-battle/shared";
+import { GameMode, Difficulty, SavedGameResults } from "@quiz-battle/shared";
 
-interface GameResult {
+export interface GameResult {
   gameId: string;
+  hostId: string;
   joinCode: string;
   mode: GameMode;
   difficulty: Difficulty;
-  category?: QuestionCategory;
+  category?: string;
+  language?: "en" | "ar";
+  endedAt?: Date;
   totalRounds: number;
   players: Array<{
     userId: string;
     username: string;
+    avatar?: string;
     score: number;
     rank: number;
     correctAnswers: number;
@@ -25,45 +29,66 @@ interface GameResult {
 }
 
 export async function saveGameSession(result: GameResult): Promise<void> {
+  const metadata = {
+    hostId: result.hostId,
+    joinCode: result.joinCode,
+    mode: result.mode,
+    difficulty: result.difficulty,
+    language: result.language || "en",
+    category: result.category,
+    totalRounds: result.totalRounds,
+    endedAt: result.endedAt || new Date(),
+    winnerId: result.winnerId,
+    winnerScore: result.winnerScore,
+    questionIds: result.questionIds ? JSON.stringify(result.questionIds) : null,
+  };
+  const players = result.players.map(player => ({
+    userId: player.userId, username: player.username, avatar: player.avatar,
+    score: player.score, rank: player.rank, correctAnswers: player.correctAnswers,
+    totalAnswers: player.totalAnswers, avgAnswerTime: player.avgAnswerTime,
+    powerUpsUsed: player.powerUpsUsed ? JSON.stringify(player.powerUpsUsed) : null,
+    team: player.team,
+  }));
+  const write = () => prisma.gameSession.upsert({
+    where: { id: result.gameId },
+    create: { id: result.gameId, ...metadata, playerStats: { create: players } },
+    update: { ...metadata, playerStats: { deleteMany: {}, create: players } },
+  });
+  // The nested write commits the session and every standing together. A retry
+  // replaces the same room's rows instead of creating duplicate history.
   try {
-    // Create game session
-    const gameSession = await prisma.gameSession.create({
-      data: {
-        joinCode: result.joinCode,
-        mode: result.mode,
-        difficulty: result.difficulty,
-        category: result.category,
-        totalRounds: result.totalRounds,
-        winnerId: result.winnerId,
-        winnerScore: result.winnerScore,
-        questionIds: result.questionIds ? JSON.stringify(result.questionIds) : null,
-      },
-    });
-
-    // Create player stats for each player
-    await Promise.all(
-      result.players.map(async (player) => {
-        await prisma.playerGameStat.create({
-          data: {
-            gameSessionId: gameSession.id,
-            userId: player.userId,
-            username: player.username,
-            score: player.score,
-            rank: player.rank,
-            correctAnswers: player.correctAnswers,
-            totalAnswers: player.totalAnswers,
-            avgAnswerTime: player.avgAnswerTime,
-            powerUpsUsed: player.powerUpsUsed ? JSON.stringify(player.powerUpsUsed) : null,
-            team: player.team,
-          },
-        });
-      })
-    );
-
-    console.log(`[GamePersistence] Saved game session: ${gameSession.id}`);
+    await write();
   } catch (error) {
-    console.error("[GamePersistence] Failed to save game session:", error);
+    // Concurrent first-save upserts can race on the room's primary key.
+    if ((error as { code?: string }).code !== "P2002") throw error;
+    await write();
   }
+}
+
+export async function getSavedGameResults(gameId: string, viewerId: string): Promise<
+  { status: "found"; data: SavedGameResults } | { status: "not_found" | "forbidden" }
+> {
+  const session = await prisma.gameSession.findUnique({
+    where: { id: gameId },
+    include: { playerStats: { orderBy: { rank: "asc" } } },
+  });
+  if (!session || !session.endedAt) return { status: "not_found" };
+  if (session.hostId !== viewerId && !session.playerStats.some(player => player.userId === viewerId))
+    return { status: "forbidden" };
+  return {
+    status: "found",
+    data: {
+      gameId: session.id, mode: session.mode as GameMode, difficulty: session.difficulty as Difficulty,
+      language: session.language === "ar" ? "ar" : "en", totalRounds: session.totalRounds,
+      endedAt: session.endedAt.toISOString(),
+      results: session.playerStats.map(player => ({
+        userId: player.userId, username: player.username,
+        ...(player.avatar ? { avatar: player.avatar } : {}),
+        score: player.score, rank: player.rank, correctAnswers: player.correctAnswers,
+        totalAnswers: player.totalAnswers, avgAnswerTime: player.avgAnswerTime, xpEarned: 0,
+      })),
+    },
+  };
 }
 
 export async function getGameHistory(userId: string, limit: number = 10) {

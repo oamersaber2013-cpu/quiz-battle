@@ -152,6 +152,32 @@ describe("room membership recovery", () => {
     cleanup();
   });
 
+  it.each([false, true])("forwards private-room challenge codes before marking a connection joined (spectating=%s)", (isSpectating) => {
+    const socket = new FakeSocket();
+    socket.connected = true;
+    const events = callbacks();
+    const cleanup = subscribeGameRoom(typed(socket), "private-battle", isSpectating, events, { password: "  exact spaces  " });
+    expect(socket.emit).toHaveBeenCalledWith(isSpectating ? "game:spectate" : "game:join", { gameId: "private-battle", password: "  exact spaces  " }, expect.any(Function));
+    expect(events.onJoined).not.toHaveBeenCalled();
+    socket.emit.mock.calls[0][2]({ success: false, code: "INVALID_PASSWORD", error: "Incorrect password" });
+    expect(events.onError).toHaveBeenCalledWith("Incorrect password", "INVALID_PASSWORD");
+    cleanup();
+  });
+
+  it.each([false, true])("does not retain the password when an authorized socket reconnects (spectating=%s)", (isSpectating) => {
+    const socket = new FakeSocket();
+    socket.connected = true;
+    const events = callbacks();
+    const cleanup = subscribeGameRoom(typed(socket), "private-battle", isSpectating, events, { password: "temporary key" });
+    socket.emit.mock.calls[0][2]({ success: true });
+    socket.dispatch("disconnect");
+    socket.dispatch("connect");
+    expect(socket.emit.mock.calls[1][1]).toEqual({ gameId: "private-battle" });
+    socket.emit.mock.calls[1][2]({ success: true });
+    expect(events.onJoined).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
   it("reuses a pending connection for the same identity and replaces a previous identity", () => {
     const first = connectSocket("player-1", "محارب", "token-1", true);
     expect(connectSocket("player-1", "محارب", "token-1", true)).toBe(first);

@@ -19,9 +19,23 @@ multi-select compares sets, and ordering compares the entire permutation.
 Question and reconnect payloads now explicitly allow presentation fields and
 exclude answer keys, accepted alternatives and explanations. Correct-answer
 feedback is sent at reveal. Reconnection restores the viewer's actual answer
-and reveal feedback; finished results restore while the ended room is retained.
+and reveal feedback. Completed results now persist in PostgreSQL and load through
+an authenticated participant/host endpoint after room expiry and server restart.
 Bots score once, and final answer counts/timing use real scoring history.
 Numeric-only Chaos, Conquest and Invasion request compatible question types.
+
+Private rooms now enforce exact passwords for players and spectators, rate-limit
+failed attempts, and preserve approved signed identities across reconnects.
+Passwords are hashed outside serialized game state and remain outside browser
+storage. Private rooms are omitted from public listings; private summaries require
+authenticated admission. Hosts can create them through the bilingual wizard.
+
+Results saves are atomic and repeatable, with an additive migration for host,
+language and avatar. Failed writes are marked pending, retried three times and
+retained in memory for at most two hours. The results page reloads from the API
+and distinguishes authorization, missing results and temporary failures.
+Conquest/Invasion completion also saves territory standings; its untracked quiz
+counts are not presented as measured statistics.
 
 ## HTTP and authentication
 
@@ -38,30 +52,34 @@ flow exists. See [AUTH_CONFIGURATION.md](AUTH_CONFIGURATION.md).
 
 ## Verification on the final source
 
-- 123 regression tests passed: 85 API and 38 web. An additional API run with
-  `--runInBand --detectOpenHandles` passed all 85 and exited cleanly.
+- 166 regression tests passed: 112 API and 54 web.
+  The final API run with its two-worker limit exited cleanly without a worker warning.
 - Workspace typecheck: 6/6 tasks; production build: 4/4 tasks.
-- Production-backed Playwright: 6/6 desktop/mobile Chromium checks covering the
-  creation wizard, Arabic/RTL persistence and join-code validation.
-- Isolated integration: both real Prisma migrations, repeat deployment, repeat
-  bilingual seed, guest/account auth, room creation and four Arabic matches.
-  The matches cover legacy numeric, text/alias, multi-select and ordering answers
-  with real Prisma/API/Socket.IO paths. They check scoring, malformed retries,
-  first-answer locking, private keys, reconnect state and completion analytics.
+- Production-backed Playwright: 10/10 desktop/mobile Chromium checks, including
+  saved-result reload and private-room creation. Browser API fixtures are separate
+  from the real database/transport checks below.
+- Native PostgreSQL 18.6 on Windows x64: 15 integration check groups passed.
+  Three real Prisma migrations, repeat deployment/seed, guest/account auth,
+  repeatable result saves and five two-player Arabic matches passed. Matches cover
+  numeric, text/alias, multi-select, ordering and private-room entry. Missing/wrong
+  passwords, exact spaces, spectator grants, metadata privacy, result authorization
+  and scoring are checked. Saved results survived room expiry, API restart and
+  native PostgreSQL restart; unrelated users remained denied.
+- PGlite alternative: 14 integration check groups passed, including API restart.
 - Tracked `packages/db/prisma/dev.db` SHA-256 stayed unchanged. No production
   database or `.env` destination was used for the integration test.
 
-The integration engine is PostgreSQL 18.6 through PGlite WASM. It is not a native
-PostgreSQL release check: one backend session, prepared-statement resets between
-CLI phases and disabled advisory locks are explicit limitations. See
+The native runner uses independent PostgreSQL sessions, fsync and normal migration
+advisory locks. It installs no service or PATH entry and removes only its marked
+scratch cluster after stopping the server. The optional PGlite runner still has
+single-session/prepared-statement/advisory-lock limitations. See
 [scripts/INTEGRATION.md](scripts/INTEGRATION.md) and [TESTING.md](TESTING.md).
 
 ## Remaining release work
 
-Native PostgreSQL concurrency/migration locks, durable Redis and multi-instance
-restart recovery still need hosted checks. Real payment/credit enforcement is
+Hosted PostgreSQL TLS/HA/load behavior, durable Redis and multi-instance
+active-match restart recovery still need deployment checks. Real payment/credit enforcement is
 unfinished; the existing create-game credit bypass remains. Google provider
 credentials and a frontend sign-in flow need live verification; Facebook remains
-disabled. Full Chaos-state recovery and persistent result/history reload after
-an ended room expires remain outside this pass. Private-room password enforcement
-and question/media editorial review also require separate work.
+disabled. Full Chaos-state recovery, complete multi-round browser Conquest/Chaos
+matches and question/media editorial review remain separate release work.

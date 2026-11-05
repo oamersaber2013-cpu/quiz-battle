@@ -106,6 +106,35 @@ export interface ClientQuestion {
   activePowerUps?: ActivePowerUpEffect[];
 }
 
+export type SubmittedAnswer = number | string | number[];
+export interface AnswerReveal {
+  correct: boolean;
+  correctIndex: number;
+  correctIndices?: number[];
+  correctOrder?: number[];
+  correctAnswer?: string;
+}
+export type SafeClientQuestion = Omit<ClientQuestion,
+  "correctIndex" | "correctIndices" | "correctOrder" | "correctAnswer" | "acceptedAnswers" |
+  "explanation" | "explanationEn" | "explanationAr">;
+
+// Explicitly allow presentation fields. Answer keys and future server metadata
+// cannot accidentally cross the question/reconnection boundary.
+export function toSafeClientQuestion(question: ClientQuestion): SafeClientQuestion {
+  const safe: SafeClientQuestion = {
+    id: question.id, category: question.category, difficulty: question.difficulty,
+    timeLimit: question.timeLimit, text: question.text, options: [...question.options],
+  };
+  const optionalFields = [
+    "topic", "subtopic", "type", "imageUrl", "audioUrl", "videoUrl", "optionImages", "hint",
+    "textEn", "textAr", "optionsEn", "optionsAr", "hintEn", "hintAr", "activePowerUps",
+  ] as const;
+  for (const field of optionalFields) {
+    if (question[field] !== undefined) (safe as unknown as Record<string, unknown>)[field] = question[field];
+  }
+  return safe;
+}
+
 export function toClientQuestion(
   question: MultilingualQuestion,
   lang: "en" | "ar" = "en"
@@ -208,10 +237,12 @@ export interface TeamScoreState {
 export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
   players: PlayerState[];
   activeEffects?: ActivePowerUpEffect[];
-  currentQuestion?: Omit<ClientQuestion, "correctIndex"> | null;
+  currentQuestion?: SafeClientQuestion | null;
   questionStartedAt?: number;
-  selectedAnswer?: number | null;
+  selectedAnswer?: SubmittedAnswer | null;
   answeredAt?: number | null;
+  lastAnswerResult?: AnswerReveal | null;
+  finalResults?: FinalResult[];
   powerUpSelection?: {
     availablePowerUps: PowerUpType[];
     selectedPowerUps: PowerUpType[];
@@ -318,7 +349,7 @@ export interface ServerToClientEvents {
   "game:error": (data: { message: string }) => void;
   "game:countdown": (data: { seconds: number }) => void;
   "game:question": (data: {
-    question: Omit<ClientQuestion, "correctIndex">;
+    question: SafeClientQuestion;
     round: number;
     totalRounds: number;
   }) => void;
@@ -328,6 +359,9 @@ export interface ServerToClientEvents {
     scoreDelta: number;
     newScore: number;
     correctIndex: number;
+    correctIndices?: number[];
+    correctOrder?: number[];
+    correctAnswer?: string;
   }) => void;
   "game:scoreboard": (data: { players: PlayerState[] }) => void;
   "game:playerEliminated": (data: { userId: string; reason: string }) => void;
@@ -564,7 +598,8 @@ export interface ClientToServerEvents {
   "player:answer": (data: {
     gameId: string;
     questionId: string;
-    answerIndex: number;
+    answer?: SubmittedAnswer;
+    answerIndex?: number;
     timestamp: number;
   }) => void;
   "game:emote": (data: { gameId: string; emote: string }) => void;

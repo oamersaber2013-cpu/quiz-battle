@@ -189,7 +189,8 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     const game = getActiveGame(req.params.gameId);
     if (!game) return reply.status(404).send({ error: "Game not found" });
 
-    const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, ...safe } = game;
+    const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, password: _password, ...safe } =
+      game as typeof game & { password?: string };
     return reply.send({
       ...safe,
       players: Object.values(safe.players),

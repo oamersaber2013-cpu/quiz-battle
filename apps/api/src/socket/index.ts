@@ -8,6 +8,8 @@ import {
   ClientToServerEvents,
   GameStatus,
   GAME_MODE_CONFIG,
+  SyncedGameRoom,
+  toSafeClientQuestion,
 } from "@quiz-battle/shared";
 import { getRoomState } from "../lib/redis";
 import {
@@ -19,6 +21,7 @@ import {
   handlePowerUpSelection,
   confirmPowerUpSelection,
   getPowerUpSelectionSnapshot,
+  getViewerAnswerResult,
 } from "../lib/gameOrchestrator";
 import {
   initConquestGame,
@@ -44,6 +47,27 @@ import { GameMode } from "@quiz-battle/shared";
 import { fillWithBots, getBotInfo } from "../lib/aiBots";
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
+
+function roomSnapshot(game: NonNullable<ReturnType<typeof getActiveGame>>, viewerId?: string): SyncedGameRoom {
+  const question = [GameStatus.Question, GameStatus.AnswerReveal].includes(game.status) && game.mode !== GameMode.Conquest
+    ? game.questions[game.currentRound - 1] : null;
+  const answer = viewerId ? game.answersThisRound[viewerId] : undefined;
+  return {
+    gameId: game.gameId, joinCode: game.joinCode, hostId: game.hostId,
+    mode: game.mode, difficulty: game.difficulty, status: game.status,
+    currentRound: game.currentRound, totalRounds: game.totalRounds, maxPlayers: game.maxPlayers,
+    category: game.categories?.join(", "), language: game.language,
+    players: Object.values(game.players), activeEffects: game.activeEffects,
+    currentQuestion: question ? toSafeClientQuestion(question) : null,
+    questionStartedAt: game.questionStartTime,
+    selectedAnswer: answer?.answer ?? answer?.index ?? null,
+    answeredAt: answer?.timestamp ?? null,
+    lastAnswerResult: viewerId && game.status === GameStatus.AnswerReveal ? getViewerAnswerResult(game.gameId, viewerId) : null,
+    finalResults: game.status === GameStatus.Ended ? game.finalResults || [] : [],
+    powerUpSelection: viewerId ? getPowerUpSelectionSnapshot(game.gameId, viewerId) : undefined,
+    territories: game.territories, playerTerritories: game.playerTerritories,
+  };
+}
 
 export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
   // Matchmaking loop removed - Focusing on Host-Based Rooms
@@ -141,25 +165,8 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         await socket.join(gameId);
 
         // Sync state to new player
-        const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, ...safeState } = activeGame;
-        const question = activeGame.status === GameStatus.Question && activeGame.mode !== GameMode.Conquest
-          ? activeGame.questions[activeGame.currentRound - 1]
-          : null;
-        const { correctIndex: _correct, ...currentQuestion } = question || {};
-        const viewerAnswer = activeGame.answersThisRound[userId];
         socket.emit("game:stateSync", {
-          room: {
-            ...safeState,
-            category: activeGame.categories?.join(", "),
-            players: Object.values(safeState.players),
-            powerUpSelection: getPowerUpSelectionSnapshot(gameId, userId),
-            ...(activeGame.mode !== GameMode.Conquest ? {
-              currentQuestion: question ? currentQuestion : null,
-              questionStartedAt: activeGame.questionStartTime,
-              selectedAnswer: viewerAnswer?.index ?? null,
-              answeredAt: viewerAnswer?.timestamp ?? null,
-            } : {}),
-          } as any,
+          room: roomSnapshot(activeGame, userId),
         });
 
         // Sync Conquest state if in Conquest mode
@@ -278,7 +285,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     });
 
     // ─── Player Answer ───────────────────────────────────────
-    socket.on("player:answer", async ({ gameId, questionId, answerIndex, timestamp }) => {
+    socket.on("player:answer", async ({ gameId, questionId, answer, answerIndex, timestamp }) => {
       const game = getActiveGame(gameId);
       if (!game || game.status !== GameStatus.Question || !canParticipate(gameId)) return;
 
@@ -288,7 +295,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         redis,
         userId,
         questionId,
-        answerIndex,
+        answer ?? answerIndex,
         timestamp
       );
     });
@@ -357,23 +364,8 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
       io.to(gameId).emit("game:spectatorJoined", { spectatorId: userId, spectatorCount });
 
       // Send current game state (exclude sensitive round/question state)
-      const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, ...safeRoom } = game;
-      const question = game.status === GameStatus.Question && game.mode !== GameMode.Conquest
-        ? game.questions[game.currentRound - 1]
-        : null;
-      const { correctIndex: _correct, ...currentQuestion } = question || {};
       socket.emit("game:stateSync", {
-        room: {
-          ...safeRoom,
-          category: game.categories?.join(", "),
-          players: Object.values(safeRoom.players),
-          ...(game.mode !== GameMode.Conquest ? {
-            currentQuestion: question ? currentQuestion : null,
-            questionStartedAt: game.questionStartTime,
-            selectedAnswer: null,
-            answeredAt: null,
-          } : {}),
-        } as any,
+        room: roomSnapshot(game),
       });
 
       if (game.mode === GameMode.Conquest) {

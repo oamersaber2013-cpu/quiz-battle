@@ -20,6 +20,7 @@
     "seed": "cd packages/db && npm run seed",
     "deploy": "deploy.bat",
     "test:all": "test-all.bat",
+    "test:integration": "node scripts/integration-smoke.mjs",
     "start": "turbo run start --parallel"
   },
   "devDependencies": {

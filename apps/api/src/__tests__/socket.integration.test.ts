@@ -2,6 +2,7 @@ jest.mock("../lib/gameOrchestrator", () => ({
   getActiveGame: jest.fn(), startGame: jest.fn(), handlePlayerAnswer: jest.fn(), handlePowerUp: jest.fn(),
   startPowerUpSelectionPhase: jest.fn(), handlePowerUpSelection: jest.fn(), confirmPowerUpSelection: jest.fn(),
   getPowerUpSelectionSnapshot: jest.fn(),
+  getViewerAnswerResult: jest.fn(() => null),
 }));
 jest.mock("../lib/aiBots", () => ({ fillWithBots: jest.fn(), getBotInfo: jest.fn() }));
 jest.mock("../lib/questions", () => ({ fetchQuestions: jest.fn() }));
@@ -134,6 +135,6 @@ describe("Socket.IO transport", () => {
     host.emit("invasion:startRound", { gameId: "wire-room" });
     expect((await question).question.text).toBe("سؤال الغزو");
     expect(fetchQuestions).toHaveBeenCalledTimes(1);
-    expect(fetchQuestions).toHaveBeenCalledWith(Difficulty.Medium, 1, undefined, undefined, "ar", "wire-room");
+    expect(fetchQuestions).toHaveBeenCalledWith(Difficulty.Medium, 1, undefined, undefined, "ar", "wire-room", { singleChoiceOnly: true });
   });
 });

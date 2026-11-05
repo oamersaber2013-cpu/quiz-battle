@@ -250,7 +250,7 @@ export async function handleAttack(
   const selectedCategory = categoryId || randomCategory;
   const categoriesToUse = selectedCategory ? [selectedCategory] : s.categories;
 
-  const qs = await fetchQuestions(s.difficulty, 1, categoriesToUse, undefined, s.language);
+  const qs = await fetchQuestions(s.difficulty, 1, categoriesToUse, undefined, s.language, gameId, { singleChoiceOnly: true });
   const q = qs[0];
   if (!q) return { success: false, error: "No question available" };
 
@@ -306,7 +306,7 @@ async function resolveDuel(io: TypedServer, s: ConquestInternalState) {
       correctIndex: correct, tieBreaker: true,
     });
 
-    const qs = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language);
+    const qs = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, s.gameId, { singleChoiceOnly: true });
     const q = qs[0];
     if (!q) { dCorrect && resolveDuel(io, s); return; }
 
@@ -372,7 +372,7 @@ export async function handleRebuild(
   if (currentPlayer(s) !== playerId) return { success: false, error: "Not your turn" };
   if ((s.fortHealth[playerId] || 0) >= 3) return { success: false, error: "Fort already at full health" };
 
-  const qs = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language);
+  const qs = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, gameId, { singleChoiceOnly: true });
   const q = qs[0];
   if (!q) return { success: false, error: "No question" };
 
@@ -436,7 +436,7 @@ export async function startDraftRound(
   const s = games.get(gameId);
   if (!s || !s.draftPhase) return;
 
-  const questions = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language);
+  const questions = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, gameId, { singleChoiceOnly: true });
   const q = questions[0];
   if (!q || games.get(gameId) !== s || !s.draftPhase) return;
   if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);

@@ -1,6 +1,6 @@
 "use client";
 import { io, Socket } from "socket.io-client";
-import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty } from "@quiz-battle/shared";
+import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer } from "@quiz-battle/shared";
 import { useGameStore } from "../store/gameStore";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -205,22 +205,26 @@ function registerHandlers(s: TypedSocket) {
     useGameStore.getState().setQuestion(question, round, totalRounds);
   });
 
-  s.on("game:answerResult", ({ userId, correct, scoreDelta, newScore, correctIndex }) => {
+  s.on("game:answerResult", ({ userId, correct, scoreDelta, newScore, correctIndex, correctIndices, correctOrder, correctAnswer }) => {
     const gs = useGameStore.getState();
     const isAr = gs.language === "ar";
 
     if (userId === gs.userId) {
-      gs.setLastAnswerResult({ correct, correctIndex });
+      gs.setLastAnswerResult({ correct, correctIndex, correctIndices, correctOrder, correctAnswer });
+      gs.setStatus(GameStatus.AnswerReveal);
       if (correct) {
         const msg = isAr
           ? `✓ صحيح! +${scoreDelta} نقطة`
           : `✓ Correct! +${scoreDelta} pts`;
         gs.addToast("success", msg);
       } else {
-        const letter = String.fromCharCode(65 + correctIndex);
+        const answerLabel = correctAnswer
+          ?? correctIndices?.map((index) => String.fromCharCode(65 + index)).join(", ")
+          ?? correctOrder?.map((index) => String.fromCharCode(65 + index)).join(" → ")
+          ?? (correctIndex >= 0 ? String.fromCharCode(65 + correctIndex) : null);
         const msg = isAr
-          ? `✗ خطأ! الإجابة الصحيحة: ${letter}`
-          : `✗ Wrong! Correct: ${letter}`;
+          ? (answerLabel ? `✗ خطأ! الإجابة الصحيحة: ${answerLabel}` : "✗ إجابة خاطئة")
+          : (answerLabel ? `✗ Wrong! Correct: ${answerLabel}` : "✗ Wrong answer");
         gs.addToast("error", msg);
       }
     }
@@ -797,9 +801,13 @@ export function emitSpectateGame(gameId: string) {
   s.emit("game:spectate", { gameId });
 }
 
-export function emitAnswer(gameId: string, questionId: string, answerIndex: number) {
+export function emitAnswer(gameId: string, questionId: string, answer: SubmittedAnswer) {
   const s = getSocket();
-  s.emit("player:answer", { gameId, questionId, answerIndex, timestamp: Date.now() });
+  s.emit("player:answer", {
+    gameId, questionId, answer,
+    ...(typeof answer === "number" ? { answerIndex: answer } : {}),
+    timestamp: Date.now(),
+  });
 }
 
 export function emitPowerUp(

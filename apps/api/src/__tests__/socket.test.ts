@@ -4,13 +4,14 @@ jest.mock("../lib/gameOrchestrator", () => ({
   startPowerUpSelectionPhase: jest.fn(), handlePowerUpSelection: jest.fn(),
   confirmPowerUpSelection: jest.fn(),
   getPowerUpSelectionSnapshot: jest.fn(),
+  getViewerAnswerResult: jest.fn(() => null),
 }));
 jest.mock("../lib/aiBots", () => ({ fillWithBots: jest.fn(), getBotInfo: jest.fn() }));
 jest.mock("../lib/questions", () => ({ fetchQuestions: jest.fn() }));
 
 import jwt from "jsonwebtoken";
 import { GameMode, GameStatus, Difficulty } from "@quiz-battle/shared";
-import { getActiveGame } from "../lib/gameOrchestrator";
+import { getActiveGame, handlePlayerAnswer, getViewerAnswerResult } from "../lib/gameOrchestrator";
 import { getJwtSecret } from "../lib/jwtConfig";
 import { createInvasionGame, getInvasionState, deleteInvasionGame } from "../lib/invasionOrchestrator";
 import { registerSocketHandlers } from "../socket";
@@ -24,6 +25,8 @@ describe("Socket identity and room authority", () => {
   let io: any;
 
   beforeEach(() => {
+    jest.clearAllMocks();
+    (getViewerAnswerResult as jest.Mock).mockReturnValue(null);
     handlers = {};
     io = {
       use: (fn: Function) => { middleware = fn; },
@@ -113,14 +116,61 @@ describe("Socket identity and room authority", () => {
       host: { index: 1, timestamp: Date.now(), latencyMs: 100 },
     };
     game.lastAnswerByPlayer = { host: true };
+    game.password = "private-room-password";
     connect(socket);
     await handlers["game:join"]({ gameId: "room" }, jest.fn());
     const room = socket.emit.mock.calls.find(([event]: any[]) => event === "game:stateSync")[1].room;
     expect(room).not.toHaveProperty("questions");
     expect(room).not.toHaveProperty("answersThisRound");
     expect(room).not.toHaveProperty("lastAnswerByPlayer");
+    expect(room).not.toHaveProperty("password");
     expect(room.currentQuestion).not.toHaveProperty("correctIndex");
     expect(room.questionStartedAt).toBe(game.questionStartTime);
     expect(room.selectedAnswer).toBe(0);
+  });
+
+  it.each(["Doha", [0, 2], [2, 0, 1], 0])("forwards typed submissions without numeric coercion", async answer => {
+    connect(socket);
+    await handlers["player:answer"]({ gameId: "room", questionId: "q1", answer, timestamp: 123 });
+    expect(handlePlayerAnswer).toHaveBeenCalledWith(game, io, {}, "player", "q1", answer, 123);
+  });
+
+  it("keeps legacy numeric answerIndex clients working", async () => {
+    connect(socket);
+    await handlers["player:answer"]({ gameId: "room", questionId: "q1", answerIndex: 2, timestamp: 123 });
+    expect(handlePlayerAnswer).toHaveBeenCalledWith(game, io, {}, "player", "q1", 2, 123);
+  });
+
+  it("restores a typed answer without leaking its key or alternatives", async () => {
+    game.mode = GameMode.Classic;
+    game.currentRound = 1;
+    game.questions = [{ id: "q1", text: "City?", options: [], correctAnswer: "Doha", acceptedAnswers: ["الدوحة"], correctIndex: -1, explanation: "private" }];
+    game.answersThisRound = { player: { answer: "الدوحة", timestamp: 123 } };
+    connect(socket);
+    await handlers["game:join"]({ gameId: "room" }, jest.fn());
+    const room = socket.emit.mock.calls.find(([event]: any[]) => event === "game:stateSync")[1].room;
+    expect(room.selectedAnswer).toBe("الدوحة");
+    expect(room.currentQuestion).not.toHaveProperty("correctAnswer");
+    expect(room.currentQuestion).not.toHaveProperty("acceptedAnswers");
+    expect(room.currentQuestion).not.toHaveProperty("explanation");
+    expect(room.lastAnswerResult).toBeNull();
+    expect(getViewerAnswerResult).not.toHaveBeenCalled();
+  });
+
+  it("restores reveal metadata only at reveal and finished results only at the end", async () => {
+    game.mode = GameMode.Classic;
+    game.status = GameStatus.AnswerReveal;
+    (getViewerAnswerResult as jest.Mock).mockReturnValue({ correct: true, scoreDelta: 100, correctAnswer: "Doha" });
+    connect(socket);
+    await handlers["game:join"]({ gameId: "room" }, jest.fn());
+    expect(socket.emit.mock.calls.find(([event]: any[]) => event === "game:stateSync")[1].room.lastAnswerResult.correctAnswer).toBe("Doha");
+    socket.emit.mockClear();
+    game.status = GameStatus.Ended;
+    game.finalResults = [{ userId: "player", score: 100 }];
+    await handlers["game:join"]({ gameId: "room" }, jest.fn());
+    const ended = socket.emit.mock.calls.find(([event]: any[]) => event === "game:stateSync")[1].room;
+    expect(ended.finalResults).toEqual(game.finalResults);
+    expect(ended.lastAnswerResult).toBeNull();
+    expect(ended.currentQuestion).toBeNull();
   });
 });

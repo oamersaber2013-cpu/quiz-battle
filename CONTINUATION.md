@@ -1,58 +1,67 @@
-# Sword of Knowledge continuation - 4 November 2026
+# Sword of Knowledge continuation - 5 November 2026
 
-This continuation starts from GitHub `main` commit `4547a7b` in a fresh checkout.
-The older status/launch documents describe earlier work; they are not evidence
-that the current game has been deployed or fully verified.
+Draft PR #1 continues from main commit `4547a7b`. Nothing has been merged or
+deployed. Older launch/status documents are historical, not current release proof.
 
-## Changes
+## Gameplay and reliability
 
-- Lobby and game routes restore room membership after a reload or reconnect.
-  The server restores the current question, original clock, the viewer's own
-  answer and power-up choices. Spectators reconnect as spectators.
-- Fixed Time Warp's disappearing extension, the power-up confirmation echo
-  undoing a local selection, and Conquest's loading-to-game React hook crash.
-- Socket identities now come from signed JWTs. Invasion controls require the
-  host; answers and territory actions require participation in the room.
-- Invasion accepts one bounded answer before its deadline, prevents overlapping
-  round starts and excess picks, and clears tracked timers on removal.
-- Conquest reserves forts during the draft, keeps fort health capped, uses
-  server answer timing and finishes the draft immediately after the last pick.
-  Country ownership, language, difficulty and categories survive transition.
-- Database questions use the persisted `correctAnswer`, stable question IDs
-  and separate language/topic caches. Optional caching uses the existing
-  Redis fallback instead of opening a second unbounded Redis connection.
-- Guest and account JWTs share the same configuration, including values loaded
-  from the API's environment file.
-- Added the missing User battle-credit columns and an additive PostgreSQL
-  migration. Repaired seed/worker schema fields and enum values.
-- A failed scheduled leaderboard refresh is caught and retried at its next
-  interval instead of terminating the API process.
-- Builds fail on TypeScript errors. API, web, worker, DB and shared checks are
-  runnable; placeholder frontend assertions were replaced with real regressions.
+The 4 November pass fixed room recovery, Conquest's React hook crash, Time Warp,
+power-up echoes, fort drafting, Invasion permissions/timers, missing credit
+columns, masked build failures and a crashing background leaderboard refresh.
 
-## Verification
+The 5 November pass fixes the next gameplay gap: text, multi-select and ordering
+submissions previously became option zero. Classic, Survival and Custom now
+carry the actual string or complete index array to server-side validation and
+scoring. Malformed submissions do not consume the answer; a valid first answer
+cannot be replaced. Text comparison normalizes case, Unicode and whitespace;
+multi-select compares sets, and ordering compares the entire permutation.
 
-- `npm test`: 55 passed (39 API and 16 web), including four real Socket.IO
-  transport tests and a React loading/reloading lifecycle test.
-- `npm run typecheck`: all workspace checks passed.
-- `npm run build`: all production build tasks passed.
-- Production-backed Playwright: six checks passed across desktop and mobile
-  Chromium, covering the creation wizard, Arabic/RTL persistence and join codes.
-- PostgreSQL Prisma schema validation passed. The compiled API served HTTP 200
-  for `/health` and the Socket.IO handshake. Background database-outage handling
-  is verified with a deterministic failing-then-passing regression.
+Question and reconnect payloads now explicitly allow presentation fields and
+exclude answer keys, accepted alternatives and explanations. Correct-answer
+feedback is sent at reveal. Reconnection restores the viewer's actual answer
+and reveal feedback; finished results restore while the ended room is retained.
+Bots score once, and final answer counts/timing use real scoring history.
+Numeric-only Chaos, Conquest and Invasion request compatible question types.
 
-See [TESTING.md](TESTING.md) for repeatable commands and test boundaries.
+## HTTP and authentication
 
-## Remaining integration work
+HTTP and Socket.IO share exact configured frontend origins; hosted FRONTEND_URL
+is honored, development loopback ports work, and arbitrary ngrok-looking
+hostnames are not trusted. Production JWT signing requires a unique secret.
+Public room summaries no longer return room passwords.
 
-No hosted deployment or production database was changed. The new migration and
-seed need an isolated PostgreSQL integration run before release. Redis fallback
-and in-memory game state are not proof of multi-instance/restart recovery.
+Auth inputs are validated before database access. Opaque passwords and provider
+tokens are preserved through sanitization. Google sign-in requires a verified
+ID token and configured audience; caller-supplied profile IDs cannot create a
+session. Facebook sign-in returns unavailable until its provider-verification
+flow exists. See [AUTH_CONFIGURATION.md](AUTH_CONFIGURATION.md).
 
-Real payment verification and OAuth provider verification remain unfinished;
-the existing game-creation credit bypass was preserved. Full text/multi-select
-answer contracts, completed-result reload and complete Chaos-state recovery
-remain outside this change. Hosted frontend CORS configuration also needs a
-deployment check. Browser smoke tests do not prove a complete paid multiplayer
-match. Question content and media still need their own editorial verification.
+## Verification on the final source
+
+- 123 regression tests passed: 85 API and 38 web. An additional API run with
+  `--runInBand --detectOpenHandles` passed all 85 and exited cleanly.
+- Workspace typecheck: 6/6 tasks; production build: 4/4 tasks.
+- Production-backed Playwright: 6/6 desktop/mobile Chromium checks covering the
+  creation wizard, Arabic/RTL persistence and join-code validation.
+- Isolated integration: both real Prisma migrations, repeat deployment, repeat
+  bilingual seed, guest/account auth, room creation and four Arabic matches.
+  The matches cover legacy numeric, text/alias, multi-select and ordering answers
+  with real Prisma/API/Socket.IO paths. They check scoring, malformed retries,
+  first-answer locking, private keys, reconnect state and completion analytics.
+- Tracked `packages/db/prisma/dev.db` SHA-256 stayed unchanged. No production
+  database or `.env` destination was used for the integration test.
+
+The integration engine is PostgreSQL 18.6 through PGlite WASM. It is not a native
+PostgreSQL release check: one backend session, prepared-statement resets between
+CLI phases and disabled advisory locks are explicit limitations. See
+[scripts/INTEGRATION.md](scripts/INTEGRATION.md) and [TESTING.md](TESTING.md).
+
+## Remaining release work
+
+Native PostgreSQL concurrency/migration locks, durable Redis and multi-instance
+restart recovery still need hosted checks. Real payment/credit enforcement is
+unfinished; the existing create-game credit bypass remains. Google provider
+credentials and a frontend sign-in flow need live verification; Facebook remains
+disabled. Full Chaos-state recovery and persistent result/history reload after
+an ended room expires remain outside this pass. Private-room password enforcement
+and question/media editorial review also require separate work.

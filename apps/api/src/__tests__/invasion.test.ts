@@ -121,7 +121,7 @@ describe("Invasion round integrity", () => {
       difficulty: Difficulty.Legend, language: "ar", categories: ["history"], totalRounds: 6,
     });
     await startInvasionRound("room", io, redis);
-    expect(questions).toHaveBeenCalledWith(Difficulty.Legend, 1, ["history"], undefined, "ar", "room");
+    expect(questions).toHaveBeenCalledWith(Difficulty.Legend, 1, ["history"], undefined, "ar", "room", { singleChoiceOnly: true });
     expect(getInvasionState("room")!.totalRounds).toBe(6);
   });
 });

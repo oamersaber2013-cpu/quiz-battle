@@ -31,7 +31,9 @@ export function sanitizeObject(obj: any): any {
   if (obj && typeof obj === "object") {
     const sanitized: any = {};
     for (const key in obj) {
-      sanitized[key] = sanitizeObject(obj[key]);
+      // Credentials are opaque; trimming/truncating them changes what is verified.
+      sanitized[key] = ["password", "idToken", "accessToken"].includes(key) && typeof obj[key] === "string"
+        ? obj[key] : sanitizeObject(obj[key]);
     }
     return sanitized;
   }

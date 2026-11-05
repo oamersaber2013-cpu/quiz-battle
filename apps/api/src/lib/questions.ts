@@ -23,6 +23,7 @@ import {
   getEntertainmentQuestionCount,
 } from "./entertainmentQuestionBank";
 import { getCachedQuestions, cacheQuestions } from "./cache";
+import { hasValidAnswerKey, isSingleChoiceQuestion } from "./answers";
 
 // Lazy load Prisma to avoid startup failures
 let prisma: any = null;
@@ -147,13 +148,15 @@ export async function fetchQuestions(
   categories?: string | string[],
   subcategories?: string | string[],
   language: 'en' | 'ar' = defaultLanguage,
-  gameId?: string
+  gameId?: string,
+  options: { singleChoiceOnly?: boolean } = {}
 ): Promise<Array<ClientQuestion & { correctIndex: number }>> {
   const catArray = Array.isArray(categories) ? categories : (categories ? [categories] : ["General"]);
   const subcatArray = Array.isArray(subcategories) ? subcategories : (subcategories ? [subcategories] : []);
   
   // Get question type distribution for this difficulty
-  const typeDistribution = getQuestionTypeDistribution(difficulty);
+  const typeDistribution = getQuestionTypeDistribution(difficulty).filter(type => !options.singleChoiceOnly ||
+    ![QuestionType.FillBlank, QuestionType.MultiSelect, QuestionType.Ordering].includes(type));
   
   const results: any[] = [];
   const countPerCat = Math.ceil(count / catArray.length);
@@ -179,7 +182,8 @@ export async function fetchQuestions(
       subcatForThis,
       language,
       typesForBatch,
-      gameId
+      gameId,
+      options
     );
     results.push(...catResults);
   }
@@ -195,20 +199,23 @@ async function fetchSingleCategoryQuestions(
   subcategories?: string[],
   language: 'en' | 'ar' = 'en',
   questionTypes?: QuestionType[],
-  gameId?: string
+  gameId?: string,
+  options: { singleChoiceOnly?: boolean } = {}
 ): Promise<Array<ClientQuestion & { correctIndex: number }>> {
   const results: any[] = [];
   const targetCategory = (category as QuestionCategory) || QuestionCategory.General;
   const safetyLevel = CATEGORY_SAFETY_LEVELS[targetCategory] || ContentSafetyLevel.ControlledAI;
   const typesToGenerate = questionTypes || Array(count).fill(QuestionType.MultipleChoice);
+  const supported = (question: ClientQuestion) => hasValidAnswerKey(question) &&
+    (!options.singleChoiceOnly || isSingleChoiceQuestion(question));
 
   // PRIORITY 0: CHECK CACHE FIRST
-  const cacheKey = `${targetCategory}:${language}:${[...(subcategories || [])].sort().join(",")}`;
+  const cacheKey = `${targetCategory}:${language}:${[...(subcategories || [])].sort().join(",")}${options.singleChoiceOnly ? ":single-choice" : ""}`;
   const cached = await getCachedQuestions(cacheKey, difficulty);
   if (cached && cached.length >= count) {
     const availableCached = gameId
-      ? cached.filter(q => !isQuestionUsed(gameId, q.id))
-      : cached;
+      ? cached.filter(q => supported(q) && !isQuestionUsed(gameId, q.id))
+      : cached.filter(supported);
     
     if (availableCached.length >= count) {
       const selected = availableCached.slice(0, count);
@@ -243,22 +250,28 @@ async function fetchSingleCategoryQuestions(
 
         const converted = selected.flatMap(q => {
           const optionsJson = language === 'ar' ? q.optionsArJson : q.optionsEnJson;
-          let options: unknown;
-          try { options = JSON.parse(optionsJson || "[]"); } catch { return []; }
-          // The current live answer protocol accepts one option index.
-          const correctIndex = q.correctAnswer?.trim() ? Number(q.correctAnswer) : NaN;
-          if (!Array.isArray(options) || !options.every(o => typeof o === "string") || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length) return [];
-          if (gameId) markQuestionUsed(gameId, q.id);
-          return [{
+          let questionOptions: unknown;
+          try { questionOptions = JSON.parse(optionsJson || "[]"); } catch { return []; }
+          if (!Array.isArray(questionOptions) || !questionOptions.every(o => typeof o === "string" && o.trim().length > 0)) return [];
+          const type = normalizeQuestionType(q.type);
+          if (!type) return [];
+          const answerKey = decodePersistedAnswer(type, q.correctAnswer, language);
+          const question = {
             id: q.id,
             text: language === 'ar' ? q.textAr : q.textEn,
-            options,
-            correctIndex,
+            options: questionOptions,
             category: targetCategory,
-            difficulty: difficulty,
+            difficulty,
             timeLimit: getTimeLimitForDifficulty(difficulty),
-            type: q.type as QuestionType || QuestionType.MultipleChoice,
-          }];
+            type,
+            imageUrl: q.imageUrl || undefined,
+            audioUrl: q.audioUrl || undefined,
+            videoUrl: q.videoUrl || undefined,
+            ...answerKey,
+          } as ClientQuestion & { correctIndex: number };
+          if (!supported(question)) return [];
+          if (gameId) markQuestionUsed(gameId, q.id);
+          return [question];
         });
 
         results.push(...converted);
@@ -341,6 +354,7 @@ async function fetchSingleCategoryQuestions(
     const aiQuestions = await tryFreeAI(difficulty, 1, category, language, questionType);
     if (aiQuestions && aiQuestions.length > 0) {
       const q = aiQuestions[0];
+      if (!supported(q)) continue;
       if (gameId) markQuestionUsed(gameId, q.id);
       results.push(q);
     }
@@ -353,7 +367,7 @@ async function fetchSingleCategoryQuestions(
   if (remaining > 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "sk-your-key-here") {
     try {
       const gpt = await fetchFromOpenAI(difficulty, remaining, category, language);
-      results.push(...gpt.map(q => {
+      results.push(...gpt.filter(supported).map(q => {
         if (gameId) markQuestionUsed(gameId, q.id);
         return q;
       }));
@@ -395,10 +409,34 @@ async function fetchSingleCategoryQuestions(
 function isValidQuestion(q: any): boolean {
   if (!q || typeof q !== 'object') return false;
   if (typeof q.text !== 'string' || q.text.trim().length < 5) return false;
-  if (!Array.isArray(q.options) || q.options.length !== 4) return false;
+  if (!Array.isArray(q.options)) return false;
   if (q.options.some((o: any) => typeof o !== 'string' || o.trim().length === 0)) return false;
-  if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 3) return false;
-  return true;
+  return hasValidAnswerKey(q);
+}
+
+function normalizeQuestionType(value: unknown): QuestionType | undefined {
+  if (value === undefined || value === null || value === "") return QuestionType.MultipleChoice;
+  if (typeof value !== "string") return undefined;
+  const compact = value.toLowerCase().replace(/[_\s-]/g, "");
+  return Object.values(QuestionType).find(type => type.replace(/_/g, "") === compact);
+}
+
+function decodePersistedAnswer(type: QuestionType, raw: unknown, language: "en" | "ar") {
+  if (typeof raw !== "string" || !raw.trim()) return { correctIndex: -1 };
+  let parsed: unknown = raw;
+  try { parsed = JSON.parse(raw); } catch { /* Plain text answers are valid storage. */ }
+  if (type === QuestionType.FillBlank) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) parsed = parsed[language];
+    const alternatives = Array.isArray(parsed) && parsed.every(value => typeof value === "string") ? parsed : [];
+    return {
+      correctIndex: -1,
+      correctAnswer: typeof parsed === "string" ? parsed : alternatives[0],
+      acceptedAnswers: alternatives,
+    };
+  }
+  if (type === QuestionType.MultiSelect) return { correctIndex: -1, correctIndices: parsed as number[] };
+  if (type === QuestionType.Ordering) return { correctIndex: -1, correctOrder: parsed as number[] };
+  return { correctIndex: typeof parsed === "number" ? parsed : Number(raw) };
 }
 
 // Try to extract a JSON array from messy AI text output
@@ -456,7 +494,7 @@ async function tryFreeAI(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          inputs: generateAIPrompt(difficulty, count, category, language),
+          inputs: generateAIPrompt(difficulty, count, category, language, questionType),
           parameters: {
             max_new_tokens: 2000,
             temperature: 0.7,
@@ -484,12 +522,22 @@ async function tryFreeAI(
 
     // Validate each question, filter out bad ones
     const valid = questions
+      .map((q: any) => ({ ...q, type: normalizeQuestionType(q.type) || questionType, options: q.options || [] }))
       .filter(isValidQuestion)
       .map((q: any) => ({
         id: generateQuestionId(),
         text: q.text.trim(),
         options: q.options.map((o: string) => o.trim()),
-        correctIndex: q.correctIndex,
+        correctIndex: q.correctIndex ?? -1,
+        correctIndices: q.correctIndices,
+        correctOrder: q.correctOrder,
+        correctAnswer: q.correctAnswer,
+        acceptedAnswers: q.acceptedAnswers,
+        type: q.type,
+        hint: q.hint,
+        imageUrl: q.imageUrl,
+        audioUrl: q.audioUrl,
+        videoUrl: q.videoUrl,
         category: q.category || category || "General",
         difficulty,
         timeLimit: getTimeLimitForDifficulty(difficulty),

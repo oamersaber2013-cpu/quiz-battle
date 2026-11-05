@@ -2,6 +2,8 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { prisma } from "@quiz-battle/db";
 import { getJwtSecret } from "./jwtConfig";
+import { randomUUID } from "crypto";
+import { verifyGoogleIdentity, SocialLoginError } from "./googleIdentity";
 
 const JWT_EXPIRES_IN = "7d";
 
@@ -97,15 +99,20 @@ export async function loginUser(email: string, password: string) {
   return { user, token };
 }
 
-export async function loginWithGoogle(googleId: string, email: string, name: string) {
+export async function loginWithGoogle(idToken: string) {
+  const { googleId, email, name } = await verifyGoogleIdentity(idToken);
   let user = await prisma.user.findUnique({ where: { googleId } });
 
   if (!user) {
+    if (await prisma.user.findUnique({ where: { email } })) {
+      throw new SocialLoginError(409, "Sign in to your existing account before linking Google");
+    }
+    const baseName = name.replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, "_").slice(0, 11) || "Player";
     user = await prisma.user.create({
       data: {
         googleId,
         email,
-        username: name,
+        username: `${baseName}_${randomUUID().slice(0, 8)}`,
         role: "free",
       },
     });
@@ -126,31 +133,8 @@ export async function loginWithGoogle(googleId: string, email: string, name: str
   return { user, token };
 }
 
-export async function loginWithFacebook(facebookId: string, email: string, name: string) {
-  let user = await prisma.user.findUnique({ where: { facebookId } });
-
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        facebookId,
-        email,
-        username: name,
-        role: "free",
-      },
-    });
-  }
-
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() },
-  });
-
-  const token = generateToken({
-    userId: user.id,
-    username: user.username,
-    email: user.email || undefined,
-    role: user.role,
-  });
-
-  return { user, token };
+export async function loginWithFacebook(_accessToken: string): Promise<never> {
+  // Never exchange a client-supplied Facebook id/profile for an application JWT.
+  // Re-enable only with a completed provider-token verification flow.
+  throw new SocialLoginError(503, "Facebook sign-in is not available yet");
 }

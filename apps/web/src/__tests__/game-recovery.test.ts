@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 import { Difficulty, GameMode, GameStatus, PowerUpType, SyncedGameRoom } from "@quiz-battle/shared";
-import { connectSocket, disconnectSocket, getSocket, subscribeGameRoom } from "@/lib/socket";
+import { connectSocket, disconnectSocket, getSocket, subscribeGameRoom, emitAnswer } from "@/lib/socket";
 import { useGameStore } from "@/store/gameStore";
 
 jest.mock("socket.io-client", () => ({ io: jest.fn() }));
@@ -164,6 +164,26 @@ describe("room membership recovery", () => {
 });
 
 describe("restoring an active question", () => {
+  it("restores final results when an ended room is still retained by the server", () => {
+    const finalResults = [{ userId: "player-1", username: "محارب", score: 100, rank: 1, correctAnswers: 3, totalAnswers: 4, avgAnswerTime: 900, xpEarned: 20 }];
+    useGameStore.getState().syncRoom(room({ status: GameStatus.Ended, currentQuestion: null, finalResults }));
+    expect(useGameStore.getState().status).toBe(GameStatus.Ended);
+    expect(useGameStore.getState().finalResults).toEqual(finalResults);
+  });
+  it.each([{ answer: "الدوحة" }, { answer: [0, 2] }, { answer: [2, 0, 1] }])("restores a text or list answer without coercion: %j", ({ answer }) => {
+    useGameStore.getState().syncRoom(room({ currentQuestion: question, questionStartedAt: Date.now(), selectedAnswer: answer }));
+    expect(useGameStore.getState().selectedAnswer).toEqual(answer);
+  });
+  it("restores authoritative reveal metadata and clears it when the next question arrives", () => {
+    useGameStore.getState().syncRoom(room({
+      status: GameStatus.AnswerReveal, currentQuestion: question, questionStartedAt: Date.now(),
+      selectedAnswer: [0], lastAnswerResult: { correct: false, correctIndex: -1, correctIndices: [0, 2] },
+    }));
+    expect(useGameStore.getState().lastAnswerResult?.correctIndices).toEqual([0, 2]);
+    useGameStore.getState().syncRoom(room({ currentQuestion: { ...question, id: "question-5" }, questionStartedAt: Date.now() }));
+    expect(useGameStore.getState().lastAnswerResult).toBeNull();
+    expect(useGameStore.getState().selectedAnswer).toBeNull();
+  });
   it("restores the server clock, round, language and submitted answer after reload", () => {
     useGameStore.getState().syncRoom(room({
       currentQuestion: question,
@@ -243,6 +263,35 @@ describe("restoring an active question", () => {
     useGameStore.getState().selectPowerUp(PowerUpType.Shield);
     socket.dispatch("game:powerUpSelected", { userId: "player-1", powerUp: PowerUpType.Shield, remainingSlots: 2 });
     expect(useGameStore.getState().powerUpSelection.selectedPowerUps).toEqual([PowerUpType.Shield]);
+  });
+});
+
+describe("answer wire payloads", () => {
+  it.each([{ answer: "الدوحة" }, { answer: [0, 2] }, { answer: [2, 0, 1] }])("emits the complete answer and no numeric fallback: %j", ({ answer }) => {
+    const socket = connectSocket("player-1", "محارب", "test-token", true) as unknown as FakeSocket;
+    emitAnswer("battle-1", "question-1", answer);
+    expect(socket.emit).toHaveBeenCalledWith("player:answer", {
+      gameId: "battle-1", questionId: "question-1", answer, timestamp: Date.now(),
+    });
+  });
+
+  it("retains the legacy numeric field for multiple-choice clients", () => {
+    const socket = connectSocket("player-1", "محارب", "test-token", true) as unknown as FakeSocket;
+    emitAnswer("battle-1", "question-1", 2);
+    expect(socket.emit).toHaveBeenCalledWith("player:answer", {
+      gameId: "battle-1", questionId: "question-1", answer: 2, answerIndex: 2, timestamp: Date.now(),
+    });
+  });
+
+  it("keeps server reveal metadata instead of inventing a letter for nonnumeric answers", () => {
+    const socket = connectSocket("player-1", "محارب", "test-token", true) as unknown as FakeSocket;
+    socket.dispatch("game:answerResult", {
+      userId: "player-1", correct: false, scoreDelta: 0, newScore: 0, correctIndex: -1, correctAnswer: "الدوحة",
+    });
+    expect(useGameStore.getState().lastAnswerResult?.correctAnswer).toBe("الدوحة");
+    expect(useGameStore.getState().status).toBe(GameStatus.AnswerReveal);
+    expect(useGameStore.getState().toasts[0].message).toContain("الدوحة");
+    expect(useGameStore.getState().toasts[0].message).not.toContain("@");
   });
 });
 

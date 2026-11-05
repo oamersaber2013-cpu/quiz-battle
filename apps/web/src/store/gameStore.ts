@@ -6,11 +6,14 @@ import {
   GameStatus,
   Difficulty,
   PlayerState,
+  SafeClientQuestion,
   ClientQuestion,
   FinalResult,
   ActivePowerUpEffect,
   SyncedGameRoom,
   PowerUpType,
+  SubmittedAnswer,
+  AnswerReveal,
 } from "@quiz-battle/shared";
 import { soundManager } from "@/lib/sounds";
 
@@ -19,6 +22,8 @@ export interface Toast {
   type: "success" | "error" | "info" | "warning";
   message: string;
 }
+
+export type LastAnswerResult = AnswerReveal;
 
 export interface GameStore {
   // Auth
@@ -48,9 +53,9 @@ export interface GameStore {
   currentQuestion: ClientQuestion | null;
   currentRound: number;
   totalRounds: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   answeredAt: number | null;
-  lastAnswerResult: { correct: boolean; correctIndex: number } | null;
+  lastAnswerResult: LastAnswerResult | null;
   eliminatedOptions: number[];
   timeLeft: number;
   questionStartedAt: number | null;
@@ -168,8 +173,8 @@ export interface GameStore {
   addPlayer: (player: PlayerState) => void;
   removePlayer: (userId: string) => void;
   updatePlayer: (userId: string, updates: Partial<PlayerState>) => void;
-  setQuestion: (question: ClientQuestion, round: number, totalRounds: number) => void;
-  selectAnswer: (index: number) => void;
+  setQuestion: (question: SafeClientQuestion, round: number, totalRounds: number) => void;
+  selectAnswer: (answer: SubmittedAnswer) => void;
   setTimeLeft: (t: number) => void;
   applyTimeWarpBonus: (seconds: number) => void;
   setFinalResults: (results: FinalResult[]) => void;
@@ -188,7 +193,7 @@ export interface GameStore {
   setGameId: (gameId: string | null) => void;
   setPowerUpSelection: (data: any) => void;
   setAllPowerUpSelections: (selections: Record<string, any[]>) => void;
-  setLastAnswerResult: (result: any) => void;
+  setLastAnswerResult: (result: LastAnswerResult | null) => void;
   addEffect: (effect: any) => void;
   removeEffect: (effectId: string) => void;
   setEliminatedOptions: (options: number[]) => void;
@@ -359,7 +364,7 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
-      selectAnswer: (index) =>
+      selectAnswer: (answer) =>
         set((state) => {
           if (state.selectedAnswer !== null) return state;
 
@@ -368,7 +373,7 @@ export const useGameStore = create<GameStore>()(
           }
 
           return {
-            selectedAnswer: index,
+            selectedAnswer: Array.isArray(answer) ? [...answer] : answer,
             answeredAt: Date.now(),
           };
         }),
@@ -440,6 +445,7 @@ export const useGameStore = create<GameStore>()(
             ? previous.currentQuestion
             : room.currentQuestion;
           const questionStartedAt = room.questionStartedAt ?? previous.questionStartedAt;
+          const isNewQuestion = room.currentQuestion !== undefined && room.currentQuestion?.id !== previous.currentQuestion?.id;
           const ownTimeWarp = effects.find(
             (effect) => effect.type === PowerUpType.TimeWarp && effect.sourceUserId === userId
           );
@@ -464,8 +470,10 @@ export const useGameStore = create<GameStore>()(
             timeLeft: question && questionStartedAt
               ? Math.max(0, Math.ceil(question.timeLimit + timeWarpBonusSeconds - (Date.now() - questionStartedAt) / 1000))
               : previous.timeLeft,
-            selectedAnswer: room.selectedAnswer === undefined ? previous.selectedAnswer : room.selectedAnswer,
-            answeredAt: room.answeredAt === undefined ? previous.answeredAt : room.answeredAt,
+            selectedAnswer: room.selectedAnswer === undefined ? (isNewQuestion ? null : previous.selectedAnswer) : room.selectedAnswer,
+            answeredAt: room.answeredAt === undefined ? (isNewQuestion ? null : previous.answeredAt) : room.answeredAt,
+            lastAnswerResult: room.lastAnswerResult === undefined ? (isNewQuestion ? null : previous.lastAnswerResult) : room.lastAnswerResult,
+            finalResults: room.finalResults ?? previous.finalResults,
             powerUpSelection: room.powerUpSelection
               ? { ...previous.powerUpSelection, ...room.powerUpSelection }
               : previous.powerUpSelection,

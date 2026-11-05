@@ -44,5 +44,11 @@ npm run seed
 
 Set `DATABASE_URL` for that isolated database before either command. Seeding
 upserts the existing bilingual question dataset and does not delete records.
-Live database access, payment-provider verification, production Redis and a
-deployed multi-client game require separate integration checks.
+The opt-in `npm run test:integration` uses a separate PGlite runtime to apply the
+real migrations/seed and run actual Prisma/auth/Socket.IO flows, including four
+Arabic matches with numeric, text, multi-select and ordering answers. See
+[scripts/INTEGRATION.md](scripts/INTEGRATION.md) for runtime setup and engine
+limitations. It preserves the tracked local DB and uses no production destination.
+
+Native PostgreSQL, live OAuth/payment-provider verification, production Redis
+and deployed multi-instance behavior require separate release checks.

@@ -308,7 +308,7 @@ export async function startInvasionRound(
   // Fetch and send question
   let questions: Awaited<ReturnType<typeof fetchQuestions>>;
   try {
-    questions = await fetchQuestions(state.difficulty, 1, state.categories, undefined, state.language, gameId);
+    questions = await fetchQuestions(state.difficulty, 1, state.categories, undefined, state.language, gameId, { singleChoiceOnly: true });
   } finally {
     state.roundStarting = false;
   }

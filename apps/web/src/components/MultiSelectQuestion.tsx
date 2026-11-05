@@ -1,15 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { GameStatus, QuestionType } from "@quiz-battle/shared";
+import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
+import type { LastAnswerResult } from "@/store/gameStore";
 
 interface MultiSelectQuestionProps {
   question: any;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
-  lastAnswerResult: any;
+  selectedAnswer: SubmittedAnswer | null;
+  lastAnswerResult: LastAnswerResult | null;
   language: "en" | "ar";
   onSubmit: (selectedIndices: number[]) => void;
 }
@@ -17,25 +18,30 @@ interface MultiSelectQuestionProps {
 export function MultiSelectQuestion({
   question,
   status,
+  timeLeft,
   selectedAnswer,
   lastAnswerResult,
   language,
   onSubmit,
 }: MultiSelectQuestionProps) {
   const isAr = language === "ar";
-  const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
+  const [selectedIndices, setSelectedIndices] = useState<number[]>(() => Array.isArray(selectedAnswer) ? [...selectedAnswer] : []);
+  useEffect(() => {
+    setSelectedIndices(Array.isArray(selectedAnswer) ? [...selectedAnswer] : []);
+  }, [question.id, selectedAnswer]);
   const hasAnswered = selectedAnswer !== null;
-  const showResult = status === GameStatus.AnswerReveal || lastAnswerResult;
+  const showResult = status === GameStatus.AnswerReveal || !!lastAnswerResult;
+  const canAnswer = status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
   const options = isAr
     ? question.optionsAr || question.options
     : question.optionsEn || question.options;
 
-  const correctAnswers = question.correctAnswers || [question.correctAnswer];
+  const correctAnswers = lastAnswerResult?.correctIndices || [];
 
   const toggleSelection = (index: number) => {
-    if (hasAnswered || showResult) return;
+    if (!canAnswer) return;
 
     setSelectedIndices((prev) => {
       if (prev.includes(index)) {
@@ -46,10 +52,8 @@ export function MultiSelectQuestion({
   };
 
   const handleSubmit = () => {
-    if (selectedIndices.length === 0 || hasAnswered) return;
-    // Submit the first selected index as the "answer" for game logic
-    // The actual multiple selections are tracked in state
-    onSubmit(selectedIndices);
+    if (selectedIndices.length === 0 || !canAnswer) return;
+    onSubmit([...selectedIndices]);
   };
 
   return (
@@ -109,7 +113,7 @@ export function MultiSelectQuestion({
               transition={{ delay: index * 0.1 }}
               whileHover={!hasAnswered && !showResult ? { scale: 1.02 } : {}}
               whileTap={!hasAnswered && !showResult ? { scale: 0.98 } : {}}
-              disabled={hasAnswered || showResult}
+              disabled={!canAnswer}
               onClick={() => toggleSelection(index)}
               className={`p-5 rounded-2xl border-2 font-bold text-lg transition-all ${borderColor} ${bgColor} ${textColor} ${
                 hasAnswered || showResult ? "cursor-default" : "hover:border-amber-500/50"
@@ -164,7 +168,7 @@ export function MultiSelectQuestion({
           animate={{ opacity: 1 }}
           whileHover={selectedIndices.length > 0 ? { scale: 1.02 } : {}}
           whileTap={selectedIndices.length > 0 ? { scale: 0.98 } : {}}
-          disabled={selectedIndices.length === 0 || hasAnswered}
+          disabled={selectedIndices.length === 0 || !canAnswer}
           onClick={handleSubmit}
           className={`w-full p-4 rounded-2xl font-bold text-lg transition-all ${
             selectedIndices.length > 0
@@ -183,7 +187,7 @@ export function MultiSelectQuestion({
       )}
 
       {/* Results Summary */}
-      {showResult && (
+      {showResult && correctAnswers.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

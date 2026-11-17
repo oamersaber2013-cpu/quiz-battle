@@ -15,7 +15,7 @@ export default function ProfilePage() {
     wins: { en: "Wins", ar: "الانتصارات" },
     subscriber: { en: "⭐ SUBSCRIBER ⭐", ar: "⭐ مشترك مميز ⭐" },
     subscriberDesc: { en: "Unlimited games & premium features", ar: "ألعاب غير محدودة ومميزات حصرية" },
-    getCredits: { en: "💎 Get Credits or Subscribe", ar: "💎 احصل على رصيد أو اشترك" },
+    purchasesUnavailable: { en: "Purchases are currently unavailable.", ar: "عمليات الشراء غير متاحة حاليًا." },
     accountStatus: { en: "Account Status", ar: "حالة الحساب" },
     signOut: { en: "🚪 Sign Out", ar: "🚪 تسجيل الخروج" },
     viewStats: { en: "📊 View Statistics", ar: "📊 عرض الإحصائيات" },
@@ -24,7 +24,6 @@ export default function ProfilePage() {
     achievements: { en: "Achievements", ar: "الإنجازات" },
     quickActions: { en: "Quick Actions", ar: "إجراءات سريعة" },
     playNow: { en: "⚔️ Play Now", ar: "⚔️ العب الآن" },
-    store: { en: "🛒 Store", ar: "🛒 المتجر" },
     spectate: { en: "👁️ Spectate", ar: "👁️ شاهد" },
   };
 
@@ -166,8 +165,10 @@ export default function ProfilePage() {
             </motion.div>
           </motion.div>
 
-          {/* Subscriber Badge or Store CTA */}
-          {isSubscribed ? (
+          <p className="text-muted text-sm mt-4">{T.purchasesUnavailable[language]}</p>
+
+          {/* Subscriber Badge */}
+          {isSubscribed && (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -184,17 +185,6 @@ export default function ProfilePage() {
               </motion.div>
               <div className="text-sm opacity-80">{T.subscriberDesc[language]}</div>
             </motion.div>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.6 }}
-              className="mt-6 text-center"
-            >
-              <Link href="/store" className="btn btn-secondary btn-lg w-full">
-                {T.getCredits[language]}
-              </Link>
-            </motion.div>
           )}
         </motion.div>
 
@@ -210,11 +200,6 @@ export default function ProfilePage() {
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
               <Link href="/game/play" className="btn btn-primary w-full text-center p-4">
                 {T.playNow[language]}
-              </Link>
-            </motion.div>
-            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Link href="/store" className="btn btn-secondary w-full text-center p-4">
-                {T.store[language]}
               </Link>
             </motion.div>
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>

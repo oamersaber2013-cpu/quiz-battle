@@ -11,14 +11,6 @@ import { CustomModeBuilder } from "@/components/CustomModeBuilder";
 import { isValidRoomPassword } from "@/components/RoomPasswordPrompt";
 import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 
-// Purchase status type
-interface PurchaseStatus {
-  hasPurchased: boolean;
-  shortGames: number;
-  longGames: number;
-  price: number;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // GAME MODE THEMES - Each mode has unique visual identity
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -385,11 +377,11 @@ const T = {
 export default function HomePage() {
   const router = useRouter();
   const {
-    setAuth, setGame, addToast, userId, username, token,
+    setAuth, setGame, addToast, userId, username,
     language, setLanguage
   } = useGameStore();
 
-  const [view, setView] = useState<"home" | "create" | "join" | "buy">("home");
+  const [view, setView] = useState<"home" | "create" | "join">("home");
   const [selectedMode, setSelectedMode] = useState<GameMode>(GameMode.Classic);
   const [selectedDiff, setSelectedDiff] = useState<Difficulty>(Difficulty.Sage);
   const [selectedCats, setSelectedCats] = useState<string[]>(["general"]);
@@ -421,97 +413,10 @@ export default function HomePage() {
     }
   }, [view]);
 
-  // Purchase status
-  const [purchaseStatus, setPurchaseStatus] = useState<PurchaseStatus | null>(null);
-  const [checkingPurchase, setCheckingPurchase] = useState(true);
-
   const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
-
-  // Check purchase status on mount
-  useEffect(() => {
-    async function checkPurchaseStatus() {
-      if (!userId || !token) {
-        setPurchaseStatus({
-          hasPurchased: false,
-          shortGames: 0,
-          longGames: 0,
-          price: 35,
-        });
-        setCheckingPurchase(false);
-        return;
-      }
-
-      try {
-        const res = await fetch(`${API}/api/purchase/status`, {
-          headers: { Authorization: `Bearer ${token || ""}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setPurchaseStatus({
-            hasPurchased: Boolean(data.hasPurchased),
-            shortGames: Number(data.shortGames ?? 0),
-            longGames: Number(data.longGames ?? 0),
-            price: Number(data.price ?? 35),
-          });
-        } else {
-          setPurchaseStatus({
-            hasPurchased: false,
-            shortGames: 0,
-            longGames: 0,
-            price: 35,
-          });
-        }
-      } catch (_err) {
-        setPurchaseStatus({
-          hasPurchased: false,
-          shortGames: 0,
-          longGames: 0,
-          price: 35,
-        });
-      } finally {
-        setCheckingPurchase(false);
-      }
-    }
-
-    checkPurchaseStatus();
-  }, [userId, token, API]);
-
-  async function handlePurchase() {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/purchase/buy`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ paymentMethod: "paypal" }),
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        addToast("error", error.error || "Purchase failed");
-        return;
-      }
-
-      const data = await res.json();
-      setPurchaseStatus({
-        hasPurchased: true,
-        shortGames: data.shortGames,
-        longGames: data.longGames,
-        price: purchaseStatus?.price || 35,
-      });
-      addToast("success", "Game purchased successfully!");
-      setView("home");
-    } catch (err) {
-      addToast("error", "Failed to purchase game");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleCreateGame() {
     if (privateRoom && !isValidRoomPassword(roomPassword)) {
@@ -566,9 +471,6 @@ export default function HomePage() {
 
       const game = await res.json();
       if (!res.ok) {
-        if (res.status === 402) {
-          setView("buy");
-        }
         addToast("error", game.error || (isRTL ? "فشل في إنشاء اللعبة" : "Failed to create game"));
         return;
       }
@@ -703,66 +605,9 @@ export default function HomePage() {
           </p>
         </div>
 
-        {/* Loading State */}
-        {checkingPurchase && (
-          <div className="text-center animate-fade-in" style={{ padding: 80 }}>
-            <div style={{ fontSize: "4rem", marginBottom: 20, animation: "float 2s ease-in-out infinite" }}>⚔️</div>
-            <div className="text-muted" style={{ fontSize: "1.1rem" }}>{isRTL ? "جاري التحميل..." : "Loading..."}</div>
-            <div style={{ 
-              width: 200, 
-              height: 4, 
-              background: "var(--clr-surface-2)", 
-              borderRadius: "var(--radius-full)",
-              margin: "20px auto 0",
-              overflow: "hidden"
-            }}>
-              <div style={{
-                width: "40%",
-                height: "100%",
-                background: "var(--grad-primary)",
-                borderRadius: "var(--radius-full)",
-                animation: "shimmer 1.5s ease-in-out infinite"
-              }} />
-            </div>
-          </div>
-        )}
-
         {/* Main View */}
         {view === "home" && (
           <div className="animate-scale-in" style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}>
-            {/* Game Credits Display */}
-            <div className="glass-card p-5 mb-6" style={{ 
-              display: "grid", 
-              gridTemplateColumns: "repeat(3, 1fr)", 
-              gap: 20,
-              textAlign: "center",
-              background: "linear-gradient(135deg, rgba(108,99,255,0.08) 0%, rgba(168,85,247,0.05) 100%)",
-              border: "1px solid rgba(108,99,255,0.2)"
-            }}>
-              <div>
-                <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>⚡</div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, color: (purchaseStatus?.shortGames || 0) > 0 ? "#00e676" : "#ff6b6b", marginBottom: 4 }}>
-                  {purchaseStatus?.shortGames ?? 0}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--clr-text-2)", fontWeight: 600 }}>{isRTL ? "ألعاب قصيرة" : "Short Games"}</div>
-                <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)" }}>1-5 {isRTL ? "جولات" : "rounds"}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>🏆</div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, color: (purchaseStatus?.longGames || 0) > 0 ? "#00d4ff" : "#ff6b6b", marginBottom: 4 }}>
-                  {purchaseStatus?.longGames ?? 0}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--clr-text-2)", fontWeight: 600 }}>{isRTL ? "ألعاب طويلة" : "Long Games"}</div>
-                <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)" }}>10-15 {isRTL ? "جولة" : "rounds"}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>🎁</div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#ffa502", marginBottom: 4 }}>∞</div>
-                <div style={{ fontSize: "0.75rem", color: "var(--clr-text-2)", fontWeight: 600 }}>{isRTL ? "مجاني" : "Free"}</div>
-                <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)" }}>6-9 {isRTL ? "جولات" : "rounds"}</div>
-              </div>
-            </div>
-
             <div style={{ marginBottom: 28 }}>
               <label className="text-muted text-sm" style={{ display: "block", marginBottom: 10, textAlign: isRTL ? "right" : "left", fontWeight: 600 }}>
                 {T.warriorName[language]}
@@ -817,21 +662,6 @@ export default function HomePage() {
                 🔑 {isRTL ? "انضمام عبر الكود" : "Join with Code"}
               </button>
 
-              {!purchaseStatus?.hasPurchased && (
-                <button
-                  className="btn btn-ghost btn-lg w-full"
-                  style={{ 
-                    height: 56, 
-                    fontSize: "1rem", 
-                    border: "2px solid var(--clr-primary)",
-                    fontWeight: 700,
-                    color: "var(--clr-primary)"
-                  }}
-                  onClick={() => setView("buy")}
-                >
-                  💎 {isRTL ? "شراء الوصول للاستضافة" : "Buy Hosting Access"}
-                </button>
-              )}
             </div>
 
             <div style={{ display: "flex", gap: 20, justifyContent: "center", marginTop: 40, flexWrap: "wrap" }}>
@@ -840,63 +670,6 @@ export default function HomePage() {
                   {language === "en" ? en : ar}
                 </Link>
               ))}
-            </div>
-          </div>
-        )}
-
-        {/* Buy Game View */}
-        {view === "buy" && (
-          <div className="animate-scale-in" style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}>
-            <div className="glass-card p-8 text-center" style={{ border: "2px solid var(--clr-primary)" }}>
-              <div style={{ fontSize: "3rem", marginBottom: 16 }}>🎮</div>
-              <h2 style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 12 }}>
-                {isRTL ? "اشترِ اللعبة" : "Buy the Game"}
-              </h2>
-              <p className="text-muted" style={{ marginBottom: 24 }}>
-                {isRTL
-                  ? "اشترِ اللعبة مرة واحدة واستضف حتى 3 ألعاب قصيرة و 2 طويلة"
-                  : "Buy once to host up to 3 short games (1-5 rounds) and 2 long games (10-15 rounds). Medium games (6-9 rounds) are always FREE!"}
-              </p>
-
-              <div style={{ display: "flex", justifyContent: "center", gap: 30, marginBottom: 24 }}>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "2rem" }}>3</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--clr-muted)" }}>{isRTL ? "ألعاب قصيرة" : "Short Games"}</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "2rem" }}>2</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--clr-muted)" }}>{isRTL ? "ألعاب طويلة" : "Long Games"}</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "2rem" }}>∞</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--clr-muted)" }}>{isRTL ? "مجاني" : "Free (6-9)"}</div>
-                </div>
-              </div>
-
-              <div style={{ fontSize: "2rem", fontWeight: 800, color: "var(--clr-primary)", marginBottom: 24 }}>
-                {purchaseStatus?.price || 35} QAR
-              </div>
-
-              <button
-                className="btn btn-primary btn-lg w-full"
-                onClick={handlePurchase}
-                disabled={loading}
-                style={{ height: 60, fontSize: "1.2rem" }}
-              >
-                {loading ? "..." : (isRTL ? "اشترِ الآن 💎" : "Buy Now 💎")}
-              </button>
-
-              {userId && (
-                <button
-                  className="btn btn-ghost btn-sm w-full mt-4"
-                  onClick={() => {
-                    setJoinError(null);
-                    setView("join");
-                  }}
-                >
-                  {isRTL ? "انضم للعبة بدلاً من ذلك" : "Join a Game Instead"}
-                </button>
-              )}
             </div>
           </div>
         )}

@@ -42,6 +42,13 @@ including remaining time and whether the player voted. The host opens ballots
 from recent drama events. The server settles any final-round vote before
 saving the standings. Trap status reappears for display after reconnect.
 
+Solo players now start the countdown when they confirm their power-ups.
+Multiplayer rooms wait for each human confirmation or the selection deadline.
+Player loadouts carry into the round. Ordering questions accept drag, tap and
+keyboard input. Joining by code supports Enter, announces lookup errors and
+restores focus when returning home. The main game screens expose their current
+language and direction, and mobile zoom is enabled.
+
 ## HTTP and authentication
 
 HTTP and Socket.IO share exact configured frontend origins; hosted FRONTEND_URL
@@ -57,14 +64,15 @@ flow exists. See [AUTH_CONFIGURATION.md](AUTH_CONFIGURATION.md).
 
 ## Verification on the final source
 
-- 178 regression tests passed across the API (117) and web (61).
-- Two special-mode matches passed with paired Socket.IO clients, controlled
-  clocks and database stubs. They cover Chaos reconnect mid-vote and Conquest
-  through the entire ten-round Invasion phase.
+- 183 regression tests passed across the API (121) and web (62).
+- Three Socket.IO scenarios passed with controlled clocks and database stubs.
+  They cover Chaos reconnect mid-vote, Conquest through all ten Invasion rounds
+  and solo Classic power-up confirmation, inventory and use.
 - Workspace typecheck: 6/6 tasks; production build: 4/4 tasks.
 - Production-backed Playwright: 10/10 desktop/mobile Chromium checks, including
   saved-result reload and private-room creation. Browser API fixtures are separate
-  from the real database/transport checks below.
+  from the real database/transport checks below. The optional Arabic Chaos
+  browser test passed with a local Socket.IO fixture during a page reload.
 - Native PostgreSQL 18.6 on Windows x64: 15 integration check groups passed.
   Three real Prisma migrations, repeat deployment/seed, guest/account auth,
   repeatable result saves and five two-player Arabic matches passed. Matches cover
@@ -89,5 +97,5 @@ Hosted PostgreSQL TLS/HA/load behavior, durable Redis and multi-instance
 active-match restart recovery still need deployment checks. Real payment/credit enforcement is
 unfinished; the existing create-game credit bypass remains. Google provider
 credentials and a frontend sign-in flow need live verification; Facebook remains
-disabled. Full Conquest and Chaos browser playthroughs, Chaos trap scoring and
-question/media editorial review remain open.
+disabled. Full Conquest and Chaos browser playthroughs, keyboard access to map
+territories, Chaos trap scoring and question/media editorial review remain open.

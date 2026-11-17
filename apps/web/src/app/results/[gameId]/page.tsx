@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useGameStore } from "@/store/gameStore";
 import { GameMode, type SavedGameResults } from "@quiz-battle/shared";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 
 const RANK_ICONS = ["👑", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
 
@@ -87,6 +88,7 @@ export default function ResultsPage() {
   const saved = currentResource?.data;
   const finalResults = saved?.results || [];
   const language = saved?.language || preferredLanguage;
+  useDocumentLocale(language);
   const mode = saved?.mode;
   const isConquest = mode === GameMode.Conquest;
 

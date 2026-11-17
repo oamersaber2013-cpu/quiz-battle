@@ -11,8 +11,9 @@ import { AddressInfo } from "node:net";
 import { Server } from "socket.io";
 import { io as connect, Socket } from "socket.io-client";
 import jwt from "jsonwebtoken";
-import { Difficulty, GameMode, GameStatus } from "@quiz-battle/shared";
+import { Difficulty, GameMode, GameStatus, PowerUpType } from "@quiz-battle/shared";
 import { setActiveGame, removeActiveGame } from "../../src/lib/gameOrchestrator";
+import { removeBots } from "../../src/lib/aiBots";
 import { cleanupChaosV2 } from "../../src/lib/chaosEngineV2";
 import { removeConquestGame } from "../../src/lib/conquestOrchestrator";
 import { deleteInvasionGame } from "../../src/lib/invasionOrchestrator";
@@ -91,6 +92,7 @@ describe("Special-mode matches over Socket.IO", () => {
     removeConquestGame(gameId);
     deleteInvasionGame(gameId);
     removeActiveGame(gameId);
+    removeBots(gameId);
     jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
@@ -154,6 +156,32 @@ describe("Special-mode matches over Socket.IO", () => {
     expect(a.question).not.toHaveProperty("correctIndex");
     return a.question;
   }
+
+  it("starts a solo Classic match with its chosen power-up after one confirmation", async () => {
+    createMatch(GameMode.Classic, 1);
+    const first = await connectPlayer(host);
+    await join(first);
+    await success(first, "game:start");
+    await first.next("game:powerUpSelectStart");
+    const botAdded = (await first.next("game:stateSync")).room;
+    expect(botAdded.players).toHaveLength(2);
+    expect(botAdded.players).toContainEqual(expect.objectContaining({ isBot: true }));
+
+    await success(first, "game:selectPowerUp", { gameId, powerUp: PowerUpType.TimeWarp });
+    await success(first, "game:confirmPowerUpSelection");
+    expect(await first.next("game:powerUpSelectEnd")).toMatchObject({ selections: { [host]: [PowerUpType.TimeWarp] } });
+    expect(await first.next("game:countdown")).toEqual({ seconds: 5 });
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(await first.next("game:question")).toMatchObject({ round: 1 });
+    const unselected = await first.socket.timeout(5000).emitWithAck("player:powerup", {
+      gameId, type: PowerUpType.Shield,
+    });
+    expect(unselected).toMatchObject({ success: false });
+    await success(first, "player:powerup", { gameId, type: PowerUpType.TimeWarp });
+    expect(await first.next("game:powerUpApplied")).toMatchObject({
+      type: PowerUpType.TimeWarp, sourceUserId: host, expiresAt: Date.now() + 20000,
+    });
+  });
 
   it("restores a Chaos answer and active ballot on reconnect and completes two rounds", async () => {
     createMatch(GameMode.Chaos, 2);

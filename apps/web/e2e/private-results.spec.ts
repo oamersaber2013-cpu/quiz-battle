@@ -23,9 +23,12 @@ test("reloads saved standings through authenticated fetch with the room's Arabic
   await page.goto("/results/saved-browser-battle");
   await expect(page.getByText("محارب محفوظ", { exact: false })).toBeVisible();
   await expect(page.locator("main")).toHaveAttribute("dir", "rtl");
+  await expect(page.locator("html")).toHaveAttribute("lang", "ar");
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
   await page.reload();
   await expect(page.getByText("محارب محفوظ", { exact: false })).toBeVisible();
   await expect(page.locator("main")).toHaveAttribute("dir", "rtl");
+  await expect(page.locator("html")).toHaveAttribute("lang", "ar");
 });
 
 test("requires a valid private password and clears it when returning to a public room", async ({ page }) => {

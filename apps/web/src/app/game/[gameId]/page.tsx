@@ -24,6 +24,7 @@ import { QuestionTransition } from "@/components/QuestionTransition";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGameConnection } from "@/hooks/useGameConnection";
+import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 
 const TARGETED_POWER_UPS = new Set<PowerUpType>([
@@ -199,6 +200,7 @@ function GamePageContent() {
   const [transitionRound, setTransitionRound] = useState(0);
 
   const isRTL = language === "ar";
+  useDocumentLocale(language);
 
   useEffect(() => {
     const clock = setInterval(() => setNow(Date.now()), 1000);

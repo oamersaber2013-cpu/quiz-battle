@@ -99,6 +99,23 @@ it("submits the displayed ordering unchanged", () => {
   expect(useGameStore.getState().selectedAnswer).toEqual([2, 0, 1]);
 });
 
+it("reorders through named buttons and submits the actual order", () => {
+  renderQuestion(QuestionType.Ordering);
+  const group = () => view.root.findByType("reorder-group");
+  const originalItems: Array<{ text: string; originalIndex: number }> = group().props.values;
+  const moveUp = view.root.findByProps({ "aria-label": `Move ${originalItems[1].text} up` });
+  act(() => moveUp.props.onClick({ currentTarget: null }));
+  expect(view.root.findByProps({ "aria-label": `Move ${originalItems[1].text} up` }).props["aria-disabled"]).toBe(true);
+  expect(text(view.root.findByProps({ role: "status" }).props.children)).toContain("position 1");
+
+  click("Confirm Order");
+  expect(emitAnswer).toHaveBeenCalledWith(
+    "battle-1",
+    "question-1",
+    [originalItems[1], originalItems[0], ...originalItems.slice(2)].map((item) => item.originalIndex)
+  );
+});
+
 it("keeps an ordering answer editable when a freeze rejects submission", () => {
   renderQuestion(QuestionType.Ordering);
   act(() => useGameStore.setState({ activeEffects: [{ type: PowerUpType.Freeze, sourceUserId: "other", targetUserId: "player-1", expiresAt: Date.now() + 5000 }] }));

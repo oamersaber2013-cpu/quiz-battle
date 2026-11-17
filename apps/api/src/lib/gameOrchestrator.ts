@@ -161,7 +161,8 @@ function scheduleResultTask(game: GameState, delayMs: number, task: () => void):
 export async function startGame(
   io: TypedServer,
   redis: SafeRedis,
-  gameId: string
+  gameId: string,
+  options: { preserveSelectedPowerUps?: boolean } = {}
 ): Promise<void> {
   const game = activeGames.get(gameId);
   if (!game) return;
@@ -206,15 +207,10 @@ export async function startGame(
     }
   }
 
-  // Give each player starter power-ups ONLY if the mode allows it
   const modeConfig = GAME_MODE_CONFIG[game.mode];
-  if (modeConfig.hasPowerUps) {
+  if (!modeConfig.hasPowerUps || !options.preserveSelectedPowerUps) {
     Object.values(game.players).forEach((p) => {
-      p.powerUpInventory = [...STARTER_POWER_UPS];
-    });
-  } else {
-    Object.values(game.players).forEach((p) => {
-      p.powerUpInventory = [];
+      p.powerUpInventory = modeConfig.hasPowerUps ? [...STARTER_POWER_UPS] : [];
     });
   }
 
@@ -895,6 +891,7 @@ export function handlePowerUpSelection(
 
   const selectionState = powerUpSelections.get(gameId);
   if (!selectionState) return { success: false, error: "Selection state not found" };
+  if (selectionState.confirmed.has(userId)) return { success: false, error: "Power-up selection is already confirmed" };
 
   // Check if powerup is valid
   if (!STARTER_POWER_UPS.includes(powerUp)) {
@@ -951,9 +948,10 @@ export function confirmPowerUpSelection(
   // Mark player as confirmed
   selectionState.confirmed.add(userId);
 
-  // Check if all players confirmed
-  const allPlayers = Object.keys(game.players);
-  const allConfirmed = allPlayers.every((pid) => selectionState.confirmed.has(pid));
+  // Bots receive defaults at finalization and never confirm from a client.
+  const allConfirmed = Object.values(game.players).every(player =>
+    player.isBot || selectionState.confirmed.has(player.userId)
+  );
 
   if (allConfirmed) {
     // Cancel timer and finalize
@@ -986,7 +984,7 @@ function finalizePowerUpSelection(
       selectionState.selections[userId] = defaults;
     }
     // Assign to player inventory
-    game.players[userId].powerUpInventory = selectionState.selections[userId];
+    game.players[userId].powerUpInventory = [...selectionState.selections[userId]];
   });
 
   // Notify all players of final selections
@@ -1019,7 +1017,7 @@ function finalizePowerUpSelection(
       game.categories
     ).catch(console.error);
   } else {
-    startGame(io, redis, gameId).catch(console.error);
+    startGame(io, redis, gameId, { preserveSelectedPowerUps: true }).catch(console.error);
   }
 
   // Broadcast state change to all clients

@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { GameMode, Difficulty, GAME_MODE_CONFIG } from "@quiz-battle/shared";
@@ -8,6 +9,7 @@ import { connectSocket } from "@/lib/socket";
 import { ModeVisualSelector } from "@/components/ModeVisualSelector";
 import { CustomModeBuilder } from "@/components/CustomModeBuilder";
 import { isValidRoomPassword } from "@/components/RoomPasswordPrompt";
+import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 
 // Purchase status type
 interface PurchaseStatus {
@@ -366,6 +368,11 @@ const T = {
     ar: "أعظم معركة ثقافية جماعية. أنشئ غرفتك، اختر مواضيعك، واغزُ العالم."
   },
   joinCode: { en: "🔗 Join Code", ar: "🔗 كود الانضمام" },
+  joinErrors: {
+    invalid: { en: "Invalid join code", ar: "رمز الغرفة غير صحيح" },
+    guest: { en: "Failed to create guest account", ar: "فشل إنشاء حساب ضيف" },
+    connection: { en: "Failed to join game", ar: "فشل في الانضمام" },
+  },
   warriorName: { en: "Your Battle Name", ar: "اسم المحارب الخاص بك" },
   createRoom: { en: "⚔️ Create Battle Room", ar: "⚔️ إنشاء غرفة معركة" },
   chooseMode: { en: "Choose Game Mode", ar: "اختر نمط اللعبة" },
@@ -388,6 +395,11 @@ export default function HomePage() {
   const [selectedCats, setSelectedCats] = useState<string[]>(["general"]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>(["trivia"]);
   const [joinCode, setJoinCode] = useState("");
+  const [joinError, setJoinError] = useState<"invalid" | "guest" | "connection" | null>(null);
+  const joinCodeInput = useRef<HTMLInputElement>(null);
+  const joinViewButton = useRef<HTMLButtonElement>(null);
+  const returnToJoinButton = useRef(false);
+  const canJoin = /^[A-Z0-9]{6}$/.test(joinCode);
   const [loading, setLoading] = useState(false);
   const [inputUsername, setInputUsername] = useState(username || `Warrior${Math.floor(Math.random() * 9999)}`);
   const [botCount, setBotCount] = useState<number>(0);
@@ -401,6 +413,14 @@ export default function HomePage() {
 
   useEffect(() => { if (view !== "create") setRoomPassword(""); }, [view]);
 
+  useEffect(() => {
+    if (view === "join") joinCodeInput.current?.focus();
+    if (view === "home" && returnToJoinButton.current) {
+      returnToJoinButton.current = false;
+      joinViewButton.current?.focus();
+    }
+  }, [view]);
+
   // Purchase status
   const [purchaseStatus, setPurchaseStatus] = useState<PurchaseStatus | null>(null);
   const [checkingPurchase, setCheckingPurchase] = useState(true);
@@ -408,6 +428,7 @@ export default function HomePage() {
   const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
 
   const isRTL = language === "ar";
+  useDocumentLocale(language);
 
   // Check purchase status on mount
   useEffect(() => {
@@ -574,31 +595,32 @@ export default function HomePage() {
     }
   }
 
-  async function handleJoinGame() {
-    if (!joinCode.trim()) return;
+  async function handleJoinGame(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (loading || !canJoin) return;
+    setJoinError(null);
     setLoading(true);
     try {
-      const store = useGameStore.getState();
-      let currentId = store.userId;
-
-      if (!currentId) {
+      if (!useGameStore.getState().userId) {
         const res = await fetch(`${API}/api/auth/guest`, { method: "POST" });
         if (!res.ok) {
-          addToast("error", isRTL ? "فشل إنشاء حساب ضيف" : "Failed to create guest account");
+          setJoinError("guest");
           return;
         }
         const data = await res.json();
         setAuth({ ...data, username: inputUsername });
         connectSocket(data.userId, inputUsername, data.token, true);
-        currentId = data.userId;
       }
 
-      const res = await fetch(`${API}/api/games/join/${joinCode.trim()}`);
-      if (!res.ok) { addToast("error", isRTL ? "كود غير صحيح" : "Invalid join code"); return; }
+      const res = await fetch(`${API}/api/games/join/${joinCode}`);
+      if (!res.ok) {
+        setJoinError(res.status === 404 ? "invalid" : "connection");
+        return;
+      }
       const { gameId } = await res.json();
       router.push(`/lobby/${gameId}`);
     } catch {
-      addToast("error", isRTL ? "فشل في الانضمام" : "Failed to join game");
+      setJoinError("connection");
     } finally {
       setLoading(false);
     }
@@ -786,7 +808,11 @@ export default function HomePage() {
                   fontWeight: 700,
                   border: "2px solid var(--clr-border)"
                 }}
-                onClick={() => setView("join")}
+                ref={joinViewButton}
+                onClick={() => {
+                  setJoinError(null);
+                  setView("join");
+                }}
               >
                 🔑 {isRTL ? "انضمام عبر الكود" : "Join with Code"}
               </button>
@@ -863,7 +889,10 @@ export default function HomePage() {
               {userId && (
                 <button
                   className="btn btn-ghost btn-sm w-full mt-4"
-                  onClick={() => setView("join")}
+                  onClick={() => {
+                    setJoinError(null);
+                    setView("join");
+                  }}
                 >
                   {isRTL ? "انضم للعبة بدلاً من ذلك" : "Join a Game Instead"}
                 </button>
@@ -1216,40 +1245,67 @@ export default function HomePage() {
         {/* Join View */}
         {view === "join" && (
           <div className="animate-scale-in" style={{ maxWidth: 400, margin: "0 auto", width: "100%" }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setView("home")} style={{ marginBottom: 24 }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={loading}
+              onClick={() => {
+                returnToJoinButton.current = true;
+                setView("home");
+              }}
+              style={{ marginBottom: 24 }}
+            >
               {T.back[language]}
             </button>
 
-            <div className="glass-card p-8 text-center">
-              <h2 className="text-2xl font-bold mb-2">{T.joinCode[language]}</h2>
-              <p className="text-muted text-sm mb-8">{isRTL ? "أدخل الكود المكون من 6 أرقام" : "Enter the 6-character code"}</p>
+            <form className="glass-card p-8 text-center" onSubmit={handleJoinGame}>
+              <h2 id="join-code-heading" className="text-2xl font-bold mb-2">{T.joinCode[language]}</h2>
+              <p id="join-code-help" className="text-muted text-sm mb-8">
+                {isRTL ? "أدخل رمز الغرفة المكون من 6 خانات" : "Enter the 6-character room code"}
+              </p>
 
               <input
+                ref={joinCodeInput}
                 className="input"
+                aria-labelledby="join-code-heading"
+                aria-describedby={joinError ? "join-code-help join-code-error" : "join-code-help"}
+                aria-invalid={joinError === "invalid"}
+                autoCapitalize="characters"
+                spellCheck={false}
+                dir="ltr"
+                readOnly={loading}
                 value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                onChange={(event) => {
+                  setJoinCode(event.target.value.toUpperCase());
+                  setJoinError(null);
+                }}
                 placeholder="ABCXYZ"
                 maxLength={6}
-                style={{ 
-                  textAlign: "center", 
-                  fontSize: "2rem", 
-                  fontWeight: 900, 
-                  letterSpacing: "0.2em", 
-                  fontFamily: "monospace", 
+                style={{
+                  textAlign: "center",
+                  fontSize: "2rem",
+                  fontWeight: 900,
+                  letterSpacing: "0.2em",
+                  fontFamily: "monospace",
                   marginBottom: 24,
                   height: 70
                 }}
               />
 
+              {joinError && (
+                <p id="join-code-error" role="alert" className="text-sm mb-4" style={{ color: "var(--clr-danger)" }}>
+                  {T.joinErrors[joinError][language]}
+                </p>
+              )}
+
               <button
+                type="submit"
                 className="btn btn-primary btn-lg w-full"
-                onClick={handleJoinGame}
-                disabled={loading || joinCode.length < 6}
+                disabled={loading || !canJoin}
                 style={{ height: 60, fontSize: "1.1rem" }}
               >
-                {loading ? "..." : T.joinCode[language]}
+                {loading ? (isRTL ? "جارٍ الانضمام..." : "Joining...") : T.joinCode[language]}
               </button>
-            </div>
+            </form>
           </div>
         )}
 

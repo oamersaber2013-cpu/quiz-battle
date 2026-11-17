@@ -39,11 +39,25 @@ payment, and are not proof of a deployed multiplayer service.
 
 Run the opt-in special-mode suite after building the shared package. It plays
 two Chaos rounds and all ten Conquest/Invasion rounds over Socket.IO with
-controlled gameplay clocks and stubbed questions and persistence.
+controlled gameplay clocks and stubbed questions and persistence. It also
+checks solo Classic power-up selection and use with a bot in the room.
 
 ```sh
 npm run build -w @quiz-battle/shared
 npm test -w api -- --roots integration --runInBand
+```
+
+To check the Arabic Chaos reconnect screen with a local Socket.IO fixture,
+run the optional desktop Chromium test. It checks the submitted answer and the
+recorded vote across a real browser reload using controlled timestamps and a
+fixture snapshot.
+
+```powershell
+$env:NEXT_PUBLIC_API_URL = 'http://127.0.0.1:3125'
+$env:PLAYWRIGHT_USE_BUILD = '1'
+$env:PLAYWRIGHT_CHAOS_FIXTURE = '1'
+npm run build
+npm run test:e2e -w web -- chaos-reconnect.spec.ts --project=chromium --workers=1
 ```
 
 Database setup is separate and requires an isolated PostgreSQL database:

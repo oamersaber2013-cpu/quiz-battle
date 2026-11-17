@@ -5,6 +5,7 @@ import { GameStatus, GameMode } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { emitStartGame } from "@/lib/socket";
 import { useGameConnection } from "@/hooks/useGameConnection";
+import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 import { ChatWindow } from "@/components/ChatWindow";
 import { CustomModeBuilder } from "@/components/CustomModeBuilder";
@@ -74,6 +75,7 @@ function LobbyPageContent() {
   const [customConfig, setCustomConfig] = useState<any>(null);
 
   const isRTL = language === "ar";
+  useDocumentLocale(language);
   // Use hostId from store — reliable even if players reorder
   const isHost = !!userId && !!hostId && userId === hostId;
 

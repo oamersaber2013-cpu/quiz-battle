@@ -209,7 +209,7 @@ function GamePageContent() {
     if (status !== GameStatus.Question || !currentQuestion || !questionStartedAt) return;
 
     // Only show transition after first round
-    if (currentRound > 1 && currentRound !== transitionRound) {
+    if (mode !== GameMode.Chaos && currentRound > 1 && currentRound !== transitionRound) {
       setShowTransition(true);
       setTransitionRound(currentRound);
       return;
@@ -233,7 +233,7 @@ function GamePageContent() {
         timerRef.current = null;
       }
     };
-  }, [currentQuestion?.id, questionStartedAt, setTimeLeft, status, timeWarpBonusSeconds, currentRound, transitionRound]);
+  }, [currentQuestion?.id, questionStartedAt, setTimeLeft, status, timeWarpBonusSeconds, currentRound, transitionRound, mode]);
 
   useEffect(() => {
     if (status === GameStatus.Question && currentQuestion && mode) {
@@ -395,7 +395,7 @@ function GamePageContent() {
   if (mode === GameMode.Chaos) {
     return (
       <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh" }}>
-        <ChaosGame />
+        <ChaosGame isSpectating={isSpectating} />
       </main>
     );
   }

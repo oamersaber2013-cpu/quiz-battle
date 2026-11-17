@@ -1,6 +1,6 @@
 "use client";
 import { io, Socket } from "socket.io-client";
-import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer } from "@quiz-battle/shared";
+import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer, ChaosVote } from "@quiz-battle/shared";
 import { useGameStore } from "../store/gameStore";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -451,22 +451,11 @@ function registerHandlers(s: TypedSocket) {
   });
 
   // ─── Invasion Events ─────────────────────────────────────
-  s.on("invasion:init", ({ gameId, playerIds }) => {
-    console.log("[Socket] invasion:init received - transitioning to invasion mode", { gameId, playerCount: playerIds.length });
+  s.on("invasion:init", ({ gameId }) => {
     const gs = useGameStore.getState();
+    if (gs.gameId !== gameId) return;
     const isAr = gs.language === "ar";
-    
-    // Show transition toast
     gs.addToast("info", isAr ? "⚔️ بدأت مرحلة الغزو!" : "⚔️ Invasion phase began!");
-    
-    // Request initial invasion state and auto-start first round
-    setTimeout(() => {
-      emitInvasionGetState(gameId);
-      // Auto-start first round after brief delay to let clients transition
-      if (gs.hostId === gs.userId) {
-        setTimeout(() => emitInvasionStartRound(gameId), 1000);
-      }
-    }, 500);
   });
 
   s.on("invasion:state", (invasionState) => {
@@ -663,15 +652,8 @@ function registerHandlers(s: TypedSocket) {
 
   // ─── CHAOS MODE ─────────────────────────────────────────────
   
-  s.on("chaos:init", ({ chaosLevel, chaosState, personality, message }) => {
+  s.on("chaos:drama", ({ type, username }) => {
     const gs = useGameStore.getState();
-    gs.setChaosState({ chaosLevel, chaosState, personality });
-    gs.addToast("info", message);
-  });
-  
-  s.on("chaos:drama", ({ id, type, playerId, username }) => {
-    const gs = useGameStore.getState();
-    const isMe = playerId === gs.userId;
     
     const dramaMessages: Record<string, { ar: string; en: string }> = {
       TAB_LEFT: { ar: "غادر اللعبة أثناء السؤال", en: "left during the question" },
@@ -682,36 +664,14 @@ function registerHandlers(s: TypedSocket) {
     
     const msg = dramaMessages[type];
     if (msg) {
-      gs.addToast("warning", gs.language === "ar" 
-        ? `⚠️ ${username} ${msg.ar}` 
-        : `⚠️ ${username} ${msg.en}`);
-      
-      // Trigger voting UI if chaos level high enough
-      gs.setActiveDrama({ id, type, playerId, username });
+      const message = `⚠️ ${username} ${msg[gs.language]}`;
+      gs.addToast("warning", message);
+      gs.addChaosLog(type, message);
     }
   });
-  
-  s.on("chaos:votingStart", ({ dramaEventId, targetPlayerId, targetUsername, duration, options }) => {
+
+  s.on("chaos:votingComplete", ({ result, targetUsername }) => {
     const gs = useGameStore.getState();
-    gs.setChaosVoting({
-      isActive: true,
-      dramaEventId,
-      targetPlayerId,
-      targetUsername,
-      duration,
-      options,
-      votes: {},
-    });
-  });
-  
-  s.on("chaos:votingUpdate", ({ totalVotes, voteCounts, timeRemaining }) => {
-    const gs = useGameStore.getState();
-    gs.updateChaosVoting({ totalVotes, voteCounts, timeRemaining });
-  });
-  
-  s.on("chaos:votingComplete", ({ result, targetPlayerId, targetUsername, voteCounts }) => {
-    const gs = useGameStore.getState();
-    gs.completeChaosVoting({ result, targetPlayerId, targetUsername, voteCounts });
     
     const resultMessages: Record<string, { ar: string; en: string }> = {
       FORGIVE: { ar: "✅ تم التسامح!", en: "✅ Forgiven!" },
@@ -723,14 +683,13 @@ function registerHandlers(s: TypedSocket) {
     if (msg) {
       gs.addToast(result === "FORGIVE" ? "success" : "warning", 
         gs.language === "ar" ? msg.ar : msg.en);
+      gs.addChaosLog(result, msg[gs.language]);
     }
   });
   
-  s.on("chaos:trapActivated", ({ targetPlayerId, targetUsername, trapLevel, message }) => {
+  s.on("chaos:trapActivated", ({ targetPlayerId, targetUsername, trapLevel }) => {
     const gs = useGameStore.getState();
     const isMe = targetPlayerId === gs.userId;
-    
-    gs.setActiveTrap({ targetPlayerId, targetUsername, trapLevel });
     
     gs.addToast(isMe ? "error" : "warning", 
       gs.language === "ar" 
@@ -738,30 +697,14 @@ function registerHandlers(s: TypedSocket) {
         : `🚨 Level ${trapLevel} trap activated against ${targetUsername}!`);
   });
   
-  s.on("chaos:evaluating", ({ message, correctRatio, playerCount }) => {
+  s.on("chaos:result", ({ outcome, title, emoji, color, heroUsername, summary }) => {
     const gs = useGameStore.getState();
-    gs.setTrapEvaluating({ message, correctRatio, playerCount });
-  });
-  
-  s.on("chaos:result", ({ outcome, title, emoji, color, correctRatio, targetUsername, heroUsername, playerResults, summary }) => {
-    const gs = useGameStore.getState();
-    gs.setTrapResult({ outcome, title, emoji, color, correctRatio, targetUsername, heroUsername, playerResults, summary });
+    gs.setTrapResult({ outcome, title, emoji, color, heroUsername, message: summary });
     gs.addToast(outcome === "FULL_TRAP" || outcome === "PARTIAL_TRAP" ? "error" : "success", summary);
   });
   
-  s.on("chaos:state", ({ chaosLevel, chaosState, personality, factors, momentum }) => {
-    const gs = useGameStore.getState();
-    gs.setChaosState({ chaosLevel, chaosState, personality, factors, momentum });
-  });
-  
-  s.on("chaos:advantages", ({ timeBonus, eliminatedOptions }) => {
-    const gs = useGameStore.getState();
-    gs.setChaosAdvantages({ timeBonus, eliminatedOptions });
-    if (timeBonus > 0) {
-      gs.addToast("info", gs.language === "ar" 
-        ? `⏱️ مكافأة زمنية: +${timeBonus} ثوانٍ!` 
-        : `⏱️ Time bonus: +${timeBonus}s!`);
-    }
+  s.on("chaos:state", (snapshot) => {
+    useGameStore.getState().syncChaos(snapshot);
   });
 
 }
@@ -932,26 +875,12 @@ export function emitInvasionGetState(gameId: string) {
 
 export function emitChaosVote(
   gameId: string,
-  vote: "FORGIVE" | "REDUCE_SCORE" | "BLOCK_QUESTION"
+  dramaEventId: string,
+  vote: ChaosVote
 ) {
-  const s = getSocket();
-  s.emit("chaos:vote", { gameId, vote });
+  return getSocket().timeout(5000).emitWithAck("chaos:vote", { gameId, dramaEventId, vote });
 }
 
-export function emitChaosAnswer(
-  gameId: string,
-  questionId: string,
-  answerIndex: number,
-  mode: "SAFE" | "RISK"
-) {
-  const s = getSocket();
-  s.emit("chaos:answer", { gameId, questionId, answerIndex, mode });
-}
-
-export function emitChaosInit(
-  gameId: string,
-  personality: "TRICKSTER" | "AGGRESSIVE" | "RANDOM" | "REVENGE" = "RANDOM"
-) {
-  const s = getSocket();
-  s.emit("chaos:init", { gameId, personality });
+export function emitChaosStartVoting(gameId: string, dramaEventId: string) {
+  return getSocket().timeout(5000).emitWithAck("chaos:startVoting", { gameId, dramaEventId });
 }

@@ -14,6 +14,7 @@ import {
   PowerUpType,
   SubmittedAnswer,
   AnswerReveal,
+  ChaosClientSnapshot,
 } from "@quiz-battle/shared";
 import { soundManager } from "@/lib/sounds";
 
@@ -24,6 +25,37 @@ export interface Toast {
 }
 
 export type LastAnswerResult = AnswerReveal;
+
+type ChaosTrapResult = {
+  outcome: string;
+  title: string;
+  emoji: string;
+  color: string;
+  message: string;
+  heroUsername?: string;
+};
+
+type ChaosStoreState = ChaosClientSnapshot & {
+  voteDeadline: number | null;
+  lastTrapResult: ChaosTrapResult | null;
+  chaosLog: Array<{ timestamp: number; event: string; message: string }>;
+};
+
+function mergeChaosSnapshot(
+  previous: ChaosStoreState | null,
+  snapshot: ChaosClientSnapshot | null
+): ChaosStoreState | null {
+  if (!snapshot) return null;
+  const existing = previous?.gameId === snapshot.gameId ? previous : null;
+  return {
+    ...snapshot,
+    voteDeadline: snapshot.votingSession
+      ? Date.now() + snapshot.votingSession.timeRemainingMs
+      : null,
+    lastTrapResult: snapshot.activeTrap ? null : existing?.lastTrapResult ?? null,
+    chaosLog: existing?.chaosLog ?? [],
+  };
+}
 
 export interface GameStore {
   // Auth
@@ -96,51 +128,7 @@ export interface GameStore {
     selectableTerritories: number[];
   } | null;
 
-  // CHAOS mode state
-  chaosState: {
-    level: number;
-    state: "CALM" | "UNSTABLE" | "CHAOTIC" | "INSANITY" | "ANARCHY";
-    personality: "TRICKSTER" | "AGGRESSIVE" | "RANDOM" | "REVENGE";
-    isVoting: boolean;
-    activeDrama: {
-      id: string;
-      type: string;
-      playerId: string;
-      username: string;
-    } | null;
-    votingSession: {
-      dramaEventId: string;
-      targetPlayerId: string;
-      targetUsername: string;
-      timeRemaining: number;
-      totalVotes: number;
-      hasVoted: boolean;
-    } | null;
-    activeTrap: {
-      targetPlayerId: string;
-      targetUsername: string;
-      level: number;
-      isTarget: boolean;
-      advantages?: {
-        timeBonus: number;
-        eliminatedOptions: number;
-      };
-    } | null;
-    evaluatingTrap: boolean;
-    lastTrapResult: {
-      outcome: string;
-      title: string;
-      emoji: string;
-      color: string;
-      message: string;
-      heroUsername?: string;
-    } | null;
-    chaosLog: Array<{
-      timestamp: number;
-      event: string;
-      message: string;
-    }>;
-  } | null;
+  chaosState: ChaosStoreState | null;
 
   activeEffects: ActivePowerUpEffect[];
 
@@ -201,18 +189,9 @@ export interface GameStore {
   setReadyPlayers: (players: string[]) => void;
 
   // CHAOS actions
-  setChaosState: (state: any) => void;
-  setChaosVoting: (voting: any) => void;
-  updateChaosVoting: (update: any) => void;
-  completeChaosVoting: (result: any) => void;
-  setActiveDrama: (drama: any) => void;
-  castChaosVote: (vote: string) => void;
-  setActiveTrap: (trap: any) => void;
-  setTrapEvaluating: (evaluating: any) => void;
-  setTrapResult: (result: any) => void;
-  setChaosAdvantages: (advantages: any) => void;
+  syncChaos: (snapshot: ChaosClientSnapshot) => void;
+  setTrapResult: (result: ChaosTrapResult | null) => void;
   addChaosLog: (event: string, message: string) => void;
-  clearChaosState: () => void;
 }
 
 const initialGameState = {
@@ -474,6 +453,9 @@ export const useGameStore = create<GameStore>()(
             answeredAt: room.answeredAt === undefined ? (isNewQuestion ? null : previous.answeredAt) : room.answeredAt,
             lastAnswerResult: room.lastAnswerResult === undefined ? (isNewQuestion ? null : previous.lastAnswerResult) : room.lastAnswerResult,
             finalResults: room.finalResults ?? previous.finalResults,
+            chaosState: room.chaos === undefined
+              ? previous.chaosState
+              : mergeChaosSnapshot(previous.chaosState, room.chaos),
             powerUpSelection: room.powerUpSelection
               ? { ...previous.powerUpSelection, ...room.powerUpSelection }
               : previous.powerUpSelection,
@@ -513,54 +495,11 @@ export const useGameStore = create<GameStore>()(
       setReadyPlayers: (players) => set({ readyPlayers: players }),
       confirmPowerUpSelection: () => set((state) => ({ powerUpSelection: { ...state.powerUpSelection, isSelecting: false } })),
 
-      // CHAOS actions
-      setChaosState: (chaosState) => set({ chaosState }),
-      setChaosVoting: (voting) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, votingSession: voting, isVoting: !!voting } : null,
-      })),
-      updateChaosVoting: (update) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          votingSession: state.chaosState.votingSession
-            ? { ...state.chaosState.votingSession, ...update }
-            : null,
-        } : null,
-      })),
-      completeChaosVoting: (result) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          isVoting: false,
-          votingSession: null,
-          activeDrama: null,
-        } : null,
-      })),
-      setActiveDrama: (drama) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, activeDrama: drama } : null,
-      })),
-      castChaosVote: (vote) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          votingSession: state.chaosState.votingSession
-            ? { ...state.chaosState.votingSession, hasVoted: true }
-            : null,
-        } : null,
-      })),
-      setActiveTrap: (trap) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, activeTrap: trap } : null,
-      })),
-      setTrapEvaluating: (evaluating) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, evaluatingTrap: true } : null,
-      })),
+      syncChaos: (snapshot) => set((state) => state.gameId === snapshot.gameId && state.mode === GameMode.Chaos
+        ? { chaosState: mergeChaosSnapshot(state.chaosState, snapshot) }
+        : state),
       setTrapResult: (result) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, lastTrapResult: result, activeTrap: null, evaluatingTrap: false } : null,
-      })),
-      setChaosAdvantages: (advantages) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          activeTrap: state.chaosState.activeTrap
-            ? { ...state.chaosState.activeTrap, advantages }
-            : null,
-        } : null,
+        chaosState: state.chaosState ? { ...state.chaosState, lastTrapResult: result } : null,
       })),
       addChaosLog: (event, message) => set((state) => ({
         chaosState: state.chaosState
@@ -570,7 +509,6 @@ export const useGameStore = create<GameStore>()(
             }
           : null,
       })),
-      clearChaosState: () => set({ chaosState: null }),
 
       resetGame: () =>
         set({

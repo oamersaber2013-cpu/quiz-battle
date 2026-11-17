@@ -1,5 +1,4 @@
 import { Server } from "socket.io";
-import type { SafeRedis } from "./redis";
 import { Difficulty, ServerToClientEvents, ClientToServerEvents } from "@quiz-battle/shared";
 import { fetchQuestions } from "./questions";
 
@@ -302,8 +301,7 @@ export function createInvasionGameFromConquest(
 
 export async function startInvasionRound(
   gameId: string,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): Promise<void> {
   const state = INVASION_GAMES.get(gameId);
   if (!state || state.phase !== "question" || state.currentQuestion || state.roundStarting) return;
@@ -361,7 +359,7 @@ export async function startInvasionRound(
   state.questionTimer = setTimeout(() => {
     if (INVASION_GAMES.get(gameId) !== state || state.phase !== "question") return;
     state.questionTimer = null;
-    processQuestionResults(gameId, io, redis);
+    processQuestionResults(gameId, io);
   }, question.timeLimit * 1000);
 }
 
@@ -388,8 +386,7 @@ export function recordAnswer(
 
 async function processQuestionResults(
   gameId: string,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): Promise<void> {
   const state = INVASION_GAMES.get(gameId);
   if (!state || state.phase !== "question") return;
@@ -442,7 +439,7 @@ async function processQuestionResults(
     state.phaseTimer = setTimeout(() => {
       if (INVASION_GAMES.get(gameId) !== state || state.phase !== "ranking") return;
       state.phaseTimer = null;
-      advanceToNextRound(gameId, io, redis);
+      advanceToNextRound(gameId, io);
     }, 3000);
     return;
   }
@@ -451,14 +448,13 @@ async function processQuestionResults(
   state.phaseTimer = setTimeout(() => {
     if (INVASION_GAMES.get(gameId) !== state || state.phase !== "ranking") return;
     state.phaseTimer = null;
-    startSelectionPhase(gameId, io, redis);
+    startSelectionPhase(gameId, io);
   }, 3000);
 }
 
 function startSelectionPhase(
   gameId: string,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): void {
   const state = INVASION_GAMES.get(gameId);
   if (!state || state.phase !== "ranking" || state.lastRanking.length === 0) return;
@@ -468,13 +464,12 @@ function startSelectionPhase(
   state.selectionPhase.turnIndex = 0;
   
   // Start with first ranked player
-  processNextPicker(gameId, io, redis);
+  processNextPicker(gameId, io);
 }
 
 function processNextPicker(
   gameId: string,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): void {
   const state = INVASION_GAMES.get(gameId);
   if (!state || state.phase !== "selection" || !state.selectionPhase.isActive) return;
@@ -487,7 +482,7 @@ function processNextPicker(
   // Check if all players have picked
   if (turnIndex >= ranking.length) {
     // End selection phase, move to next round
-    endSelectionPhase(gameId, io, redis);
+    endSelectionPhase(gameId, io);
     return;
   }
   
@@ -498,7 +493,7 @@ function processNextPicker(
     currentPicker.picks = 0;
     // Move to next player
     state.selectionPhase.turnIndex++;
-    processNextPicker(gameId, io, redis);
+    processNextPicker(gameId, io);
     return;
   }
   
@@ -525,7 +520,7 @@ function processNextPicker(
     if (currentPicker.picks <= 0) {
       state.selectionPhase.turnIndex++;
     }
-    processNextPicker(gameId, io, redis);
+    processNextPicker(gameId, io);
   }, SELECTION_TIMEOUT_MS);
 }
 
@@ -543,8 +538,7 @@ export function selectTerritory(
   gameId: string,
   playerId: string,
   territoryId: number,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): boolean {
   const state = INVASION_GAMES.get(gameId);
   if (!state) return false;
@@ -604,15 +598,14 @@ export function selectTerritory(
     state.selectionPhase.turnIndex++;
   }
   // Advance synchronously: an exhausted player must not keep a 500ms write window.
-  processNextPicker(gameId, io, redis);
+  processNextPicker(gameId, io);
   
   return true;
 }
 
 function endSelectionPhase(
   gameId: string,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): void {
   const state = INVASION_GAMES.get(gameId);
   if (!state) return;
@@ -628,14 +621,13 @@ function endSelectionPhase(
   state.phaseTimer = setTimeout(() => {
     if (INVASION_GAMES.get(gameId) !== state || state.phase !== "selection") return;
     state.phaseTimer = null;
-    advanceToNextRound(gameId, io, redis);
+    advanceToNextRound(gameId, io);
   }, 2000);
 }
 
 function advanceToNextRound(
   gameId: string,
-  io: TypedServer,
-  redis: SafeRedis
+  io: TypedServer
 ): void {
   const state = INVASION_GAMES.get(gameId);
   if (!state) return;
@@ -651,7 +643,7 @@ function advanceToNextRound(
   // Start next round
   state.currentQuestion = null;
   state.phase = "question";
-  startInvasionRound(gameId, io, redis).catch(err => {
+  startInvasionRound(gameId, io).catch(err => {
     console.error(`[Invasion] Round start failed for ${gameId}:`, err);
     io.to(gameId).emit("game:error", { message: "Unable to start invasion round" });
   });

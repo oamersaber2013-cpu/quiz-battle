@@ -10,6 +10,8 @@ import {
 } from "./worldMapData";
 import { 
   createInvasionGameFromConquest,
+  buildInvasionClientState,
+  startInvasionRound,
   INVASION_TERRITORIES,
   getInvasionTerritoriesForPlayerCount,
   InvasionTerritory
@@ -730,8 +732,14 @@ function checkDraftComplete(io: TypedServer, s: ConquestInternalState): void {
       gameId: s.gameId,
       playerIds,
     });
+    io.to(s.gameId).emit("invasion:state", buildInvasionClientState(s.gameId));
 
     emit(io, s);
+    // The match advances even if the host's browser is disconnected.
+    void startInvasionRound(s.gameId, io).catch(error => {
+      console.error(`[Invasion] Could not start the first round for ${s.gameId}:`, error);
+      io.to(s.gameId).emit("game:error", { message: "Unable to start invasion round" });
+    });
     return;
   }
 

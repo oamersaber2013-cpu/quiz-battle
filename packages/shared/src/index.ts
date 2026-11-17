@@ -234,8 +234,47 @@ export interface TeamScoreState {
   blue: { players: string[]; score: number };
 }
 
+export const CHAOS_VOTE_OPTIONS = ["FORGIVE", "REDUCE_SCORE"] as const;
+export type ChaosVote = typeof CHAOS_VOTE_OPTIONS[number];
+
+export interface ChaosDramaSnapshot {
+  id: string;
+  type: string;
+  playerId: string;
+  username: string;
+  expiresAt: number;
+}
+
+export interface ChaosClientSnapshot {
+  gameId: string;
+  level: number;
+  state: "CALM" | "UNSTABLE" | "CHAOTIC" | "INSANITY" | "ANARCHY";
+  personality: "TRICKSTER" | "AGGRESSIVE" | "RANDOM" | "REVENGE";
+  pendingDrama: ChaosDramaSnapshot | null;
+  votingSession: {
+    dramaEventId: string;
+    targetPlayerId: string;
+    targetUsername: string;
+    durationMs: number;
+    endsAt: number;
+    timeRemainingMs: number;
+    totalVotes: number;
+    options: ChaosVote[];
+    canVote: boolean;
+    hasVoted: boolean;
+  } | null;
+  activeTrap: {
+    targetPlayerId: string;
+    targetUsername: string;
+    level: number;
+    isTarget: boolean;
+  } | null;
+  evaluatingTrap: boolean;
+}
+
 export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
   players: PlayerState[];
+  chaos?: ChaosClientSnapshot | null;
   activeEffects?: ActivePowerUpEffect[];
   currentQuestion?: SafeClientQuestion | null;
   questionStartedAt?: number;
@@ -532,20 +571,24 @@ export interface ServerToClientEvents {
     targetPlayerId: string;
     targetUsername: string;
     duration: number;
+    endsAt?: number;
     options: string[];
   }) => void;
   "chaos:votingUpdate": (data: {
+    dramaEventId?: string;
     totalVotes: number;
     voteCounts: Record<string, number>;
     timeRemaining: number;
   }) => void;
   "chaos:votingComplete": (data: {
+    dramaEventId?: string;
     result: string;
     targetPlayerId: string;
     targetUsername: string;
     voteCounts: Record<string, number>;
+    scorePenalty?: number;
   }) => void;
-  "chaos:voteConfirmed": (data: { vote: string }) => void;
+  "chaos:voteConfirmed": (data: { vote: string; dramaEventId?: string }) => void;
   "chaos:trapActivated": (data: {
     targetPlayerId: string;
     targetUsername: string;
@@ -568,13 +611,7 @@ export interface ServerToClientEvents {
     playerResults: any[];
     summary: string;
   }) => void;
-  "chaos:state": (data: {
-    chaosLevel: number;
-    chaosState: string;
-    personality: string;
-    factors: any;
-    momentum: any;
-  }) => void;
+  "chaos:state": (data: ChaosClientSnapshot) => void;
   "chaos:advantages": (data: {
     timeBonus: number;
     eliminatedOptions: number;
@@ -661,8 +698,14 @@ export interface ClientToServerEvents {
   // CHAOS mode events
   "chaos:init": (data: { gameId: string; personality: string }) => void;
   "chaos:drama": (data: { gameId: string; type: string }) => void;
-  "chaos:startVoting": (data: { gameId: string; dramaEventId: string; targetPlayerId: string; targetUsername: string }) => void;
-  "chaos:vote": (data: { gameId: string; vote: string }) => void;
+  "chaos:startVoting": (
+    data: { gameId: string; dramaEventId: string; targetPlayerId?: string; targetUsername?: string },
+    cb?: (response: AckResponse) => void
+  ) => void;
+  "chaos:vote": (
+    data: { gameId: string; dramaEventId: string; vote: ChaosVote },
+    cb?: (response: AckResponse) => void
+  ) => void;
   "chaos:activateTrap": (data: { gameId: string; targetPlayerId: string }) => void;
   "chaos:answer": (data: { gameId: string; questionId: string; answerIndex: number; mode: string }) => void;
   "chaos:evaluateTrap": (data: { gameId: string }) => void;

@@ -1,0 +1,213 @@
+import { createElement } from "react";
+import { Difficulty, GameMode, GameStatus, type ChaosClientSnapshot, type SyncedGameRoom } from "@quiz-battle/shared";
+import ChaosGame from "@/components/ChaosGame";
+import { connectSocket, disconnectSocket } from "@/lib/socket";
+import { useGameStore } from "@/store/gameStore";
+import { io } from "socket.io-client";
+
+const { act, create } = require("react-test-renderer");
+jest.mock("socket.io-client", () => ({ io: jest.fn() }));
+jest.mock("@/lib/sounds", () => ({ soundManager: { play: jest.fn() } }));
+jest.mock("@/components/EmoteSystem", () => ({ EmoteSystem: () => null }));
+jest.mock("@/components/RoundProgress", () => ({ RoundProgress: () => null }));
+jest.mock("@/components/QuestionReview", () => ({ QuestionReview: () => null }));
+jest.mock("framer-motion", () => ({
+  motion: { div: "div", button: "button", span: "span" }, AnimatePresence: "div",
+}));
+
+const serverHandlers = new Map<string, (...args: any[]) => void>();
+const socket = {
+  connected: true,
+  auth: {},
+  on: jest.fn((name, listener) => serverHandlers.set(name, listener)),
+  off: jest.fn(),
+  emit: jest.fn(),
+  emitWithAck: jest.fn(),
+  timeout: jest.fn(),
+  disconnect: jest.fn(),
+  removeAllListeners: jest.fn(() => serverHandlers.clear()),
+};
+
+function votingSession(overrides: Partial<NonNullable<ChaosClientSnapshot["votingSession"]>> = {}): NonNullable<ChaosClientSnapshot["votingSession"]> {
+  return {
+    dramaEventId: "ballot-1",
+    targetPlayerId: "target",
+    targetUsername: "Target",
+    durationMs: 5000,
+    endsAt: Date.now() + 3000,
+    timeRemainingMs: 3000,
+    totalVotes: 1,
+    options: ["FORGIVE", "REDUCE_SCORE"],
+    canVote: true,
+    hasVoted: false,
+    ...overrides,
+  };
+}
+
+function chaos(overrides: Partial<ChaosClientSnapshot> = {}): ChaosClientSnapshot {
+  return {
+    gameId: "chaos-room",
+    level: 35,
+    state: "UNSTABLE",
+    personality: "RANDOM",
+    votingSession: null,
+    pendingDrama: null,
+    activeTrap: null,
+    evaluatingTrap: false,
+    ...overrides,
+  };
+}
+
+function sync(chaosSnapshot = chaos(), overrides: Partial<SyncedGameRoom> = {}) {
+  serverHandlers.get("game:stateSync")?.({
+    room: {
+      gameId: "chaos-room",
+      joinCode: "ABC123",
+      hostId: "player-1",
+      mode: GameMode.Chaos,
+      difficulty: Difficulty.Novice,
+      status: GameStatus.Question,
+      currentRound: 2,
+      totalRounds: 8,
+      maxPlayers: 8,
+      players: [{
+        userId: "player-1", username: "Warrior", score: 50, rank: 1, streak: 0,
+        isEliminated: false, isConnected: true, powerUpInventory: [],
+      }],
+      language: "en",
+      currentQuestion: {
+        id: "question-1", text: "What is Qatar's capital?", options: ["Doha", "Muscat"],
+        category: "geography", difficulty: Difficulty.Novice, timeLimit: 30,
+      },
+      questionStartedAt: Date.now() - 5000,
+      selectedAnswer: null,
+      chaos: chaosSnapshot,
+      ...overrides,
+    },
+  });
+}
+
+let view: ReturnType<typeof create>;
+beforeAll(() => {
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { addEventListener: jest.fn(), removeEventListener: jest.fn() },
+  });
+});
+afterAll(() => { Reflect.deleteProperty(globalThis, "document"); });
+beforeEach(() => {
+  jest.useFakeTimers();
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  useGameStore.getState().resetGame();
+  useGameStore.setState({ userId: "player-1", language: "en", soundEnabled: false });
+  (io as jest.Mock).mockReturnValue(socket);
+  socket.timeout.mockReturnValue(socket);
+  socket.emitWithAck.mockResolvedValue({ success: true });
+  connectSocket("player-1", "Warrior", "token");
+  serverHandlers.get("connect")?.();
+});
+afterEach(() => {
+  act(() => view?.unmount());
+  view = undefined;
+  disconnectSocket();
+  jest.clearAllTimers();
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+  jest.clearAllMocks();
+});
+
+function render(spectating = false) {
+  act(() => { view = create(createElement(ChaosGame, { isSpectating: spectating })); });
+}
+function text(node: any): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(text).join(" ");
+  return node?.props ? text(node.props.children) : "";
+}
+function button(label: string) {
+  return view.root.findAllByType("button").find((node: any) => text(node.props.children).includes(label));
+}
+function content() {
+  return JSON.stringify(view.toJSON());
+}
+
+it("restores the active ballot, trap and my submitted answer from a room snapshot", () => {
+  sync(chaos({
+    votingSession: votingSession({ hasVoted: true }),
+    activeTrap: { targetPlayerId: "player-1", targetUsername: "Warrior", level: 2, isTarget: true },
+  }), { selectedAnswer: 0 });
+  render();
+  expect(content()).toContain("UNSTABLE");
+  expect(content()).toContain("VOTE CAST");
+  expect(content()).toContain("Level 2 trap");
+  expect(button("Doha").props.disabled).toBe(true);
+  expect(button("RISK")).toBeUndefined();
+});
+
+it("sends normal scoring traffic for Chaos answers and ignores repeat clicks", () => {
+  sync();
+  render();
+  act(() => button("Doha").props.onClick());
+  act(() => button("Doha").props.onClick());
+  expect(socket.emit).toHaveBeenCalledTimes(1);
+  expect(socket.emit).toHaveBeenCalledWith("player:answer", expect.objectContaining({ gameId: "chaos-room", questionId: "question-1", answerIndex: 0 }));
+});
+
+it("does not let spectators answer or send a vote", () => {
+  sync(chaos({ votingSession: votingSession() }));
+  render(true);
+  expect(button("Doha").props.disabled).toBe(true);
+  act(() => button("Doha").props.onClick());
+  expect(button("FORGIVE")).toBeUndefined();
+  expect(socket.emit).not.toHaveBeenCalled();
+  expect(socket.emitWithAck).not.toHaveBeenCalled();
+});
+
+it("applies a live snapshot only for the current match and expires a ballot on the server deadline", () => {
+  sync();
+  render();
+  act(() => serverHandlers.get("chaos:state")?.(chaos({ votingSession: votingSession() })));
+  expect(button("FORGIVE").props.disabled).toBe(false);
+  act(() => serverHandlers.get("chaos:state")?.(chaos({ gameId: "old-room", level: 100 })));
+  expect(useGameStore.getState().chaosState?.level).toBe(35);
+  act(() => { jest.advanceTimersByTime(3000); });
+  expect(button("FORGIVE").props.disabled).toBe(true);
+});
+
+it("lets only the host open a valid pending ballot with the server drama ID", async () => {
+  const drama = {
+    id: "drama-1", type: "TAB_LEFT", playerId: "target",
+    username: "Player two", expiresAt: Date.now() + 30000,
+  };
+  sync(chaos({ pendingDrama: drama }), { hostId: "other-host" });
+  render();
+  expect(button("Start voting")).toBeUndefined();
+  act(() => sync(chaos({ pendingDrama: drama })));
+  await act(async () => { button("Start voting").props.onClick(); });
+  expect(socket.emitWithAck).toHaveBeenCalledWith("chaos:startVoting", {
+    gameId: "chaos-room", dramaEventId: drama.id,
+  });
+  expect(button("FORGIVE")).toBeUndefined();
+});
+
+it("waits for vote confirmation and leaves a rejected ballot retryable", async () => {
+  sync(chaos({ votingSession: votingSession() }));
+  render();
+  socket.emitWithAck.mockResolvedValueOnce({ success: false });
+  await act(async () => { button("FORGIVE").props.onClick(); });
+  expect(content()).toContain("Voting action failed");
+  expect(button("FORGIVE").props.disabled).toBe(false);
+  await act(async () => { button("REDUCE SCORE").props.onClick(); });
+  expect(socket.emitWithAck).toHaveBeenLastCalledWith("chaos:vote", {
+    gameId: "chaos-room", dramaEventId: "ballot-1", vote: "REDUCE_SCORE",
+  });
+  expect(content()).toContain("VOTE CAST");
+  expect(button("FORGIVE")).toBeUndefined();
+});
+
+it("shows a live ballot during a reconnect even when no current question is available", () => {
+  sync(chaos({ votingSession: votingSession() }), { currentQuestion: null, status: GameStatus.AnswerReveal });
+  render();
+  expect(content()).toContain("VOTE ON PUNISHMENT");
+  expect(button("FORGIVE").props.disabled).toBe(false);
+});

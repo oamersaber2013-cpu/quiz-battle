@@ -37,6 +37,15 @@ Browser smoke checks cover the creation wizard, Arabic language persistence,
 RTL layout and join-code validation. They do not create a paid game or make a
 payment, and are not proof of a deployed multiplayer service.
 
+Run the opt-in special-mode suite after building the shared package. It plays
+two Chaos rounds and all ten Conquest/Invasion rounds over Socket.IO with
+controlled gameplay clocks and stubbed questions and persistence.
+
+```sh
+npm run build -w @quiz-battle/shared
+npm test -w api -- --roots integration --runInBand
+```
+
 Database setup is separate and requires an isolated PostgreSQL database:
 
 ```sh

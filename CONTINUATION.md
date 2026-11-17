@@ -1,7 +1,6 @@
-# Sword of Knowledge continuation - 5 November 2026
+# Sword of Knowledge continuation - 17 November 2026
 
-Draft PR #1 continues from main commit `4547a7b`. Nothing has been merged or
-deployed. Older launch/status documents are historical, not current release proof.
+PR #1 continues from main commit `4547a7b` and is open for review.
 
 ## Gameplay and reliability
 
@@ -37,6 +36,12 @@ and distinguishes authorization, missing results and temporary failures.
 Conquest/Invasion completion also saves territory standings; its untracked quiz
 counts are not presented as measured statistics.
 
+The 17 November pass moved the Conquest-to-Invasion transition to the server.
+Chaos reconnects restore the player's submitted answer and the current ballot,
+including remaining time and whether the player voted. The host opens ballots
+from recent drama events. The server settles any final-round vote before
+saving the standings. Trap status reappears for display after reconnect.
+
 ## HTTP and authentication
 
 HTTP and Socket.IO share exact configured frontend origins; hosted FRONTEND_URL
@@ -52,8 +57,10 @@ flow exists. See [AUTH_CONFIGURATION.md](AUTH_CONFIGURATION.md).
 
 ## Verification on the final source
 
-- 166 regression tests passed: 112 API and 54 web.
-  The final API run with its two-worker limit exited cleanly without a worker warning.
+- 178 regression tests passed across the API (117) and web (61).
+- Two special-mode matches passed with paired Socket.IO clients, controlled
+  clocks and database stubs. They cover Chaos reconnect mid-vote and Conquest
+  through the entire ten-round Invasion phase.
 - Workspace typecheck: 6/6 tasks; production build: 4/4 tasks.
 - Production-backed Playwright: 10/10 desktop/mobile Chromium checks, including
   saved-result reload and private-room creation. Browser API fixtures are separate
@@ -65,7 +72,8 @@ flow exists. See [AUTH_CONFIGURATION.md](AUTH_CONFIGURATION.md).
   passwords, exact spaces, spectator grants, metadata privacy, result authorization
   and scoring are checked. Saved results survived room expiry, API restart and
   native PostgreSQL restart; unrelated users remained denied.
-- PGlite alternative: 14 integration check groups passed, including API restart.
+- A 5 November run using the PGlite alternative passed 14 integration check
+  groups, including API restart.
 - Tracked `packages/db/prisma/dev.db` SHA-256 stayed unchanged. No production
   database or `.env` destination was used for the integration test.
 
@@ -81,5 +89,5 @@ Hosted PostgreSQL TLS/HA/load behavior, durable Redis and multi-instance
 active-match restart recovery still need deployment checks. Real payment/credit enforcement is
 unfinished; the existing create-game credit bypass remains. Google provider
 credentials and a frontend sign-in flow need live verification; Facebook remains
-disabled. Full Chaos-state recovery, complete multi-round browser Conquest/Chaos
-matches and question/media editorial review remain separate release work.
+disabled. Full Conquest and Chaos browser playthroughs, Chaos trap scoring and
+question/media editorial review remain open.

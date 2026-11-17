@@ -12,6 +12,8 @@ import { fetchQuestions } from "../lib/questions";
 import { getActiveGame, getViewerAnswerResult, handlePlayerAnswer, removeActiveGame, setActiveGame, startGame } from "../lib/gameOrchestrator";
 import { SafeRedis } from "../lib/redis";
 import { saveGameSession } from "../lib/gamePersistence";
+import { initializeChaosV2, recordDramaV2 } from "../lib/chaosEngineV2";
+import { castChaosVote, startChaosVoting } from "../lib/chaosVoting";
 
 describe("Typed answers through a live round", () => {
   const emit = jest.fn();
@@ -166,6 +168,32 @@ describe("Typed answers through a live round", () => {
     expect(fetchQuestions).toHaveBeenLastCalledWith(
       Difficulty.Sage, 1, undefined, undefined, "en", game.gameId, { singleChoiceOnly: true }
     );
+  });
+
+  it("applies an accepted final Chaos ballot before persisting the standings", async () => {
+    game.mode = GameMode.Chaos;
+    initializeChaosV2(game.gameId);
+    await begin(QuestionType.MultipleChoice, { correctIndex: 1 });
+    const drama = recordDramaV2(game.gameId, "TAB_LEFT", "human", "Human")!;
+    const penalty = jest.fn((_player: string, amount: number) => {
+      game.players.human.score -= amount;
+      return amount;
+    });
+    expect(startChaosVoting(io, game.gameId, { dramaEventId: drama.dramaId, voterIds: ["human", "guest"] }, penalty)).toBe(true);
+    expect(castChaosVote(io, game.gameId, drama.dramaId, "guest", "REDUCE_SCORE")).toBe(true);
+    await handlePlayerAnswer(game, io, redis, "human", "typed-q", 1, Date.now());
+
+    await jest.advanceTimersByTimeAsync(4000);
+    expect(emit.mock.calls.filter(([event]) => event === "game:end")).toHaveLength(0);
+    expect(saveGameSession).not.toHaveBeenCalled();
+    const scoreBeforePenalty = game.players.human.score;
+    await jest.advanceTimersByTimeAsync(1000);
+    await running;
+
+    expect(penalty).toHaveBeenCalledWith("human", 50);
+    expect(saveGameSession).toHaveBeenCalledWith(expect.objectContaining({
+      players: [expect.objectContaining({ userId: "human", score: scoreBeforePenalty - 50 })],
+    }));
   });
 
   it("persists actual completed standings before notifying players", async () => {

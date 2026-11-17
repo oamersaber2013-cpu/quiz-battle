@@ -32,6 +32,8 @@ import { recordAnswer } from "./antiCheat";
 import { trackEvent } from "./analytics";
 import { GameResult, saveGameSession } from "./gamePersistence";
 import { removeRoomAccess } from "./roomAccess";
+import { cleanupChaosRoom } from "./chaosSnapshot";
+import { closeChaosVoting } from "./chaosVoting";
 import { getAnswerFeedback, getBotAnswer, isAnswerCorrect, isSingleChoiceQuestion, normalizeSubmittedAnswer } from "./answers";
 
 function roastPlayer(io: TypedServer, gameId: string, type: "right" | "wrong", username: string, language: "en" | "ar") {
@@ -134,6 +136,7 @@ export function removeActiveGame(gameId: string): void {
   answerHistories.delete(gameId);
   clearResultTimers(gameId);
   removeRoomAccess(gameId);
+  cleanupChaosRoom(gameId);
   clearUsedQuestions(gameId); // Clean up question tracking
 }
 
@@ -483,6 +486,10 @@ async function endGame(
   redis: SafeRedis,
   game: GameState
 ): Promise<void> {
+  if (game.mode === GameMode.Chaos) {
+    await closeChaosVoting(game.gameId);
+    if (activeGames.get(game.gameId) !== game) return;
+  }
   const answerHistory = answerHistories.get(game.gameId) || new Map<string, ScoredAnswer[]>();
   await finishCompletedGame(io, game, computeFinalResults(game.players, answerHistory, game.difficulty));
 }
@@ -491,6 +498,7 @@ async function finishCompletedGame(io: TypedServer, game: GameState, results: Fi
   if (game.status === GameStatus.Ended && game.finalResults) return;
   game.status = GameStatus.Ended;
   game.finalResults = results;
+  if (game.mode === GameMode.Chaos) cleanupChaosRoom(game.gameId);
 
   // Track game completion
   await trackEvent("game_completed", game.hostId, { gameId: game.gameId, mode: game.mode });

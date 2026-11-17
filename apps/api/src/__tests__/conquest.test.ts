@@ -40,7 +40,7 @@ describe("Conquest territory draft", () => {
     expect(state.fortHealth.host).toBe(3);
   });
 
-  it("completes immediately after the last unclaimed territory and preserves owners", async () => {
+  it("preserves ownership and starts Invasion when the final territory is claimed, without a client request", async () => {
     const state = getConquestState(gameId)!;
     await processDraftRound(io, gameId);
     const target = state.draftPhase!.availableTerritories.find(id => state.territories[id] === null)!;
@@ -51,6 +51,12 @@ describe("Conquest territory draft", () => {
     const invasion = INVASION_GAMES.get(gameId)!;
     expect(invasion).toBeDefined();
     for (const territory of invasion.territories) expect(territory.ownerId).toBe(state.territories[String(territory.id)]);
+    await jest.advanceTimersByTimeAsync(0);
+    const events = broadcast.mock.calls.map(([event]) => event);
+    expect(events.indexOf("invasion:init")).toBeGreaterThan(-1);
+    expect(events.indexOf("invasion:state")).toBeGreaterThan(events.indexOf("invasion:init"));
+    expect(events.indexOf("invasion:roundStart")).toBeGreaterThan(events.indexOf("invasion:state"));
+    expect(events.filter(event => event === "invasion:roundStart")).toHaveLength(1);
   });
 
   it("rejects nonparticipants, invalid choices and repeated answers", () => {

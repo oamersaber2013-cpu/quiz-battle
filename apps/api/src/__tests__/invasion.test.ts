@@ -16,7 +16,6 @@ import {
 describe("Invasion round integrity", () => {
   const emit = jest.fn();
   const io = { to: jest.fn(() => ({ emit })) } as any;
-  const redis = {} as any;
   const questions = fetchQuestions as jest.Mock;
 
   beforeEach(() => {
@@ -37,7 +36,7 @@ describe("Invasion round integrity", () => {
   });
 
   it("locks each participant's first answer and rejects outsiders", async () => {
-    await startInvasionRound("room", io, redis);
+    await startInvasionRound("room", io);
     recordAnswer("room", "host", 0);
     recordAnswer("room", "host", 1);
     recordAnswer("room", "intruder", 1);
@@ -47,7 +46,7 @@ describe("Invasion round integrity", () => {
   });
 
   it("rejects late, invalid and non-question-phase answers", async () => {
-    await startInvasionRound("room", io, redis);
+    await startInvasionRound("room", io);
     recordAnswer("room", "host", 99);
     recordAnswer("room", "host", Number.NaN);
     recordAnswer("room", "host", 1.5);
@@ -62,8 +61,8 @@ describe("Invasion round integrity", () => {
 
   it("starts one question and one result timer for concurrent start requests", async () => {
     await Promise.all([
-      startInvasionRound("room", io, redis),
-      startInvasionRound("room", io, redis),
+      startInvasionRound("room", io),
+      startInvasionRound("room", io),
     ]);
     expect(questions).toHaveBeenCalledTimes(1);
     expect(emit.mock.calls.filter(([event]) => event === "invasion:roundStart")).toHaveLength(1);
@@ -71,24 +70,24 @@ describe("Invasion round integrity", () => {
   });
 
   it("consumes a pick once and immediately revokes the exhausted player's turn", async () => {
-    await startInvasionRound("room", io, redis);
+    await startInvasionRound("room", io);
     recordAnswer("room", "host", 1);
     await jest.advanceTimersByTimeAsync(18000);
     const state = getInvasionState("room")!;
     expect(state.phase).toBe("selection");
-    expect(selectTerritory("room", "host", 1, io, redis)).toBe(true);
-    expect(selectTerritory("room", "host", 2, io, redis)).toBe(true);
-    expect(selectTerritory("room", "host", 3, io, redis)).toBe(true);
-    expect(selectTerritory("room", "host", 4, io, redis)).toBe(false);
+    expect(selectTerritory("room", "host", 1, io)).toBe(true);
+    expect(selectTerritory("room", "host", 2, io)).toBe(true);
+    expect(selectTerritory("room", "host", 3, io)).toBe(true);
+    expect(selectTerritory("room", "host", 4, io)).toBe(false);
     expect(state.territories.find(t => t.id === 4)!.ownerId).toBeNull();
     expect(state.lastRanking[0].picks).toBe(0);
   });
 
   it("consumes one pick on each timeout even after a successful pick", async () => {
-    await startInvasionRound("room", io, redis);
+    await startInvasionRound("room", io);
     recordAnswer("room", "host", 1);
     await jest.advanceTimersByTimeAsync(18000);
-    selectTerritory("room", "host", 1, io, redis);
+    selectTerritory("room", "host", 1, io);
     await jest.advanceTimersByTimeAsync(10000);
     expect(getInvasionState("room")!.selectionPhase.picksRemaining).toBe(1);
     await jest.advanceTimersByTimeAsync(10000);
@@ -96,7 +95,7 @@ describe("Invasion round integrity", () => {
   });
 
   it("clears timers when deleting a game so a replacement room is untouched", async () => {
-    await startInvasionRound("room", io, redis);
+    await startInvasionRound("room", io);
     deleteInvasionGame("room");
     expect(jest.getTimerCount()).toBe(0);
     createInvasionGame("room", ["host", "player"]);
@@ -120,7 +119,7 @@ describe("Invasion round integrity", () => {
     createInvasionGameFromConquest("room", ["host", "player"], { host: "Host" }, {}, {}, {
       difficulty: Difficulty.Legend, language: "ar", categories: ["history"], totalRounds: 6,
     });
-    await startInvasionRound("room", io, redis);
+    await startInvasionRound("room", io);
     expect(questions).toHaveBeenCalledWith(Difficulty.Legend, 1, ["history"], undefined, "ar", "room", { singleChoiceOnly: true });
     expect(getInvasionState("room")!.totalRounds).toBe(6);
   });

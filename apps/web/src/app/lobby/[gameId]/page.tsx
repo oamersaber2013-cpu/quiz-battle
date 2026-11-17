@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { GameStatus, GameMode } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
-import { emitStartGame, emitChaosInit } from "@/lib/socket";
+import { emitStartGame } from "@/lib/socket";
 import { useGameConnection } from "@/hooks/useGameConnection";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 import { ChatWindow } from "@/components/ChatWindow";
@@ -87,7 +87,6 @@ function LobbyPageContent() {
   async function handleStart() {
     setStarting(true);
     try {
-      if (mode === GameMode.Chaos) emitChaosInit(gameId, "RANDOM");
       const res = await emitStartGame(gameId);
       if (!res.success) {
         addToast("error", res.error || (isRTL ? "تعذر بدء المعركة" : "Unable to start battle"));

@@ -44,7 +44,7 @@ describe("Invasion completed results bridge", () => {
   });
 
   it("persists actual territory standings exactly once before clearing the invasion", async () => {
-    await startInvasionRound("invasion-result", io, {} as any);
+    await startInvasionRound("invasion-result", io);
     await jest.advanceTimersByTimeAsync(18000);
     expect(saveGameSession).toHaveBeenCalledTimes(1);
     const saved = (saveGameSession as jest.Mock).mock.calls[0][0];

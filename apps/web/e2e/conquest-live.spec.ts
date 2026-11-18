@@ -36,7 +36,21 @@ test("plays two Arabic Conquest draft rounds with a real peer and restores the l
     }, { timeout: 45000 }).toBe(true);
     return found!.data;
   };
-  peer.onAny((name, data) => events.push({ name, data }));
+  const receivedAt = new Map<string, number>();
+  peer.onAny((name, data) => {
+    if (name === "conquest:draftQuestion") receivedAt.set(data.question.id, performance.now());
+    events.push({ name, data });
+  });
+  function checkClock(seconds: number, draft: { question: { id: string; timeLimit: number }; questionStartedAt: number; questionEndsAt: number }) {
+    const arrival = receivedAt.get(draft.question.id);
+    expect(arrival).toBeDefined();
+    const limit = draft.question.timeLimit;
+    expect(draft.questionEndsAt - draft.questionStartedAt).toBe(limit * 1000);
+    const expected = Math.ceil(limit - (performance.now() - arrival!) / 1000);
+    expect(seconds).toBeGreaterThan(0);
+    expect(seconds).toBeLessThanOrEqual(limit);
+    expect(Math.abs(seconds - expected)).toBeLessThanOrEqual(2);
+  }
   peer.on("conquest:draftPickTurn", (turn) => {
     if (turn.playerId === guest.userId) {
       peer.emit("conquest:selectDraftTerritory", { gameId, territoryId: turn.availableTerritories[0], turnId: turn.turnId },
@@ -65,7 +79,7 @@ test("plays two Arabic Conquest draft rounds with a real peer and restores the l
     await expect(arena.locator("details")).not.toHaveAttribute("open");
     await expect(page.getByText(/^0\s*\/\s*12$/)).toHaveCount(0);
     const initialSeconds = Number(await timer.textContent());
-    expect(initialSeconds).toBeGreaterThan(20);
+    checkClock(initialSeconds, firstQuestion);
     await expect.poll(async () => Number(await timer.textContent()), { timeout: 5000 }).toBeLessThan(initialSeconds);
     const contrast = await answers.first().evaluate(element => {
       const style = getComputedStyle(element);
@@ -102,8 +116,9 @@ test("plays two Arabic Conquest draft rounds with a real peer and restores the l
     await expect(answers.first()).toBeEnabled();
     await expect(answers.first()).toHaveAttribute("aria-pressed", "false");
     await expect(arena.locator("details")).not.toHaveAttribute("open");
+    const secondQuestion = await next("conquest:draftQuestion", data => data.round === 2);
     const nextSeconds = Number(await timer.textContent());
-    expect(nextSeconds).toBeGreaterThan(20);
+    checkClock(nextSeconds, secondQuestion);
     await expect.poll(async () => Number(await timer.textContent()), { timeout: 5000 }).toBeLessThan(nextSeconds);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     const questionBox = await arena.getByRole("heading", { level: 2 }).boundingBox();

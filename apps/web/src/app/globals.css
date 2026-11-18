@@ -1125,7 +1125,8 @@ a { color: inherit; text-decoration: none; }
   color: #101923;
   font-weight: 700;
 }
-.skip-to-content:focus { transform: none; }
+.skip-to-content:not(:focus-visible) { clip-path: inset(50%); opacity: 0; pointer-events: none; }
+.skip-to-content:focus-visible { transform: none; }
 html[lang="ar"] .skip-en, html:not([lang="ar"]) .skip-ar { display: none; }
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 3px solid #f4cc7e;

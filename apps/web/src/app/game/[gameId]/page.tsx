@@ -1,12 +1,15 @@
 "use client";
 import { getServerTime } from "@/lib/gameClock";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { GameMode, GameStatus, GAME_MODE_CONFIG, PowerUpType, QuestionType, getRandomQuote, SubmittedAnswer } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { emitAnswer, emitPowerUp, getSocket, emitInvasionAnswer } from "@/lib/socket";
 import { ChatWindow } from "@/components/ChatWindow";
+import { BattleHeader, MODE_NAMES } from "@/components/BattleHeader";
+import { POWER_UP_INFO } from "@/components/powerUpPresentation";
+import styles from "@/components/ActiveExperience.module.css";
 import { ConquestGame } from "@/components/ConquestGame";
 import { InvasionGame } from "@/components/InvasionGame";
 import ChaosGame from "@/components/ChaosGame";
@@ -34,93 +37,6 @@ const TARGETED_POWER_UPS = new Set<PowerUpType>([
   PowerUpType.Steal,
   PowerUpType.Whole,
 ]);
-
-const POWER_UP_INFO: Record<
-  PowerUpType,
-  {
-    icon: string;
-    label: { en: string; ar: string };
-    description: { en: string; ar: string };
-    needsTarget?: boolean;
-  }
-> = {
-  [PowerUpType.Shield]: {
-    icon: "🛡️",
-    label: { en: "Shield", ar: "درع" },
-    description: {
-      en: "Raise protection for the current clash.",
-      ar: "فعّل الحماية خلال هذه المواجهة.",
-    },
-  },
-  [PowerUpType.FiftyFifty]: {
-    icon: "✂️",
-    label: { en: "50/50", ar: "٥٠/٥٠" },
-    description: {
-      en: "Erase two wrong options instantly.",
-      ar: "احذف خيارين خاطئين فوراً.",
-    },
-  },
-  [PowerUpType.Freeze]: {
-    icon: "❄️",
-    label: { en: "Freeze", ar: "تجميد" },
-    description: {
-      en: "Lock an opponent out for a few seconds.",
-      ar: "جمّد خصماً لبضع ثوانٍ.",
-    },
-    needsTarget: true,
-  },
-  [PowerUpType.DoubleDown]: {
-    icon: "💥",
-    label: { en: "2x", ar: "مضاعف" },
-    description: {
-      en: "Double the reward if your answer lands.",
-      ar: "ضاعف المكافأة إذا أصبت الإجابة.",
-    },
-  },
-  [PowerUpType.Steal]: {
-    icon: "🎯",
-    label: { en: "Steal", ar: "سرقة" },
-    description: {
-      en: "Rip points away from a rival.",
-      ar: "اسحب النقاط من منافسك.",
-    },
-    needsTarget: true,
-  },
-  [PowerUpType.DoublePick]: {
-    icon: "🔁",
-    label: { en: "2 Pick", ar: "خيارين" },
-    description: {
-      en: "Keep a tactical reroute in reserve.",
-      ar: "احتفظ بهامش مناورة إضافي.",
-    },
-  },
-  [PowerUpType.Whole]: {
-    icon: "🌀",
-    label: { en: "WHOLE", ar: "ثقب" },
-    description: {
-      en: "Mirror another player's recent fate.",
-      ar: "اعكس أثر الإجابة الأخيرة لخصمك.",
-    },
-    needsTarget: true,
-  },
-  [PowerUpType.Sandstorm]: {
-    icon: "🌪️",
-    label: { en: "Sandstorm", ar: "عاصفة" },
-    description: {
-      en: "Blur an opponent's battlefield.",
-      ar: "شوّش ساحة القتال لدى خصمك.",
-    },
-    needsTarget: true,
-  },
-  [PowerUpType.TimeWarp]: {
-    icon: "⏳",
-    label: { en: "Time Warp", ar: "التواء الزمن" },
-    description: {
-      en: "Stretch your personal answer window.",
-      ar: "مدّد نافذة الإجابة الخاصة بك.",
-    },
-  },
-};
 
 const T = {
   round: { en: "Round", ar: "الجولة" },
@@ -198,6 +114,7 @@ function GamePageContent() {
   const [now, setNow] = useState(getServerTime());
   const [showTransition, setShowTransition] = useState(false);
   const [transitionRound, setTransitionRound] = useState(0);
+  const completeTransition = useCallback(() => setShowTransition(false), []);
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
@@ -284,6 +201,7 @@ function GamePageContent() {
   const isSandstormed = effectsOnMe.some((effect) => effect.type === PowerUpType.Sandstorm);
   const hasTimeWarp = effectsFromMe.some((effect) => effect.type === PowerUpType.TimeWarp);
   const hasShield = effectsFromMe.some((effect) => effect.type === PowerUpType.Shield);
+  const answerControlsDisabled = isSpectating || isFrozen || status !== GameStatus.Question || timeLeft <= 0 || !!currentPlayer?.isEliminated;
 
   const visibleTargetEffects = [...effectsOnMe, ...effectsFromMe];
   const availableTargets = players.filter(
@@ -347,12 +265,19 @@ function GamePageContent() {
   const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
   const themeClass = mode ? `theme-${mode.toLowerCase()}` : "";
   const modeConfig = mode ? GAME_MODE_CONFIG[mode] : { hasPowerUps: true };
+  const hasDedicatedQuestionView = !!currentQuestion && (
+    [QuestionType.ImageQuestion, QuestionType.AudioQuestion, QuestionType.TrueFalse, QuestionType.MultiSelect, QuestionType.FillBlank, QuestionType.Ordering].includes(currentQuestion.type as QuestionType) ||
+    !!currentQuestion.imageUrl || !!currentQuestion.audioUrl ||
+    ["[BLANK]", "[___]", "___"].some(marker => currentQuestion.text.includes(marker)) ||
+    (currentQuestion.options.length === 2 && currentQuestion.options.every(option => ["true", "false"].includes(option.toLowerCase())))
+  );
 
   const questionArenaClass = [
     "glass-card",
     "p-6",
     "animate-scale-in",
     "question-arena",
+    styles.questionCard,
     isFrozen ? "frozen" : "",
     isSandstormed ? "sandstormed" : "",
     hasTimeWarp ? "time-warped" : "",
@@ -379,16 +304,16 @@ function GamePageContent() {
         round={currentRound}
         totalRounds={totalRounds}
         language={language}
-        onComplete={() => setShowTransition(false)}
+        onComplete={completeTransition}
       />
     );
   }
 
   // Show power-up selection only when status is PowerUpSelect AND selection is active
-  if (status === GameStatus.PowerUpSelect && powerUpSelection?.isSelecting) {
+  if (status === GameStatus.PowerUpSelect) {
     return (
-      <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: "16px" }}>
-        <PowerUpSelection />
+      <main className={`${styles.page} ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: "16px" }}>
+        <div className={styles.frame}><BattleHeader language={language} stage="play" /><PowerUpSelection isSpectating={isSpectating} /></div>
       </main>
     );
   }
@@ -396,42 +321,44 @@ function GamePageContent() {
   // Render CHAOS mode
   if (mode === GameMode.Chaos) {
     return (
-      <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh" }}>
-        <ChaosGame isSpectating={isSpectating} />
+      <main className={`${styles.page} ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh" }}>
+        <div className={styles.frame}><BattleHeader language={language} stage="play" /><ChaosGame isSpectating={isSpectating} /></div>
       </main>
     );
   }
 
   if (mode === GameMode.Conquest) {
     return (
-      <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: 16 }}>
-        <div style={{ width: "100%", maxWidth: 960, margin: "0 auto" }}>
+      <main className={`${styles.page} ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: 16 }}>
+        <div className={styles.frame}><BattleHeader language={language} stage="play" /></div>
+        <div className={styles.gameLayout}><div className={styles.playColumn}>
           {isSpectating && <p className="glass-card p-3 text-center">{T.spectator[language]}</p>}
           {invasionState
             ? <InvasionGame onAnswer={handleAnswer} isSpectating={isSpectating} />
             : <ConquestGame />}
-          <ChatWindow gameId={gameId} />
+          </div><aside className={styles.sideRail}><ChatWindow gameId={gameId} /></aside>
         </div>
       </main>
     );
   }
 
   return (
-    <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: "16px" }}>
-      <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+    <main className={`${styles.page} ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: "16px" }}>
+      <div className={styles.frame}><BattleHeader language={language} stage="play" /></div>
+      <div className={styles.gameLayout}><div className={styles.playColumn}>
         {isSpectating && (
           <div className="glass-card p-3 text-center" style={{ border: "1px solid var(--clr-primary)", background: "rgba(108, 99, 255, 0.1)" }}>
             <strong>{T.spectator[language]}</strong>
           </div>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div className={styles.matchStatus}>
           <div style={{ textAlign: isRTL ? "right" : "left" }}>
             <div className="text-muted text-sm">{T.round[language]}</div>
-            <div className="font-bold text-xl">{currentRound} / {totalRounds}</div>
+            <div className="font-bold text-xl"><bdi>{currentRound} / {totalRounds}</bdi></div>
           </div>
 
-          <div className={`timer-ring ${timerClass}`}>
+          <div className={`timer-ring ${timerClass}`} role="timer" aria-label={isRTL ? "ثوانٍ متبقية للإجابة" : "Seconds left to answer"}>
             <svg width="80" height="80" viewBox="0 0 90 90">
               <circle className="track" cx="45" cy="45" r={radius} strokeWidth="6" />
               <circle
@@ -505,9 +432,9 @@ function GamePageContent() {
             )}
 
             {/* Question Text */}
-            <p style={{ fontSize: "clamp(1.1rem, 3vw, 1.4rem)", fontWeight: 700, lineHeight: 1.5, marginBottom: 24, textAlign: isRTL ? "right" : "left" }}>
+            {!hasDedicatedQuestionView && <h2 className={styles.questionHeading}>
               {currentQuestion.text}
-            </p>
+            </h2>}
 
             {/* Conditional: Image, Audio, True/False, or Standard Options */}
             {(() => {
@@ -546,6 +473,7 @@ function GamePageContent() {
               if (isImageQuestion) {
                 return (
                   <ImageQuestion
+                    disabled={answerControlsDisabled}
                     key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
@@ -562,6 +490,7 @@ function GamePageContent() {
               if (isAudioQuestion) {
                 return (
                   <AudioQuestion
+                    disabled={answerControlsDisabled}
                     key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
@@ -578,6 +507,7 @@ function GamePageContent() {
               if (isTrueFalseQuestion) {
                 return (
                   <TrueFalseQuestion
+                    disabled={answerControlsDisabled}
                     key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
@@ -594,6 +524,7 @@ function GamePageContent() {
               if (isMultiSelect) {
                 return (
                   <MultiSelectQuestion
+                    disabled={answerControlsDisabled}
                     key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
@@ -612,6 +543,7 @@ function GamePageContent() {
               if (isFillBlank) {
                 return (
                   <FillBlankQuestion
+                    disabled={answerControlsDisabled}
                     key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
@@ -630,6 +562,7 @@ function GamePageContent() {
               if (isOrdering) {
                 return (
                   <OrderingQuestion
+                    disabled={answerControlsDisabled}
                     key={currentQuestion.id}
                     question={currentQuestion}
                     status={status}
@@ -646,7 +579,7 @@ function GamePageContent() {
 
               // Default: Standard Multiple Choice
               return (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div className={styles.answerGrid}>
                   {currentQuestion.options.map((option, i) => {
                     const isEliminated = eliminatedOptions.includes(i);
                     const isSelected = selectedAnswer === i;
@@ -675,14 +608,6 @@ function GamePageContent() {
                           overflow: "hidden"
                         }}
                       >
-                        {isSelected && status === GameStatus.Question && (
-                          <div style={{
-                            position: "absolute",
-                            inset: 0,
-                            background: "linear-gradient(90deg, transparent, rgba(0,212,255,0.2), transparent)",
-                            animation: "shimmer 1.5s ease-in-out infinite"
-                          }} />
-                        )}
                         <div className="option-letter" style={{ 
                           [isRTL ? "marginLeft" : "marginRight"]: 14,
                           position: "relative",
@@ -700,37 +625,24 @@ function GamePageContent() {
           </div>
         )}
 
-        <div style={{ textAlign: isRTL ? "right" : "left", marginBottom: 10 }}>
-          <div className="text-muted text-sm" style={{ marginBottom: 10 }}>💬 {T.react[language]}</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {["🔥", "💀", "🤣", "🫡", "😱", "❓"].map((emote) => (
-              <button
-                key={emote}
-                className="btn btn-secondary btn-sm"
-                style={{ fontSize: "1.2rem", padding: "8px 12px", minWidth: 50 }}
-                disabled={isSpectating}
-                onClick={() => {
-                  if (!isSpectating) {
-                    getSocket()?.emit("game:emote", { gameId, emote });
-                  }
-                }}
-              >
-                {emote}
-              </button>
-            ))}
-          </div>
-        </div>
+        <details className={styles.reactions}>
+          <summary>{T.react[language]}</summary>
+          <div className={styles.reactionButtons}>{["🔥", "💀", "🤣", "🫡", "😱", "❓"].map(emote => <button type="button" key={emote} className="btn btn-secondary" aria-label={`${T.react[language]} ${emote}`} disabled={isSpectating} onClick={() => { if (!isSpectating) getSocket()?.emit("game:emote", { gameId, emote }); }}>{emote}</button>)}</div>
+        </details>
 
         {modeConfig.hasPowerUps && currentPlayer && currentPlayer.powerUpInventory.length > 0 && (
-          <div style={{ textAlign: isRTL ? "right" : "left" }}>
-            <div className="text-muted text-sm" style={{ marginBottom: 10 }}>⚡ {T.powerups[language]}</div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <section className={styles.toolStrip} aria-label={T.powerups[language]}>
+            <h2 className={styles.sectionHeading}>{T.powerups[language]}</h2>
+            <div className={styles.toolGrid}>
               {currentPlayer.powerUpInventory.map((pu, i) => {
                 const info = POWER_UP_INFO[pu];
                 return (
                   <button
                     key={`${pu}-${i}`}
                     className="powerup-card"
+                    type="button"
+                    title={info.description[language]}
+                    disabled={isSpectating || isFrozen || status !== GameStatus.Question || !!info.unavailable}
                     onClick={() => handlePowerUp(pu)}
                     style={{ width: 96, height: 96 }}
                   >
@@ -740,7 +652,7 @@ function GamePageContent() {
                 );
               })}
             </div>
-          </div>
+          </section>
         )}
 
         {pendingPowerUp && (
@@ -820,25 +732,19 @@ function GamePageContent() {
               </div>
             )}
 
-            <div className="glass-card p-4">
-              <div className="font-bold" style={{ marginBottom: 12, textAlign: isRTL ? "right" : "left" }}>📊 {T.scoreboard[language]}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {sortedPlayers.map((player, index) => (
-                  <div key={player.userId} style={{ display: "flex", alignItems: "center", gap: 10, flexDirection: isRTL ? "row-reverse" : "row" }}>
-                    <span style={{ width: 24, textAlign: "center", fontWeight: 700 }}>#{index + 1}</span>
-                    <div className="player-avatar" style={{ width: 32, height: 32, fontSize: "0.8rem" }}>{player.username.charAt(0)}</div>
-                    <span style={{ flex: 1, fontWeight: player.userId === userId ? 700 : 400, textAlign: isRTL ? "right" : "left" }}>
-                      {player.username} {player.userId === userId && T.you[language]}
-                    </span>
-                    <span className="font-mono font-bold" style={{ color: "var(--clr-primary)" }}>{player.score}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 
-        <ChatWindow gameId={gameId} />
+        </div>
+        <aside className={styles.sideRail}>
+          <section className={styles.surface} aria-label={T.scoreboard[language]}>
+            <h2 className={styles.sectionHeading}>{T.scoreboard[language]}</h2>
+            <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>{sortedPlayers.map((player, index) => <li className={styles.scoreRow} key={player.userId}>
+              <span className={styles.scoreRank}>{index + 1}</span><span className={styles.scoreName}><bdi>{player.username}</bdi>{player.userId === userId && <small> {T.you[language]}</small>}</span><strong>{player.score.toLocaleString(language)}</strong>
+            </li>)}</ol>
+          </section>
+          <ChatWindow gameId={gameId} />
+        </aside>
       </div>
 
       {/* Power-Up Visual Effects */}

@@ -11,7 +11,7 @@ self.addEventListener("fetch", event => {
   event.respondWith(fetch(event.request).catch(() => new Response(
     `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>سيف المعرفة | Sword of Knowledge</title>
-    <style>body{font:1.15rem/1.65 system-ui;background:#08090d;color:#f0f2ff;max-width:34rem;margin:12vh auto;padding:1.25rem}a{color:#a8d9ff}</style>
+    <style>body{font:1.15rem/1.65 system-ui;background:#101923;color:#f4eee2;max-width:34rem;margin:12vh auto;padding:1.25rem}a{color:#efc879}</style>
     <main><h1>سيف المعرفة</h1><p>تحتاج إلى اتصال بالإنترنت للعودة إلى المعركة.</p>
     <p lang="en" dir="ltr">Reconnect to the internet to return to your battle.</p>
     <a href="">إعادة المحاولة / Retry</a></main></html>`,

@@ -135,6 +135,15 @@ function content() {
   return JSON.stringify(view.toJSON());
 }
 
+it("localizes the Chaos level and live ballot seconds in Arabic", () => {
+  sync(chaos({ votingSession: votingSession() }), { language: "ar" });
+  render();
+  expect(content()).toContain("غير مستقر");
+  expect(content()).not.toContain("UNSTABLE");
+  expect(button("سامح")).toBeDefined();
+  expect(content()).toContain("ث");
+});
+
 it.each([-40000, 40000])("keeps Chaos drama and ballots usable with client clock skew %sms", (skew) => {
   const serverNow = Date.now();
   jest.setSystemTime(serverNow + skew);
@@ -156,7 +165,7 @@ it("restores the active ballot, trap and my submitted answer from a room snapsho
     activeTrap: { targetPlayerId: "player-1", targetUsername: "Warrior", level: 2, isTarget: true },
   }), { selectedAnswer: 0 });
   render();
-  expect(content()).toContain("UNSTABLE");
+  expect(content()).toContain("Unstable");
   expect(content()).toContain("VOTE CAST");
   expect(content()).toContain("Level 2 trap");
   expect(button("Doha").props.disabled).toBe(true);

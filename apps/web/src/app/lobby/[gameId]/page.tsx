@@ -8,6 +8,8 @@ import { useGameConnection } from "@/hooks/useGameConnection";
 import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 import { ChatWindow } from "@/components/ChatWindow";
+import { BattleHeader, MODE_NAMES, DIFFICULTY_NAMES } from "@/components/BattleHeader";
+import styles from "@/components/ActiveExperience.module.css";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -39,14 +41,6 @@ const CATEGORY_LABELS: Record<string, { en: string; ar: string }> = {
   sports: { en: "Sports", ar: "الرياضة" },
 };
 
-const DIFF_COLORS: Record<string, string> = {
-  novice: "#00e676",
-  scholar: "#00d4ff",
-  sage: "#ffa502",
-  master: "#ff6b6b",
-  legend: "#ffd700",
-};
-
 export default function LobbyPage() {
   return (
     <ErrorBoundary>
@@ -63,7 +57,7 @@ function LobbyPageContent() {
   const isSpectating = searchParams.get("spectate") === "true";
 
   const { 
-    userId, username, token, isGuest, joinCode, mode, difficulty, category, 
+    userId, joinCode, mode, difficulty, category,
     players, status, addToast, language, hostId, customSettings
   } = useGameStore();
   
@@ -97,10 +91,12 @@ function LobbyPageContent() {
     }
   }
 
-  function copyCode() {
-    navigator.clipboard.writeText(joinCode || "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(joinCode || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { addToast("error", isRTL ? "تعذر النسخ. يمكنك تحديد الرمز ونسخه." : "Could not copy. Select the code to copy it."); }
   }
 
 
@@ -117,130 +113,56 @@ function LobbyPageContent() {
   }
 
   return (
-    <main className="page" dir={isRTL ? "rtl" : "ltr"} style={{ padding: "24px 20px" }}>
-      <div className="container" style={{ maxWidth: 700 }}>
-
-        {/* Header */}
-        <div className="animate-fade-in" style={{ marginBottom: 32 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-            <span style={{ fontSize: "1.5rem" }}>🏰</span>
-            <h1 className="text-2xl font-bold">{T.battleLobby[language]}</h1>
-            <span className="badge badge-primary">{mode}</span>
+    <main className={styles.page} dir={isRTL ? "rtl" : "ltr"}>
+      <div className={styles.frame}>
+        <BattleHeader language={language} stage="lobby" />
+        <header className={styles.pageHeading}>
+          <p className={styles.eyebrow}>{isSpectating ? (isRTL ? "المشاهدة" : "Spectating") : (isHost ? T.host[language] : (isRTL ? "أنت في الغرفة" : "You're in the room"))}</p>
+          <h1 className={styles.heading}>{T.battleLobby[language]}</h1>
+          <p className={styles.lede}>{isRTL ? "شارك الرمز مع أصدقائك. يبدأ المضيف المعركة عندما تكونون جاهزين." : "Share the code with your friends. The host starts when everyone is ready."}</p>
+          <div className={styles.tagRow}>
+            {mode && <span className={styles.tag}>{MODE_NAMES[mode]?.[language] || mode}</span>}
+            {difficulty && <span className={styles.tag}>{DIFFICULTY_NAMES[difficulty]?.[language] || difficulty}</span>}
+            <span className={styles.tag}>{isRTL ? "العربية" : "English"}</span>
+            {category && category.split(/,\s*/).map(catId => { const label = CATEGORY_LABELS[catId.trim().toLowerCase()]; return label ? <span className={styles.tag} key={catId}>{label[language]}</span> : null; })}
           </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span className="text-muted text-sm">{players.length} {T.warriorsReady[language]}</span>
-            {difficulty && (
-              <span className="badge" style={{
-                color: DIFF_COLORS[difficulty] || "white",
-                background: `${DIFF_COLORS[difficulty]}18`,
-                border: `1px solid ${DIFF_COLORS[difficulty]}44`,
-              }}>
-                {difficulty.toUpperCase()}
-              </span>
-            )}
-            <span className="badge badge-secondary" style={{ border: "1px solid var(--clr-primary)" }}>
-              {language === 'ar' ? "العربية 🇸🇦" : "English 🇺🇸"}
-            </span>
-            {category && category.split(", ").map(catId => {
-              const cleanId = catId.trim().toLowerCase();
-              const label = CATEGORY_LABELS[cleanId];
-              if (!label) return null;
-              return (
-                <span key={cleanId} className="badge badge-gold" style={{ border: "1px solid var(--clr-gold)" }}>
-                  {label[language]}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Join code & Invite Link */}
-        <div className="glass-card p-6 animate-fade-in" style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 20 }}>
-            <div style={{ textAlign: isRTL ? "right" : "left" }}>
-              <div className="text-muted text-sm" style={{ marginBottom: 6 }}>{T.battleCode[language]}</div>
-              <div className="font-mono font-bold" style={{ fontSize: "2.5rem", letterSpacing: "0.25em", color: "var(--clr-primary)" }}>
-                {joinCode || "------"}
+        </header>
+        <div className={styles.lobbyLayout}>
+          <div className={styles.stack}>
+            <section className={styles.surface} aria-label={isRTL ? "دعوة اللاعبين" : "Invite players"}>
+              <div className={styles.codeLine}>
+                <div><p className={styles.eyebrow}>{T.battleCode[language]}</p><bdi className={styles.code}>{joinCode || "------"}</bdi></div>
+                <button type="button" className="btn btn-secondary" onClick={copyCode}>{copied ? `✓ ${T.copied[language]}` : T.copy[language]}</button>
               </div>
-            </div>
-            <button className="btn btn-secondary" onClick={copyCode}>
-              {copied ? `✓ ${T.copied[language]}` : `📋 ${T.copy[language]}`}
-            </button>
-          </div>
-          
-          <div style={{ borderTop: "1px solid var(--clr-border)", paddingTop: 20 }}>
-            <button 
-              className="btn btn-ghost w-full" 
-              style={{ justifyContent: "center", gap: 10, color: "var(--clr-primary)" }}
-              onClick={() => {
-                const url = window.location.origin + "/lobby/" + gameId;
-                navigator.clipboard.writeText(url);
-                addToast("success", isRTL ? "تم نسخ رابط المعركة!" : "Battle link copied!");
-              }}
-            >
-              🔗 {isRTL ? "نسخ رابط الدعوة المباشر" : "Copy Direct Invite Link"}
-            </button>
-          </div>
-        </div>
-
-        {/* Players */}
-        <div className="glass-card p-6 animate-fade-in" style={{ marginBottom: 20 }}>
-          <h2 className="text-lg font-bold" style={{ marginBottom: 16, textAlign: isRTL ? "right" : "left" }}>{T.warriors[language]}</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {players.map((player, i) => (
-              <div
-                key={player.userId}
-                className={`player-row ${player.userId === userId ? "current-user" : ""}`}
-              >
-                <div className="player-avatar" style={{
-                  background: i === 0 ? "var(--grad-fire)" : "var(--grad-primary)",
-                  [isRTL ? "marginLeft" : "marginRight"]: 12
-                }}>
-                  {player.username.charAt(0).toUpperCase()}
-                </div>
-                <div style={{ flex: 1, textAlign: isRTL ? "right" : "left" }}>
-                  <div style={{ fontWeight: 600 }}>
-                    {player.username}
-                    {player.userId === userId && <span className="text-muted text-sm"> ({T.you[language]})</span>}
+              <div className={styles.inviteLink}>
+                <button type="button" className="btn btn-ghost" onClick={async () => {
+                  try { await navigator.clipboard.writeText(window.location.origin + "/lobby/" + gameId); addToast("success", isRTL ? "تم نسخ رابط المعركة!" : "Battle link copied!"); }
+                  catch { addToast("error", isRTL ? "تعذر نسخ الرابط." : "Could not copy the link."); }
+                }}>↗ {isRTL ? "نسخ رابط الدعوة" : "Copy invite link"}</button>
+              </div>
+            </section>
+            <section className={styles.surface} aria-labelledby="lobby-players">
+              <h2 className={styles.sectionHeading} id="lobby-players">{T.warriors[language]} <small>{players.length} {isRTL ? "في الغرفة" : "in the room"}</small></h2>
+              <div className={styles.playerList}>
+                {players.map(player => <div key={player.userId} className={styles.playerRow}>
+                  <span className={styles.avatar} aria-hidden="true">{player.username.charAt(0).toUpperCase()}</span>
+                  <div className={styles.playerName}><strong><bdi>{player.username}</bdi> {player.userId === userId && <small>({T.you[language]})</small>}</strong>
+                    <small>{player.userId === hostId ? T.host[language] : player.isBot ? (isRTL ? "لاعب آلي" : "AI player") : (isRTL ? "لاعب" : "Player")}</small>
                   </div>
-                  {player.userId === hostId && <div className="text-xs" style={{ color: "var(--clr-gold)" }}>👑 {T.host[language]}</div>}
-                </div>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: player.isConnected ? "var(--clr-success)" : "var(--clr-danger)" }} />
+                  <span className={styles.presence} data-connected={player.isConnected}><span className={styles.presenceDot} aria-hidden="true" /><span>{player.isConnected ? (isRTL ? "متصل" : "Connected") : (isRTL ? "يعيد الاتصال" : "Reconnecting")}</span></span>
+                </div>)}
               </div>
-            ))}
+            </section>
+            {mode === GameMode.Custom && customSettings && <section className={styles.surface} aria-label={isRTL ? "إعدادات المعركة المخصصة" : "Custom battle settings"}>
+              <h2 className={styles.sectionHeading}>{customSettings.name}</h2>
+              <p>{customSettings.rounds} {isRTL ? "جولات" : "rounds"} · {customSettings.timePerQuestion} {isRTL ? "ثانية لكل سؤال" : "seconds per question"}</p>
+              <p className="text-muted">{isRTL ? "الحد الأقصى للاعبين" : "Player limit"} {customSettings.maxPlayers} · {isRTL ? "القوى المتاحة" : "Available powers"} {customSettings.enabledPowerUps.length}</p>
+            </section>}
+            {isSpectating ? <p className={styles.wait}>{T.spectating[language]}</p> : isHost
+              ? <button type="button" className={`btn btn-primary ${styles.start}`} onClick={handleStart} disabled={starting || players.length < 1}>{starting ? (isRTL ? "جارٍ البدء…" : "Starting…") : T.startBattle[language]}</button>
+              : <p className={styles.wait} role="status">{T.waitingHost[language]}</p>}
           </div>
-        </div>
-
-        {mode === GameMode.Custom && customSettings && (
-          <section className="glass-card p-4 mb-5" aria-label={isRTL ? "إعدادات المعركة المخصصة" : "Custom battle settings"}>
-            <h2 className="font-bold mb-2">{customSettings.name}</h2>
-            <p>{customSettings.rounds} {isRTL ? "جولات" : "rounds"} · {customSettings.timePerQuestion} {isRTL ? "ثانية لكل سؤال" : "seconds per question"}</p>
-            <p>{isRTL ? "الحد الأقصى للاعبين" : "Player limit"} {customSettings.maxPlayers} · {isRTL ? "القوى المتاحة" : "Available powers"} {customSettings.enabledPowerUps.length}</p>
-          </section>
-        )}
-
-        {/* Start button (host only) */}
-        {isSpectating ? (
-          <div className="glass-card p-4 text-center text-muted" style={{ border: "1px solid var(--clr-primary)" }}>
-            {T.spectating[language]}
-          </div>
-        ) : isHost ? (
-          <button
-            className="btn btn-primary btn-lg w-full animate-pulse-glow"
-            onClick={handleStart}
-            disabled={starting || players.length < 1}
-            style={{ height: 60, fontSize: "1.2rem" }}
-          >
-            {starting ? "..." : `⚔️ ${T.startBattle[language]} (${players.length})`}
-          </button>
-        ) : (
-          <div className="glass-card p-4 text-center text-muted">
-            ⏳ {T.waitingHost[language]}
-          </div>
-        )}
-
-        <div style={{ marginTop: 24 }}>
-          <ChatWindow gameId={gameId} />
+          <aside className={styles.sideRail}><ChatWindow gameId={gameId} /></aside>
         </div>
       </div>
     </main>

@@ -5,7 +5,7 @@
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
-  color: #f4f6ff;
+  color: #f1e9d8;
 }
 .players {
   display: flex;
@@ -19,9 +19,10 @@
   align-items: center;
   gap: 8px 16px;
   padding: 12px 16px;
-  background: #161c2c;
-  border: 2px solid;
-  border-radius: 14px;
+  background: #17242f;
+  border: 1px solid;
+  border-inline-start-width: 4px;
+  border-radius: 10px;
 }
 .player strong {
   width: 100%;
@@ -29,21 +30,21 @@
 }
 .player span {
   font-size: 0.85rem;
-  color: #d4dbee;
+  color: #c7c3b5;
 }
 .questionCard {
   width: 100%;
   padding: clamp(18px, 4vw, 32px);
-  background: #111725;
-  border: 1px solid #425173;
-  border-radius: 20px;
+  background: #182732;
+  border: 1px solid #52616a;
+  border-radius: 12px;
 }
 .questionMeta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  color: #f9d774;
+  color: #e6b65c;
 }
 .timer {
   display: inline-flex;
@@ -53,7 +54,7 @@
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  border: 2px solid #f9d774;
+  border: 2px solid #e6b65c;
   color: #fff;
   font-weight: 800;
   font-size: 1.25rem;
@@ -77,9 +78,9 @@
   gap: 12px;
   min-height: 68px;
   padding: 14px 16px;
-  border: 2px solid #607397;
+  border: 1px solid #64717a;
   border-radius: 12px;
-  background: #202d47;
+  background: #1d303c;
   color: #fff;
   font: inherit;
   font-weight: 700;
@@ -89,8 +90,8 @@
   overflow-wrap: anywhere;
 }
 .answer:hover:not(:disabled) {
-  background: #314765;
-  border-color: #f9d774;
+  background: #2b404a;
+  border-color: #e6b65c;
 }
 .answer:disabled {
   cursor: default;
@@ -99,12 +100,12 @@
 .territoryChoices button:focus-visible,
 .actions button:focus-visible,
 .mapDetails summary:focus-visible {
-  outline: 3px solid #f9d774;
+  outline: 3px solid #e6b65c;
   outline-offset: 4px;
 }
 .selectedAnswer {
-  background: #104757;
-  border-color: #45e3ed;
+  background: #4b4430;
+  border-color: #e6b65c;
   color: #fff;
 }
 .answerLetter {
@@ -114,18 +115,18 @@
   flex: 0 0 32px;
   width: 32px;
   height: 32px;
-  border-radius: 50%;
-  background: #101827;
+  border-radius: 6px;
+  background: #101923;
   color: #fff;
 }
 .status {
   margin-top: 16px;
-  color: #f4de9a;
+  color: #e0c58f;
   line-height: 1.7;
 }
 .progress {
   margin-top: 8px;
-  color: #c0cce5;
+  color: #c3bcad;
   font-size: 0.9rem;
 }
 .turnPanel {
@@ -135,21 +136,21 @@
   gap: 12px;
   flex-wrap: wrap;
   padding: 16px;
-  border: 1px solid #53617b;
-  background: #172237;
-  border-radius: 14px;
+  border: 1px solid #52616a;
+  background: #17242f;
+  border-radius: 10px;
   line-height: 1.65;
 }
 .mapDetails {
-  border: 1px solid #425173;
-  border-radius: 14px;
+  border: 1px solid #52616a;
+  border-radius: 10px;
   padding: 12px;
-  background: #111725;
+  background: #182732;
 }
 .mapDetails summary {
   cursor: pointer;
   padding: 6px;
-  color: #d4e3ff;
+  color: #d8d0bf;
   font-weight: 600;
 }
 .mapDetails[open] summary {
@@ -180,3 +181,7 @@
     flex: 1 1 140px;
   }
 }
+
+.territoryChoices button, .actions button { border: 1px solid #64717a; border-radius: 7px; padding: 10px 14px; background: #1d303c; color: #f1e9d8; font: inherit; cursor: pointer; }
+.territoryChoices button:hover, .actions button:hover { border-color: #e6b65c; background: #2b404a; }
+@media (prefers-reduced-motion: reduce) { .root * { animation: none !important; transition: none !important; } }

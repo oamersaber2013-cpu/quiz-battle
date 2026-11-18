@@ -1,5 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/cairo";
+import "@fontsource-variable/outfit";
+import "@fontsource-variable/newsreader";
 import "./globals.css";
+import { AccessibleShell } from "@/components/AccessibleShell";
 import { ToastContainer } from "@/components/ToastContainer";
 
 export const metadata: Metadata = {
@@ -20,15 +24,13 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#08090d",
+  themeColor: "#101923",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" dir="ltr">
+    <html lang="en" dir="ltr" data-scroll-behavior="smooth">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -42,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        {children}
+        <AccessibleShell>{children}</AccessibleShell>
         <ToastContainer />
       </body>
     </html>

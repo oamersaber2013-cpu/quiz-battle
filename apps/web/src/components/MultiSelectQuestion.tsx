@@ -12,6 +12,7 @@ interface MultiSelectQuestionProps {
   selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: LastAnswerResult | null;
   language: "en" | "ar";
+  disabled?: boolean;
   onSubmit: (selectedIndices: number[]) => void;
 }
 
@@ -22,6 +23,7 @@ export function MultiSelectQuestion({
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   onSubmit,
 }: MultiSelectQuestionProps) {
   const isAr = language === "ar";
@@ -31,7 +33,7 @@ export function MultiSelectQuestion({
   }, [question.id, selectedAnswer]);
   const hasAnswered = selectedAnswer !== null;
   const showResult = status === GameStatus.AnswerReveal || !!lastAnswerResult;
-  const canAnswer = status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
   const options = isAr
@@ -111,12 +113,12 @@ export function MultiSelectQuestion({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
-              whileHover={!hasAnswered && !showResult ? { scale: 1.02 } : {}}
-              whileTap={!hasAnswered && !showResult ? { scale: 0.98 } : {}}
+              whileHover={canAnswer ? { scale: 1.02 } : {}}
+              whileTap={canAnswer ? { scale: 0.98 } : {}}
               disabled={!canAnswer}
               onClick={() => toggleSelection(index)}
               className={`p-5 rounded-2xl border-2 font-bold text-lg transition-all ${borderColor} ${bgColor} ${textColor} ${
-                hasAnswered || showResult ? "cursor-default" : "hover:border-amber-500/50"
+                !canAnswer ? "cursor-default" : "hover:border-amber-500/50"
               }`}
             >
               <div className="flex items-center gap-3">
@@ -166,12 +168,12 @@ export function MultiSelectQuestion({
         <motion.button
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          whileHover={selectedIndices.length > 0 ? { scale: 1.02 } : {}}
-          whileTap={selectedIndices.length > 0 ? { scale: 0.98 } : {}}
+          whileHover={canAnswer && selectedIndices.length > 0 ? { scale: 1.02 } : {}}
+          whileTap={canAnswer && selectedIndices.length > 0 ? { scale: 0.98 } : {}}
           disabled={selectedIndices.length === 0 || !canAnswer}
           onClick={handleSubmit}
           className={`w-full p-4 rounded-2xl font-bold text-lg transition-all ${
-            selectedIndices.length > 0
+            canAnswer && selectedIndices.length > 0
               ? "bg-amber-500 text-white hover:bg-amber-600"
               : "bg-gray-700 text-gray-400 cursor-not-allowed"
           }`}

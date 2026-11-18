@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import { motion } from "framer-motion";
 import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
 import type { LastAnswerResult } from "@/store/gameStore";
@@ -12,6 +12,7 @@ interface FillBlankQuestionProps {
   selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: LastAnswerResult | null;
   language: "en" | "ar";
+  disabled?: boolean;
   onAnswer: (answer: string) => void;
 }
 
@@ -22,16 +23,18 @@ export function FillBlankQuestion({
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   onAnswer,
 }: FillBlankQuestionProps) {
   const isAr = language === "ar";
+  const questionTextId = useId();
   const [inputValue, setInputValue] = useState(() => typeof selectedAnswer === "string" ? selectedAnswer : "");
   useEffect(() => {
     setInputValue(typeof selectedAnswer === "string" ? selectedAnswer : "");
   }, [question.id, selectedAnswer]);
   const hasAnswered = selectedAnswer !== null;
   const showResult = status === GameStatus.AnswerReveal || !!lastAnswerResult;
-  const canAnswer = status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
   const correctAnswer = lastAnswerResult?.correctAnswer;
@@ -63,7 +66,7 @@ export function FillBlankQuestion({
     <div className="w-full">
       {/* Question Text with Input */}
       <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 mb-6">
-        <div className="text-xl md:text-2xl font-bold text-white text-center leading-relaxed">
+        <div id={questionTextId} className="text-xl md:text-2xl font-bold text-white text-center leading-relaxed">
           {textParts.map((part: string, index: number) => (
             <span key={index}>
               {part}
@@ -72,6 +75,8 @@ export function FillBlankQuestion({
                   {!showResult ? (
                     <input
                       type="text"
+                      aria-label={isAr ? "إجابتك" : "Your answer"}
+                      aria-describedby={questionTextId}
                       value={inputValue}
                       onChange={(e) => canAnswer && setInputValue(e.target.value)}
                       disabled={!canAnswer}
@@ -81,7 +86,7 @@ export function FillBlankQuestion({
                           ? "cursor-default"
                           : "border-gray-600"
                       }`}
-                      autoFocus
+                      autoFocus={canAnswer}
                     />
                   ) : (
                     <span
@@ -108,12 +113,14 @@ export function FillBlankQuestion({
         <div className="mb-6">
           <input
             type="text"
+            aria-label={isAr ? "إجابتك" : "Your answer"}
+            aria-describedby={questionTextId}
             value={inputValue}
             onChange={(e) => canAnswer && setInputValue(e.target.value)}
             disabled={!canAnswer}
             placeholder={isAr ? "اكتب إجابتك هنا..." : "Type your answer here..."}
             className="w-full px-4 py-4 text-lg rounded-2xl border-2 border-gray-700 bg-gray-800 text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 text-center transition-colors"
-            autoFocus
+            autoFocus={canAnswer}
           />
         </div>
       )}
@@ -123,12 +130,12 @@ export function FillBlankQuestion({
         <motion.button
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          whileHover={inputValue.trim() ? { scale: 1.02 } : {}}
-          whileTap={inputValue.trim() ? { scale: 0.98 } : {}}
+          whileHover={canAnswer && inputValue.trim() ? { scale: 1.02 } : {}}
+          whileTap={canAnswer && inputValue.trim() ? { scale: 0.98 } : {}}
           disabled={!inputValue.trim() || !canAnswer}
           onClick={handleSubmit}
           className={`w-full p-4 rounded-2xl font-bold text-lg transition-all ${
-            inputValue.trim()
+            canAnswer && inputValue.trim()
               ? "bg-amber-500 text-white hover:bg-amber-600"
               : "bg-gray-700 text-gray-400 cursor-not-allowed"
           }`}

@@ -1,4 +1,5 @@
 "use client";
+import styles from "./ActiveExperience.module.css";
 import { getServerTime } from "@/lib/gameClock";
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -10,6 +11,14 @@ import { QuestionReview } from "./QuestionReview";
 import { EmoteSystem } from "./EmoteSystem";
 import { useSound } from "@/hooks/useSound";
 import { emitAnswer, emitChaosStartVoting, emitChaosVote, getSocket } from "@/lib/socket";
+
+const CHAOS_STATE_LABELS = {
+  CALM: { en: "Calm", ar: "هادئ" },
+  UNSTABLE: { en: "Unstable", ar: "غير مستقر" },
+  CHAOTIC: { en: "Chaotic", ar: "فوضوي" },
+  INSANITY: { en: "Insanity", ar: "جنون" },
+  ANARCHY: { en: "Anarchy", ar: "فوضى عارمة" },
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHAOS GAME COMPONENT - Full integration of CHAOS mode
@@ -159,7 +168,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
 
   return (
     <div 
-      className="min-h-screen text-white overflow-hidden relative"
+      className={`${styles.chaos} min-h-screen text-white overflow-hidden relative`}
       style={{
         background: chaosState?.state === "ANARCHY" 
           ? "linear-gradient(135deg, #1a0f1a 0%, #0f0f1a 50%, #1a0f1a 100%)"
@@ -218,17 +227,11 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
           animate={{ x: 0, opacity: 1 }}
         >
           <div 
-            className="px-4 py-2 rounded-xl font-bold text-sm border-2"
-            style={{
-              background: "rgba(0,0,0,0.8)",
-              borderColor: chaosVisuals.color || "#ff00ff",
-              color: chaosVisuals.color || "#ff00ff",
-              boxShadow: `0 0 20px ${chaosVisuals.color || "#ff00ff"}40`,
-            }}
+            className={`${styles.chaosBadge} px-4 py-2 rounded-xl font-bold text-sm border-2`}
           >
             <div className="flex items-center gap-2">
               <span>{chaosState.state === "ANARCHY" ? "💀" : chaosState.state === "INSANITY" ? "🔥" : "🌀"}</span>
-              <span>{chaosState.state}</span>
+              <span>{CHAOS_STATE_LABELS[chaosState.state][language]}</span>
               <span className="text-xs opacity-70">({chaosState.level}%)</span>
             </div>
             {/* Chaos meter bar */}
@@ -236,7 +239,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
               <motion.div
                 className="h-full rounded-full"
                 style={{ 
-                  background: `linear-gradient(90deg, #00e676 0%, #ffd700 50%, #ff4757 100%)`,
+                  background: "#e6b65c",
                 }}
                 initial={{ width: 0 }}
                 animate={{ width: `${chaosState.level}%` }}
@@ -373,7 +376,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
                     {isAr ? "الوقت المتبقي" : "Time Remaining"}
                   </span>
                   <span className={`text-2xl font-bold ${timeLeft <= 5 ? "text-red-500" : "text-amber-400"}`}>
-                    {timeLeft}s
+                    {timeLeft}{isAr ? "ث" : "s"}
                   </span>
                 </div>
                 <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
@@ -642,8 +645,8 @@ function VotingInterface({ voting, language, onVote, hasVoted, canVote, pending,
   const isAr = language === "ar";
   
   const options = {
-    FORGIVE: { emoji: "😇", label: { en: "FORGIVE", ar: "سامح" }, color: "#00e676" },
-    REDUCE_SCORE: { emoji: "👎", label: { en: "REDUCE SCORE", ar: "خفض النقاط" }, color: "#ff9800" },
+    FORGIVE: { emoji: "😇", label: { en: "FORGIVE", ar: "سامح" }, color: "#c8d4cd" },
+    REDUCE_SCORE: { emoji: "👎", label: { en: "REDUCE SCORE", ar: "خفض النقاط" }, color: "#e6b65c" },
   } as const;
   
   return (
@@ -654,13 +657,9 @@ function VotingInterface({ voting, language, onVote, hasVoted, canVote, pending,
       className="mb-4"
     >
       <div 
-        className="p-4 rounded-2xl"
-        style={{
-          background: "linear-gradient(135deg, #2d1f3d 0%, #1a0f1a 100%)",
-          border: "2px solid #ff00ff",
-        }}
+        className={`${styles.chaosBallot} p-4 rounded-2xl`}
       >
-        <h3 className="text-xl font-bold text-center mb-2" style={{ color: "#ff00ff" }}>
+        <h3 className="text-xl font-bold text-center mb-2" style={{ color: "#e6b65c" }}>
           🗳️ {isAr ? "التصويت على العقاب" : "VOTE ON PUNISHMENT"}
         </h3>
         
@@ -669,7 +668,7 @@ function VotingInterface({ voting, language, onVote, hasVoted, canVote, pending,
         </p>
         
         <div className="text-center mb-6">
-          <span className="text-2xl font-bold text-amber-400">{seconds}s</span>
+          <span className="text-2xl font-bold text-amber-400">{seconds}{isAr ? "ث" : "s"}</span>
         </div>
         
         {hasVoted ? (
@@ -690,8 +689,8 @@ function VotingInterface({ voting, language, onVote, hasVoted, canVote, pending,
                 onClick={() => onVote(vote)}
                 className="btn btn-secondary"
                 style={{
-                  background: "rgba(0,0,0,0.5)",
-                  border: `2px solid ${opt.color}`,
+                  background: "#101923",
+                  border: `1px solid ${opt.color}`,
                   color: opt.color,
                 }}
               >

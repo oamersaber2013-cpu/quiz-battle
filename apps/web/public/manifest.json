@@ -4,8 +4,8 @@
   "description": "Real-time multiplayer quiz game with strategic power-ups",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0e27",
-  "theme_color": "#08090d",
+  "background_color": "#101923",
+  "theme_color": "#101923",
   "icons": [
     {
       "src": "/icon-192.svg",

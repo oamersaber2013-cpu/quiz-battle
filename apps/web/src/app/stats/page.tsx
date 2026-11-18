@@ -2,58 +2,40 @@
 
 import Link from "next/link";
 import { useGameStore } from "@/store/gameStore";
-import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { usePlayerStats } from "@/hooks/usePlayerStats";
+import { AccountShell, AccountState } from "@/components/account/AccountShell";
+import styles from "@/components/account/Account.module.css";
 
-const modes: Record<string, [string, string]> = {
-  classic: ["Classic", "كلاسيكي"], survival: ["Survival", "البقاء"], conquest: ["Conquest", "الغزو"],
-  chaos: ["Chaos", "الفوضى"], custom: ["Custom", "مخصص"],
-};
-
+const modes: Record<string, [string, string]> = { classic: ["Classic", "كلاسيكي"], survival: ["Survival", "البقاء"], conquest: ["Conquest", "الغزو"], chaos: ["Chaos", "الفوضى"], custom: ["Custom", "مخصص"] };
 export default function StatsPage() {
-  const language = useGameStore(state => state.language);
-  const username = useGameStore(state => state.username);
-  const { ready, signedIn, stats, failed, retry } = usePlayerStats();
-  useDocumentLocale(language);
+  const { language, username } = useGameStore();
+  const { ready, signedIn, stats, failed, needsSignIn, retry } = usePlayerStats();
   const ar = language === "ar";
   const number = new Intl.NumberFormat(language);
   const date = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
-  return (
-    <main className="page" dir={ar ? "rtl" : "ltr"} style={{ padding: "24px 16px" }}>
-      <div style={{ width: "100%", maxWidth: 820, margin: "0 auto", display: "grid", gap: 20 }}>
-        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <h1>{ar ? "إحصائيات اللاعب" : "Player statistics"}</h1>
-          <Link className="btn btn-secondary" href="/">{ar ? "الرئيسية" : "Home"}</Link>
-        </header>
-        {ready && !signedIn ? <p>{ar ? "ادخل اللعبة لعرض إحصائياتك." : "Enter the game to see your statistics."}</p>
-          : failed ? <div role="alert">{ar ? "تعذر تحميل الإحصائيات." : "Statistics could not be loaded."} <button className="btn btn-secondary" onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button></div>
-          : !stats ? <p role="status">{ar ? "جارٍ تحميل الإحصائيات…" : "Loading statistics…"}</p>
-          : <>
-            <h2>{username}</h2>
-            <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 12 }}>
-              {[
-                [ar ? "المعارك المكتملة" : "Completed battles", number.format(stats.totalGames)],
-                [ar ? "الانتصارات" : "Wins", number.format(stats.wins)],
-                [ar ? "مجموع النقاط" : "Total score", number.format(stats.totalScore)],
-                [ar ? "دقة الإجابة" : "Answer accuracy", stats.totalAnswers ? new Intl.NumberFormat(language, { style: "percent" }).format(stats.correctAnswers / stats.totalAnswers) : "—"],
-              ].map(([label, value]) => <div className="glass-card p-4" key={label}><dt>{label}</dt><dd style={{ margin: 0, fontWeight: 750, fontSize: "1.4rem" }}>{value}</dd></div>)}
-            </dl>
-            <section className="glass-card p-4">
-              <h2>{ar ? "أحدث المعارك" : "Recent battles"}</h2>
-              {stats.history.length === 0 && <p>{ar ? "ستظهر نتائجك هنا بعد إكمال أول معركة." : "Finish your first battle to see your results here."}</p>}
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {stats.history.map(game => <li key={game.id} style={{ paddingBlock: 12, borderBottom: "1px solid var(--clr-border)" }}>
-                  <Link href={`/results/${game.id}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", color: "inherit" }}>
-                    <strong>{modes[game.mode]?.[ar ? 1 : 0] ?? game.mode}</strong>
-                    <time dateTime={game.endedAt}>{date.format(new Date(game.endedAt))}</time>
-                    <span>{ar ? "المركز" : "Rank"} <bdi>{number.format(game.rank)} / {number.format(game.playerCount)}</bdi></span>
-                    <span>{number.format(game.score)} {ar ? "نقطة" : "points"}</span>
-                  </Link>
-                </li>)}
-              </ul>
-            </section>
-          </>}
-      </div>
-    </main>
-  );
+  return <AccountShell title={ar ? "إحصائيات اللاعب" : "Player statistics"} active="stats">
+    {ready && !signedIn ? <AccountState title={ar ? "ابدأ قصتك في المعركة" : "Start your arena story"}>
+      <p>{ar ? "ادخل اللعبة لعرض إحصائياتك." : "Enter the game to see your statistics."}</p><div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "العب الآن" : "Play now"}</Link><Link href="/login" className={styles.secondary}>{ar ? "تسجيل الدخول" : "Sign in"}</Link></div>
+    </AccountState> : failed ? <AccountState error title={needsSignIn ? (ar ? "سجّل الدخول مجدداً" : "Sign in again") : (ar ? "تعذر تحميل الإحصائيات" : "Statistics could not be loaded")}>
+      <p>{needsSignIn ? (ar ? "انتهت صلاحية جلستك. سجّل الدخول لعرض نتائجك." : "Your session has expired. Sign in to view your results.") : (ar ? "حاول مجدداً. ستبقى نتائجك المحفوظة متاحة عند استعادة الاتصال." : "Try again. Your saved results will be available when your connection returns.")}</p>
+      <div className={styles.actions}>{needsSignIn ? <Link href="/login" className={styles.primary}>{ar ? "تسجيل الدخول" : "Sign in"}</Link> : <button className={styles.secondary} onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button>}</div>
+    </AccountState> : !stats ? <AccountState loading title={ar ? "جارٍ تحميل الإحصائيات…" : "Loading statistics…"} /> : <div className={styles.stack}>
+      <section className={styles.panel} aria-labelledby="performance-heading"><div className={styles.sectionHeader} style={{ marginTop: 0 }}><h2 id="performance-heading">{username}</h2><span className={styles.badge}>{ar ? "المعارك المكتملة فقط" : "Completed matches only"}</span></div>
+        <dl className={styles.metrics}>{[
+          [ar ? "المعارك المكتملة" : "Completed battles", number.format(stats.totalGames)],
+          [ar ? "الانتصارات" : "Wins", number.format(stats.wins)],
+          [ar ? "مجموع النقاط" : "Total score", number.format(stats.totalScore)],
+          [ar ? "دقة الإجابة" : "Answer accuracy", stats.totalAnswers ? new Intl.NumberFormat(language, { style: "percent" }).format(stats.correctAnswers / stats.totalAnswers) : "—"],
+        ].map(([label, value]) => <div key={label} className={styles.metric}><dt>{label}</dt><dd><bdi>{value}</bdi></dd></div>)}</dl>
+      </section>
+      <section className={styles.panel} aria-labelledby="recent-heading"><h2 id="recent-heading">{ar ? "أحدث المعارك" : "Recent battles"}</h2>
+        {!stats.history.length ? <><p className={styles.muted}>{ar ? "ستظهر نتائجك هنا بعد إكمال أول معركة." : "Finish your first battle to see your results here."}</p><div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "ابدأ معركة" : "Start a battle"}</Link></div></>
+          : <ul className={styles.history}>{stats.history.map(game => <li key={game.id}><Link href={`/results/${game.id}`}>
+            <div><strong>{modes[game.mode]?.[ar ? 1 : 0] ?? game.mode}</strong><time dateTime={game.endedAt}>{Number.isFinite(new Date(game.endedAt).getTime()) ? date.format(new Date(game.endedAt)) : "—"}</time></div>
+            <div>{ar ? "المركز" : "Rank"} <bdi>{number.format(game.rank)} / {number.format(game.playerCount)}</bdi><small>{ar ? "عرض النتيجة" : "View result"} <span aria-hidden="true">{ar ? "←" : "→"}</span></small></div>
+            <div className={styles.historyScore}><bdi>{number.format(game.score)}</bdi><small>{ar ? "نقطة" : "points"}</small></div>
+          </Link></li>)}</ul>}
+      </section>
+    </div>}
+  </AccountShell>;
 }

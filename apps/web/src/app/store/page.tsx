@@ -1,30 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { useGameStore } from "@/store/gameStore";
-
-const T = {
-  title: { en: "The Royal Treasury", ar: "الخزينة الملكية" },
-  unavailable: { en: "Purchases are currently unavailable.", ar: "عمليات الشراء غير متاحة حاليًا." },
-  home: { en: "Back to Home", ar: "العودة إلى الرئيسية" },
-};
+import { AccountShell } from "@/components/account/AccountShell";
+import styles from "@/components/account/Account.module.css";
 
 export default function StorePage() {
-  const language = useGameStore((state) => state.language);
-  useDocumentLocale(language);
-
-  return (
-    <main className="page" dir={language === "ar" ? "rtl" : "ltr"} style={{ padding: "40px 20px" }}>
-      <div className="container" style={{ maxWidth: 520 }}>
-        <div className="glass-card p-8 text-center">
-          <h1 className="text-3xl font-black mb-4">{T.title[language]}</h1>
-          <p className="text-muted mb-6">{T.unavailable[language]}</p>
-          <Link href="/" className="btn btn-primary">
-            {T.home[language]}
-          </Link>
-        </div>
-      </div>
-    </main>
-  );
+  const language = useGameStore(state => state.language);
+  const ar = language === "ar";
+  return <AccountShell title={ar ? "الخزينة الملكية" : "The Royal Treasury"}>
+    <section className={`${styles.panel} ${styles.paper} ${styles.outcome}`}>
+      <h2>{ar ? "عمليات الشراء غير متاحة حاليًا." : "Purchases are currently unavailable."}</h2>
+      <p>{ar ? "يمكنك العودة إلى الساحة لإنشاء معركة أو الانضمام إلى الأصدقاء." : "Return to the arena to create a battle or join your friends."}</p>
+      <div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "العودة إلى الرئيسية" : "Back to Home"}</Link></div>
+    </section>
+  </AccountShell>;
 }

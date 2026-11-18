@@ -18,6 +18,7 @@ interface OrderingQuestionProps {
   selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: LastAnswerResult | null;
   language: "en" | "ar";
+  disabled?: boolean;
   onSubmit: (orderedIndices: number[]) => void;
 }
 
@@ -28,6 +29,7 @@ export function OrderingQuestion({
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   onSubmit,
 }: OrderingQuestionProps) {
   const isAr = language === "ar";
@@ -59,7 +61,7 @@ export function OrderingQuestion({
 
   const hasAnswered = selectedAnswer !== null;
   const showResult = status === GameStatus.AnswerReveal || !!lastAnswerResult;
-  const canAnswer = status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
   const correctOrder = lastAnswerResult?.correctOrder || [];
@@ -123,7 +125,7 @@ export function OrderingQuestion({
                 key={item.id}
                 value={item}
                 dragListener={canAnswer}
-                className={`relative ${hasAnswered || showResult ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
+                className={`relative ${!canAnswer ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <motion.div
                   layout
@@ -223,12 +225,12 @@ export function OrderingQuestion({
         <motion.button
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          whileHover={!hasAnswered ? { scale: 1.02 } : {}}
-          whileTap={!hasAnswered ? { scale: 0.98 } : {}}
+          whileHover={canAnswer ? { scale: 1.02 } : {}}
+          whileTap={canAnswer ? { scale: 0.98 } : {}}
           disabled={!canAnswer}
           onClick={handleSubmit}
           className={`w-full p-4 rounded-2xl font-bold text-lg transition-all ${
-            !hasAnswered
+            canAnswer
               ? "bg-amber-500 text-white hover:bg-amber-600"
               : "bg-gray-700 text-gray-400 cursor-not-allowed"
           }`}

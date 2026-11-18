@@ -4,6 +4,7 @@ module.exports = {
   roots: ["<rootDir>/src"],
   testMatch: ["**/__tests__/**/*.test.ts"],
   moduleNameMapper: {
+    "\\.module\\.css$": "<rootDir>/src/__tests__/styleMock.js",
     "^@/(.*)$": "<rootDir>/src/$1",
   },
   transform: {

@@ -62,7 +62,7 @@ test("a public frontend never falls back to the visitor's local network", async 
   try {
     await page.goto(`${publicOrigin}/spectate`);
     await expect(page.getByRole("heading", { name: /Watch Live Matches|شاهد المعارك المباشرة/ })).toBeVisible();
-    await expect(page.getByText(/No active battles at the moment|لا توجد معارك نشطة/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /The arena is quiet|الساحة هادئة الآن/ })).toBeVisible();
     expect(browserErrors).toEqual([]);
     expect(apiRequests).toHaveLength(1);
     expect(localRequests).toEqual([]);

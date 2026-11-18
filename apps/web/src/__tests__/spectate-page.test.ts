@@ -44,7 +44,7 @@ it("localizes the Arabic spectator list and document direction", async () => {
 it("creates a guest identity before taking an anonymous visitor to spectate", async () => {
   await act(async () => { view = create(createElement(SpectatePage)); });
   mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ userId: "guest-viewer", username: "Viewer", token: "viewer-token", isGuest: true }) });
-  const watch = view.root.findAllByType("button").find((button: any) => JSON.stringify(button.props.children).includes("👁️"));
+  const watch = view.root.findAllByType("button").find((button: any) => button.props["aria-label"] === "مشاهدة الغزو");
   await act(async () => { await watch.props.onClick(); });
   expect(mockFetch).toHaveBeenLastCalledWith(expect.stringContaining("/api/auth/guest"), expect.objectContaining({ method: "POST" }));
   expect(useGameStore.getState()).toMatchObject({ userId: "guest-viewer", token: "viewer-token", isGuest: true });

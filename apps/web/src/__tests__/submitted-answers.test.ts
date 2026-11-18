@@ -15,6 +15,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   useSearchParams: () => ({ get: () => mockSpectating ? "true" : null }),
 }));
+jest.mock("next/link", () => ({ __esModule: true, default: (props: any) => require("react").createElement("a", props, props.children) }));
 jest.mock("framer-motion", () => ({
   motion: { div: "div", button: "button", span: "span" },
   AnimatePresence: "div",
@@ -77,6 +78,15 @@ it("submits the actual typed text through the game page and preserves it in the 
   click("Submit Answer");
   expect(emitAnswer).toHaveBeenCalledWith("battle-1", "question-1", "Doha");
   expect(useGameStore.getState().selectedAnswer).toBe("Doha");
+});
+
+it("finishes the next-round transition while the live timer continues updating", () => {
+  useGameStore.getState().setQuestion({ id: "round-two", text: "Second round question", options: ["Alpha", "Beta"],
+    type: QuestionType.MultipleChoice, category: "general", difficulty: Difficulty.Novice, timeLimit: 30 }, 2, 8);
+  act(() => { view = create(createElement(GamePage)); });
+  for (let tick = 0; tick < 24; tick++) act(() => jest.advanceTimersByTime(250));
+  expect(JSON.stringify(view.toJSON())).toContain("Second round question");
+  expect(view.root.findAllByType("button").some((item: any) => text(item.props.children).includes("Alpha"))).toBe(true);
 });
 
 it("submits every selected index rather than converting a multi-select answer to zero", () => {
@@ -193,4 +203,29 @@ it.each([QuestionType.ImageQuestion, QuestionType.AudioQuestion, QuestionType.Tr
     act(() => choice.props.onClick());
   } else click("Alpha");
   expect(emitAnswer).not.toHaveBeenCalled();
+});
+
+it.each(["spectator", "frozen", "eliminated"])("disables dedicated answer controls for a %s while preserving a typed draft", reason => {
+  mockSpectating = reason === "spectator";
+  renderQuestion(QuestionType.FillBlank, { text: "The capital is [BLANK]", options: [] });
+  if (reason !== "spectator") {
+    act(() => view.root.findByType("input").props.onChange({ target: { value: "Doha" } }));
+    act(() => useGameStore.setState(reason === "frozen"
+      ? { activeEffects: [{ type: PowerUpType.Freeze, sourceUserId: "other", targetUserId: "player-1", expiresAt: Date.now() + 5000 }] }
+      : { currentPlayer: { userId: "player-1", username: "Player", score: 0, rank: 1, streak: 0, isConnected: true, powerUpInventory: [], isEliminated: true } }));
+  }
+  const input = view.root.findByType("input");
+  const submit = view.root.findAllByType("button").find((button: any) => text(button.props.children).includes("Submit Answer"));
+  expect(input.props.disabled).toBe(true);
+  expect(submit.props.disabled).toBe(true);
+  act(() => input.props.onChange({ target: { value: "Edited while blocked" } }));
+  act(() => submit.props.onClick());
+  expect(view.root.findByType("input").props.value).toBe(reason === "spectator" ? "" : "Doha");
+  expect(emitAnswer).not.toHaveBeenCalled();
+  if (reason === "frozen") {
+    act(() => useGameStore.setState({ activeEffects: [] }));
+    expect(view.root.findByType("input").props.disabled).toBe(false);
+    click("Submit Answer");
+    expect(emitAnswer).toHaveBeenCalledWith("battle-1", "question-1", "Doha");
+  }
 });

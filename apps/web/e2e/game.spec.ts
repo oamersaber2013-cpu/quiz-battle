@@ -69,7 +69,7 @@ test("joins by keyboard and announces an invalid room code", async ({ page }) =>
   await openJoin.focus();
   await page.keyboard.press("Enter");
   const code = page.getByRole("textbox", { name: /Join Code/ });
-  const join = page.getByRole("button", { name: /Join Code/ });
+  const join = page.getByRole("button", { name: "Join room", exact: true });
   await expect(code).toBeFocused();
   await expect(join).toBeDisabled();
   await code.fill("ab12");
@@ -93,22 +93,31 @@ test("joins by keyboard and announces an invalid room code", async ({ page }) =>
   await expect(openJoin).toBeFocused();
 });
 
-test("recovers the same page after losing the connection", async ({ page, context }) => {
-  await page.goto("/stats");
-  await page.evaluate(async () => {
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) await new Promise<void>(resolve => {
-      navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
+for (const language of ["en", "ar"] as const) {
+  test(`returns to the same URL after an offline reload in ${language}`, async ({ page, context }) => {
+    const arabic = language === "ar";
+    const url = "/stats?view=history#last-match";
+    await page.evaluate(lang => localStorage.setItem("quiz-battle-storage", JSON.stringify({ state: { language: lang }, version: 0 })), language);
+    await page.goto(url);
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) await new Promise<void>(resolve => {
+        navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
+      });
     });
+    await context.setOffline(true);
+    try {
+      await page.reload();
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await expect(page.locator("html")).toHaveAttribute("dir", arabic ? "rtl" : "ltr");
+      await expect(page.getByRole("heading", { name: arabic ? "انقطع الاتصال" : "Connection interrupted" })).toBeVisible();
+      await page.getByRole("link", { name: arabic ? "إعادة المحاولة" : "Retry" }).click();
+      await expect(page.getByRole("status")).toHaveText(arabic ? /تعذّر الاتصال/ : /Still unable to connect/);
+      await expect(page).toHaveURL(/\/stats\?view=history#last-match$/);
+    } finally {
+      await context.setOffline(false);
+    }
+    await expect(page.getByRole("heading", { name: arabic ? "إحصائيات اللاعب" : "Player statistics" })).toBeVisible({ timeout: 15000 });
+    await expect(page).toHaveURL(/\/stats\?view=history#last-match$/);
   });
-  await context.setOffline(true);
-  try {
-    await page.reload();
-    await expect(page.getByRole("link", { name: /Retry/ })).toBeVisible();
-  } finally {
-    await context.setOffline(false);
-  }
-  await page.getByRole("link", { name: /Retry/ }).click();
-  await expect(page.getByRole("heading", { name: "Player statistics" })).toBeVisible();
-  await expect(page).toHaveURL(/\/stats$/);
-});
+}

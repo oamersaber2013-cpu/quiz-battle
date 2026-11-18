@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/store/gameStore";
 import { getApiOrigin } from "@/lib/apiOrigin";
+import { validateInviteReturnPath } from "@/lib/roomInvites";
 import { connectSocket } from "@/lib/socket";
 import { AccountShell } from "./AccountShell";
 import styles from "./Account.module.css";
@@ -21,7 +22,14 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
+  const [inviteReturnPath, setInviteReturnPath] = useState<string | null>(null);
+  useEffect(() => {
+    const destination = typeof window !== "undefined"
+      ? validateInviteReturnPath(new URLSearchParams(window.location?.search).get("returnTo")) : null;
+    setInviteReturnPath(destination);
+    if (destination) useGameStore.getState().setLanguage(new URLSearchParams(destination.slice(2)).get("lang") as "en" | "ar");
+    setReady(true);
+  }, [mode]);
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const submitting = useRef(false);
@@ -64,7 +72,7 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
       setAuth({ ...data, isGuest: false });
       connectSocket(data.userId, data.username, data.token, false);
       addToast("success", ar ? "أهلاً بك في سيف المعرفة." : "Welcome to Sword of Knowledge.");
-      router.push("/");
+      router.push(inviteReturnPath || "/");
     } catch {
       setError({ message: ar ? "تعذر الاتصال بالخادم. تحقق من اتصالك وحاول مجدداً." : "We could not reach the server. Check your connection and try again." });
     } finally {
@@ -117,9 +125,9 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
         </form>
         <div className={styles.formFooter}>
           <p>{register ? (ar ? "لديك حساب بالفعل؟" : "Already have an account?") : (ar ? "جديد في سيف المعرفة؟" : "New to Sword of Knowledge?")} {" "}
-            <Link href={register ? "/login" : "/register"} className={styles.textLink}>{register ? (ar ? "سجّل الدخول" : "Sign in") : (ar ? "أنشئ حساباً" : "Create an account")}</Link>
+            <Link href={`${register ? "/login" : "/register"}${inviteReturnPath ? `?returnTo=${encodeURIComponent(inviteReturnPath)}` : ""}`} className={styles.textLink}>{register ? (ar ? "سجّل الدخول" : "Sign in") : (ar ? "أنشئ حساباً" : "Create an account")}</Link>
           </p>
-          <Link href="/" className={styles.textLink}>{ar ? "المتابعة كضيف" : "Continue as guest"}</Link>
+          <Link href={inviteReturnPath || "/"} className={styles.textLink}>{ar ? "المتابعة كضيف" : "Continue as guest"}</Link>
         </div>
       </section>
       <aside className={`${styles.panel} ${styles.paper}`}>

@@ -4,12 +4,13 @@ import { PowerUpSelection } from "@/components/PowerUpSelection";
 import { ChatWindow } from "@/components/ChatWindow";
 import { useGameStore } from "@/store/gameStore";
 const { act, create } = require("react-test-renderer");
-const mockSocket = { emit: jest.fn(), on: jest.fn(), off: jest.fn() };
+const mockSocket = { connected: true, emit: jest.fn(), on: jest.fn(), off: jest.fn() };
 jest.mock("@/lib/socket", () => ({ getSocket: () => mockSocket }));
 let view: any;
 const text = (value: any): string => typeof value === "string" ? value : Array.isArray(value) ? value.map(text).join("") : value?.props ? text(value.props.children) : "";
 const button = (label: string) => view.root.findAllByType("button").find((item: any) => text(item.props.children).includes(label));
 beforeEach(() => {
+  mockSocket.connected = true;
   jest.useFakeTimers();
   jest.spyOn(console, "warn").mockImplementation(() => {});
   useGameStore.getState().resetGame();
@@ -47,6 +48,17 @@ it("shows a read-only preparation state to a spectator", () => {
   expect(view.root.findAllByType("button")).toHaveLength(0);
   act(() => jest.advanceTimersByTime(35000));
   expect(mockSocket.emit).not.toHaveBeenCalled();
+});
+it("does not queue an offline power confirmation and applies the rejoined server selection", () => {
+  act(() => { view = create(createElement(PowerUpSelection)); });
+  act(() => button("Shield").props.onClick());
+  mockSocket.emit.mockClear(); mockSocket.connected = false;
+  act(() => jest.advanceTimersByTime(35000));
+  expect(mockSocket.emit).not.toHaveBeenCalled();
+  expect(useGameStore.getState().powerUpSelection.isSelecting).toBe(true);
+  act(() => useGameStore.getState().setPowerUpSelection({ isSelecting: false, selectedPowerUps: [PowerUpType.FiftyFifty], timeLeft: 0 }));
+  expect(button("50/50").props["aria-pressed"]).toBe(true);
+  expect(JSON.stringify(view.toJSON())).toContain("Waiting for other players");
 });
 it("sends chat from a labelled Arabic form and clears the field without submitting blanks", () => {
   useGameStore.setState({ language: "ar" });

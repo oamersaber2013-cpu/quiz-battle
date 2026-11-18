@@ -75,6 +75,7 @@ export function subscribeGameRoom(
     onJoining: () => void;
     onJoined: () => void;
     onError: (message?: string, code?: import("@quiz-battle/shared").AckResponse["code"]) => void;
+    onTimeout?: () => void;
   },
   options: { password?: string } = {}
 ): () => void {
@@ -89,7 +90,7 @@ export function subscribeGameRoom(
     if (active) {
       callbacks.onJoining();
       timeout = setTimeout(() => {
-        if (active && requestId === currentRequest) callbacks.onError();
+        if (active && requestId === currentRequest) (callbacks.onTimeout || callbacks.onError)();
       }, 10000);
     }
   };
@@ -102,8 +103,7 @@ export function subscribeGameRoom(
 
     timeout = setTimeout(() => {
       if (active && requestId === currentRequest) {
-        requestId += 1;
-        callbacks.onError();
+        (callbacks.onTimeout || callbacks.onError)();
       }
     }, 10000);
 

@@ -88,13 +88,15 @@ it("does not show another room's cached standings when the server rejects access
   expect(content).toContain("participants");
 });
 
-it("labels Conquest scores as territories without displaying invented quiz statistics", async () => {
+it("labels Conquest scores as territories and leaves unmeasured quiz statistics empty", async () => {
   mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ...savedResults, mode: GameMode.Conquest, language: "en", results: [{ ...savedResults.results[0], correctAnswers: 0, totalAnswers: 0, avgAnswerTime: 0 }] }) });
   await act(async () => { view = create(createElement(ResultsPage)); });
   const content = JSON.stringify(view.toJSON());
   expect(content).toContain("Territories");
-  expect(content).not.toContain("Accuracy");
-  expect(content).not.toContain("Avg Speed");
+  expect(content).toContain("Accuracy");
+  expect(content).toContain("—");
+  expect(content).not.toContain("0%");
+  expect(content).not.toContain("0.0");
 });
 
 it.each([false, true])("prompts and retries a password challenge without storing the secret (spectating=%s)", (spectating) => {

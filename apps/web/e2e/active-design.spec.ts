@@ -84,7 +84,7 @@ test("reviews active screens across desktop, tablet and mobile", async ({ page }
     await page.route("https://fonts.googleapis.com/**", route => route.abort());
     await page.route("https://fonts.gstatic.com/**", route => route.abort());
     const screens = [
-      ["lobby", "en", 1440, 900], ["lobby", "ar", 390, 844], ["lobby", "ar", 834, 1112],
+      ["lobby", "en", 1440, 900], ["lobby", "ar", 320, 844], ["lobby", "ar", 390, 844], ["lobby", "ar", 834, 1112],
       ["powers", "en", 1440, 900], ["powers", "ar", 390, 844], ["powers", "ar", 834, 1112],
       ["question", "en", 1440, 900], ["question", "ar", 390, 844], ["question", "ar", 834, 1112],
       ["conquest", "ar", 1440, 900], ["conquest", "ar", 390, 844], ["conquest", "ar", 834, 1112],
@@ -118,8 +118,8 @@ test("reviews active screens across desktop, tablet and mobile", async ({ page }
         const chat = page.getByRole("textbox", { name: "Message the room", exact: true });
         await chat.fill("Ready when you are."); await chat.press("Enter");
         await expect(page.getByText("Ready when you are.", { exact: true })).toBeVisible();
-        await page.getByRole("button", { name: "Copy", exact: true }).focus();
-        await expect(page.getByRole("button", { name: "Copy", exact: true })).toHaveCSS("outline-width", "3px");
+        await page.getByRole("button", { name: "Copy code", exact: true }).focus();
+        await expect(page.getByRole("button", { name: "Copy code", exact: true })).toHaveCSS("outline-width", "3px");
       }
       await page.screenshot({ path: testInfo.outputPath(`${stage}-${language}-${width}.png`), fullPage: true, animations: "disabled" });
     }

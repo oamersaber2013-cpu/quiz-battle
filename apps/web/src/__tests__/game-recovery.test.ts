@@ -158,6 +158,33 @@ describe("room membership recovery", () => {
     cleanup();
   });
 
+  it("accepts a late acknowledgement from the current connected join after showing a retry", () => {
+    const socket = new FakeSocket(); socket.connected = true;
+    const events = { ...callbacks(), onTimeout: jest.fn() };
+    const cleanup = subscribeGameRoom(typed(socket), "battle-1", false, events);
+    const acknowledge = socket.emit.mock.calls[0][2];
+    jest.advanceTimersByTime(10000);
+    expect(events.onTimeout).toHaveBeenCalledTimes(1);
+    expect(events.onError).not.toHaveBeenCalled();
+    acknowledge({ success: true });
+    expect(events.onJoined).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("discards a timed-out join acknowledgement once a reconnect supersedes it", () => {
+    const socket = new FakeSocket(); socket.connected = true;
+    const events = { ...callbacks(), onTimeout: jest.fn() };
+    const cleanup = subscribeGameRoom(typed(socket), "battle-1", false, events);
+    const oldAcknowledge = socket.emit.mock.calls[0][2];
+    jest.advanceTimersByTime(10000);
+    socket.dispatch("disconnect"); socket.dispatch("connect");
+    oldAcknowledge({ success: true });
+    expect(events.onJoined).not.toHaveBeenCalled();
+    socket.emit.mock.calls[1][2]({ success: true });
+    expect(events.onJoined).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
   it("reports an API connection that never opens", () => {
     const events = callbacks();
     const cleanup = subscribeGameRoom(typed(new FakeSocket()), "battle-1", false, events);

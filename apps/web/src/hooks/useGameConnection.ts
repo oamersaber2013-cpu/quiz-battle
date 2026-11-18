@@ -9,12 +9,15 @@ export function useGameConnection(gameId: string, isSpectating: boolean) {
   const router = useRouter();
   const { userId, username, token, isGuest } = useGameStore();
   const [joining, setJoining] = useState(true);
+  const [joinedRoom, setJoinedRoom] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordPending, setPasswordPending] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const passwordRef = useRef<string | undefined>(undefined);
+  const membershipKey = `${gameId}:${userId}:${isSpectating}`;
 
   // Persisted browser credentials are available after mounting. Avoid sending a
   // player back to the home screen while the server-rendered store is empty.
@@ -23,19 +26,23 @@ export function useGameConnection(gameId: string, isSpectating: boolean) {
   useEffect(() => {
     if (!hydrated) return;
     if (!userId) {
-      router.replace("/");
+      const language = useGameStore.getState().language;
+      router.replace(`/?room=${encodeURIComponent(gameId)}&lang=${language}${isSpectating ? "&spectate=true" : ""}`);
       return;
     }
 
     const socket = connectSocket(userId, username, token || undefined, isGuest);
     return subscribeGameRoom(socket, gameId, isSpectating, {
-      onJoining: () => { setJoining(true); setPasswordPending(true); },
+      onJoining: () => { setJoining(true); setConnectionError(false); setPasswordPending(true); },
       onJoined: () => {
         passwordRef.current = undefined;
         setPasswordRequired(false);
         setPasswordPending(false);
         setJoining(false);
+        setJoinedRoom(membershipKey);
+        setConnectionError(false);
       },
+      onTimeout: () => { setConnectionError(true); setPasswordPending(false); },
       onError: (message, code) => {
         const store = useGameStore.getState();
         passwordRef.current = undefined;
@@ -49,7 +56,10 @@ export function useGameConnection(gameId: string, isSpectating: boolean) {
               : null);
           return;
         }
-        store.addToast("error", message || (store.language === "ar"
+        const unavailableRoom = message?.trim().toLowerCase() === "game not found";
+        store.addToast("error", unavailableRoom ? (store.language === "ar"
+          ? "انتهت صلاحية الغرفة أو لم تعد موجودة."
+          : "This room has expired or no longer exists.") : message || (store.language === "ar"
           ? "تعذر الاتصال بالمعركة. حاول مرة أخرى."
           : "Unable to connect to the battle. Please try again."));
         router.replace("/");
@@ -64,5 +74,11 @@ export function useGameConnection(gameId: string, isSpectating: boolean) {
     setAttempt((current) => current + 1);
   };
 
-  return { joining, passwordRequired, passwordError, passwordPending, submitPassword };
+  const retryConnection = () => {
+    setConnectionError(false);
+    setAttempt(current => current + 1);
+  };
+
+  const hasJoined = joinedRoom === membershipKey;
+  return { joining: !hasJoined, reconnecting: joining && hasJoined, connectionError, retryConnection, passwordRequired, passwordError, passwordPending, submitPassword };
 }

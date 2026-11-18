@@ -30,6 +30,7 @@ import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useGameConnection } from "@/hooks/useGameConnection";
 import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
+import { RoomConnectionFrame } from "@/components/RoomConnectionFrame";
 
 const TARGETED_POWER_UPS = new Set<PowerUpType>([
   PowerUpType.Freeze,
@@ -70,18 +71,28 @@ function getEffectSecondsLeft(expiresAt?: number, now = getServerTime()): number
 export default function GamePage() {
   return (
     <ErrorBoundary>
-      <GamePageContent />
+      <ConnectedGamePage />
     </ErrorBoundary>
   );
 }
 
-function GamePageContent() {
+function ConnectedGamePage() {
+  const params = useParams();
+  const searchParams = useSearchParams();
+  const language = useGameStore(state => state.language);
+  const connection = useGameConnection(params.gameId as string, searchParams.get("spectate") === "true");
+  return <RoomConnectionFrame language={language} joining={connection.joining && !connection.passwordRequired} reconnecting={connection.reconnecting && !connection.passwordRequired} connectionError={connection.connectionError} onRetry={connection.retryConnection}>
+    <GamePageContent connection={connection} />
+  </RoomConnectionFrame>;
+}
+
+function GamePageContent({ connection }: { connection: ReturnType<typeof useGameConnection> }) {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
   const gameId = params.gameId as string;
   const isSpectating = searchParams.get("spectate") === "true";
-  const { joining, passwordRequired, passwordError, passwordPending, submitPassword } = useGameConnection(gameId, isSpectating);
+  const { joining, reconnecting, connectionError, passwordRequired, passwordError, passwordPending, submitPassword } = connection;
 
   const {
     userId,
@@ -161,7 +172,7 @@ function GamePageContent() {
   }, [currentQuestion?.id, mode, status]);
 
   useEffect(() => {
-    if (joining) return;
+    if (joining || reconnecting) return;
     if (status === GameStatus.Lobby) {
       router.replace(`/lobby/${gameId}${isSpectating ? "?spectate=true" : ""}`);
       return;
@@ -183,7 +194,7 @@ function GamePageContent() {
     }
 
     setFeedbackQuote(null);
-  }, [gameId, lastAnswerResult, router, status, joining, isSpectating]);
+  }, [gameId, lastAnswerResult, router, status, joining, reconnecting, isSpectating]);
 
   useEffect(() => {
     if (status !== GameStatus.Question) {
@@ -201,7 +212,7 @@ function GamePageContent() {
   const isSandstormed = effectsOnMe.some((effect) => effect.type === PowerUpType.Sandstorm);
   const hasTimeWarp = effectsFromMe.some((effect) => effect.type === PowerUpType.TimeWarp);
   const hasShield = effectsFromMe.some((effect) => effect.type === PowerUpType.Shield);
-  const answerControlsDisabled = isSpectating || isFrozen || status !== GameStatus.Question || timeLeft <= 0 || !!currentPlayer?.isEliminated;
+  const answerControlsDisabled = reconnecting || isSpectating || isFrozen || status !== GameStatus.Question || timeLeft <= 0 || !!currentPlayer?.isEliminated;
 
   const visibleTargetEffects = [...effectsOnMe, ...effectsFromMe];
   const availableTargets = players.filter(
@@ -211,7 +222,7 @@ function GamePageContent() {
   function handleAnswer(answer: SubmittedAnswer) {
     const state = useGameStore.getState();
     const frozen = state.activeEffects.some((effect) => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > getServerTime()));
-    if (frozen || isSpectating) return;
+    if (reconnecting || frozen || isSpectating) return;
     if (state.selectedAnswer !== null || !state.currentQuestion || state.status !== GameStatus.Question || state.timeLeft <= 0 || state.currentPlayer?.isEliminated) return;
     if (typeof answer === "number" && state.eliminatedOptions.includes(answer)) return;
     if (state.invasionState) {
@@ -225,6 +236,7 @@ function GamePageContent() {
   }
 
   async function triggerPowerUp(type: PowerUpType, targetUserId?: string) {
+    if (reconnecting) return;
     const res = await emitPowerUp(gameId, type, targetUserId);
     if (!res.success) {
       useGameStore.getState().addToast(
@@ -238,7 +250,7 @@ function GamePageContent() {
   }
 
   async function handlePowerUp(type: PowerUpType) {
-    if (isFrozen || isSpectating) return;
+    if (reconnecting || isFrozen || isSpectating) return;
     
     if (TARGETED_POWER_UPS.has(type)) {
       if (availableTargets.length === 0) {
@@ -290,6 +302,7 @@ function GamePageContent() {
   }
 
   if (joining) {
+    if (connectionError) return null;
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh" }}>
         <LoadingSpinner size="lg" message={isRTL ? "جاري الاتصال بالمعركة..." : "Connecting to battle..."} />

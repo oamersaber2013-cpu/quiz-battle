@@ -7,7 +7,9 @@ import { emitStartGame } from "@/lib/socket";
 import { useGameConnection } from "@/hooks/useGameConnection";
 import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
+import { RoomConnectionFrame } from "@/components/RoomConnectionFrame";
 import { ChatWindow } from "@/components/ChatWindow";
+import { RoomInviteShare } from "@/components/RoomInviteShare";
 import { BattleHeader, MODE_NAMES, DIFFICULTY_NAMES } from "@/components/BattleHeader";
 import styles from "@/components/ActiveExperience.module.css";
 
@@ -44,12 +46,22 @@ const CATEGORY_LABELS: Record<string, { en: string; ar: string }> = {
 export default function LobbyPage() {
   return (
     <ErrorBoundary>
-      <LobbyPageContent />
+      <ConnectedLobbyPage />
     </ErrorBoundary>
   );
 }
 
-function LobbyPageContent() {
+function ConnectedLobbyPage() {
+  const params = useParams();
+  const searchParams = useSearchParams();
+  const language = useGameStore(state => state.language);
+  const connection = useGameConnection(params.gameId as string, searchParams.get("spectate") === "true");
+  return <RoomConnectionFrame language={language} joining={connection.joining && !connection.passwordRequired} reconnecting={connection.reconnecting && !connection.passwordRequired} connectionError={connection.connectionError} onRetry={connection.retryConnection}>
+    <LobbyPageContent connection={connection} />
+  </RoomConnectionFrame>;
+}
+
+function LobbyPageContent({ connection }: { connection: ReturnType<typeof useGameConnection> }) {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -61,9 +73,8 @@ function LobbyPageContent() {
     players, status, addToast, language, hostId, customSettings
   } = useGameStore();
   
-  const { joining, passwordRequired, passwordError, passwordPending, submitPassword } = useGameConnection(gameId, isSpectating);
+  const { joining, reconnecting, connectionError, passwordRequired, passwordError, passwordPending, submitPassword } = connection;
   const [starting, setStarting] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
@@ -72,12 +83,13 @@ function LobbyPageContent() {
 
   useEffect(() => {
     // Redirect to game when status is anything except Lobby (for ALL modes)
-    if (!joining && status && status !== GameStatus.Lobby) {
+    if (!joining && !reconnecting && status && status !== GameStatus.Lobby) {
       router.push(`/game/${gameId}${isSpectating ? '?spectate=true' : ''}`);
     }
-  }, [status, gameId, router, isSpectating, joining]);
+  }, [status, gameId, router, isSpectating, joining, reconnecting]);
 
   async function handleStart() {
+    if (reconnecting || starting) return;
     setStarting(true);
     try {
       const res = await emitStartGame(gameId);
@@ -91,20 +103,12 @@ function LobbyPageContent() {
     }
   }
 
-  async function copyCode() {
-    try {
-      await navigator.clipboard.writeText(joinCode || "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch { addToast("error", isRTL ? "تعذر النسخ. يمكنك تحديد الرمز ونسخه." : "Could not copy. Select the code to copy it."); }
-  }
-
-
   if (passwordRequired) {
     return <RoomPasswordPrompt language={language} error={passwordError} pending={passwordPending} onSubmit={submitPassword} onCancel={() => router.push("/")} />;
   }
 
   if (joining) {
+    if (connectionError) return null;
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100dvh" }}>
         <LoadingSpinner size="lg" message={T.joining[language]} />
@@ -129,18 +133,7 @@ function LobbyPageContent() {
         </header>
         <div className={styles.lobbyLayout}>
           <div className={styles.stack}>
-            <section className={styles.surface} aria-label={isRTL ? "دعوة اللاعبين" : "Invite players"}>
-              <div className={styles.codeLine}>
-                <div><p className={styles.eyebrow}>{T.battleCode[language]}</p><bdi className={styles.code}>{joinCode || "------"}</bdi></div>
-                <button type="button" className="btn btn-secondary" onClick={copyCode}>{copied ? `✓ ${T.copied[language]}` : T.copy[language]}</button>
-              </div>
-              <div className={styles.inviteLink}>
-                <button type="button" className="btn btn-ghost" onClick={async () => {
-                  try { await navigator.clipboard.writeText(window.location.origin + "/lobby/" + gameId); addToast("success", isRTL ? "تم نسخ رابط المعركة!" : "Battle link copied!"); }
-                  catch { addToast("error", isRTL ? "تعذر نسخ الرابط." : "Could not copy the link."); }
-                }}>↗ {isRTL ? "نسخ رابط الدعوة" : "Copy invite link"}</button>
-              </div>
-            </section>
+            <RoomInviteShare joinCode={joinCode} language={language} />
             <section className={styles.surface} aria-labelledby="lobby-players">
               <h2 className={styles.sectionHeading} id="lobby-players">{T.warriors[language]} <small>{players.length} {isRTL ? "في الغرفة" : "in the room"}</small></h2>
               <div className={styles.playerList}>
@@ -159,7 +152,7 @@ function LobbyPageContent() {
               <p className="text-muted">{isRTL ? "الحد الأقصى للاعبين" : "Player limit"} {customSettings.maxPlayers} · {isRTL ? "القوى المتاحة" : "Available powers"} {customSettings.enabledPowerUps.length}</p>
             </section>}
             {isSpectating ? <p className={styles.wait}>{T.spectating[language]}</p> : isHost
-              ? <button type="button" className={`btn btn-primary ${styles.start}`} onClick={handleStart} disabled={starting || players.length < 1}>{starting ? (isRTL ? "جارٍ البدء…" : "Starting…") : T.startBattle[language]}</button>
+              ? <button type="button" className={`btn btn-primary ${styles.start}`} onClick={handleStart} disabled={reconnecting || starting || players.length < 1}>{starting ? (isRTL ? "جارٍ البدء…" : "Starting…") : T.startBattle[language]}</button>
               : <p className={styles.wait} role="status">{T.waitingHost[language]}</p>}
           </div>
           <aside className={styles.sideRail}><ChatWindow gameId={gameId} /></aside>

@@ -18,33 +18,25 @@ export function PowerUpSelection({ isSpectating = false }: { isSpectating?: bool
   } = useGameStore();
 
   const [timeLeft, setTimeLeft] = useState(powerUpSelection.timeLeft);
-  const [confirmed, setConfirmed] = useState(isSpectating || !powerUpSelection.isSelecting);
+  const confirmed = isSpectating || !powerUpSelection.isSelecting || timeLeft <= 0;
   const [otherSelections, setOtherSelections] = useState<Record<string, PowerUpType[]>>({});
 
   const socket = getSocket();
   const isAr = language === "ar";
 
-  // Countdown timer - auto-confirm when time runs out (even with 0 selections)
+  useEffect(() => setTimeLeft(powerUpSelection.timeLeft), [powerUpSelection.timeLeft]);
+
+  // The server finalizes selections at its deadline. This clock only updates
+  // the display, so an outage cannot queue a late confirmation for a new phase.
   useEffect(() => {
     if (timeLeft <= 0 || confirmed) return;
 
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          // Auto-confirm with whatever is selected (can be empty)
-          if (!confirmed) {
-            setConfirmed(true);
-            confirmPowerUpSelection();
-            socket.emit("game:confirmPowerUpSelection", { gameId: gameId! });
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
+      setTimeLeft(prev => Math.max(0, prev - 1));
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft, confirmed, confirmPowerUpSelection, socket, gameId]);
+  }, [timeLeft, confirmed]);
 
   // Listen for other players' selections
   useEffect(() => {
@@ -63,7 +55,7 @@ export function PowerUpSelection({ isSpectating = false }: { isSpectating?: bool
 
   const handleSelect = useCallback(
     (powerUp: PowerUpType) => {
-      if (confirmed || POWER_UP_INFO[powerUp].unavailable) return;
+      if (confirmed || !socket.connected || POWER_UP_INFO[powerUp].unavailable) return;
 
       const current = powerUpSelection.selectedPowerUps;
       const exists = current.includes(powerUp);
@@ -82,8 +74,7 @@ export function PowerUpSelection({ isSpectating = false }: { isSpectating?: bool
   );
 
   const handleConfirm = useCallback(() => {
-    if (confirmed) return;
-    setConfirmed(true);
+    if (confirmed || !socket.connected) return;
     confirmPowerUpSelection();
     socket.emit("game:confirmPowerUpSelection", { gameId: gameId! });
   }, [confirmed, confirmPowerUpSelection, socket, gameId]);

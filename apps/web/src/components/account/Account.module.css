@@ -96,3 +96,9 @@
 .field { position: relative; }
 .passwordHeader { min-height: 44px; }
 .passwordToggle { position: absolute; inset-inline-end: 0; inset-block-start: 0; }
+
+.roomAccess { max-width: 34rem; }
+.roomVisibility { justify-self: start; min-height: 44px; padding: 6px 0; border: 0; background: transparent; color: var(--account-gold); font: inherit; font-size: .9rem; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.roomAccess .actions { margin-block-start: 16px; }
+.roomAccess button:disabled { opacity: .6; cursor: default; }
+@media (max-width: 380px) { .roomAccess .actions > button { flex: 1 1 100%; } }

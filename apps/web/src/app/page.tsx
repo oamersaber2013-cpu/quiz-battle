@@ -1,5 +1,6 @@
 "use client";
 import { getApiOrigin } from "@/lib/apiOrigin";
+import { createRoomInvitePath, isRoomCode, isRoomId, normalizeRoomCode } from "@/lib/roomInvites";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -290,9 +291,11 @@ const T = {
   },
   joinCode: { en: "🔗 Join Code", ar: "🔗 كود الانضمام" },
   joinErrors: {
+    format: { en: "Enter a 6-character room code", ar: "أدخل رمز غرفة مكوناً من 6 خانات" },
     invalid: { en: "Invalid join code", ar: "رمز الغرفة غير صحيح" },
     guest: { en: "Failed to create guest account", ar: "فشل إنشاء حساب ضيف" },
-    connection: { en: "Failed to join game", ar: "فشل في الانضمام" },
+    connection: { en: "Could not connect. Check your connection and try again.", ar: "تعذر الاتصال. تحقق من اتصالك ثم حاول مرة أخرى." },
+    rateLimited: { en: "Too many attempts. Wait a minute and try again.", ar: "محاولات كثيرة. انتظر دقيقة ثم حاول مرة أخرى." },
   },
   warriorName: { en: "Your Battle Name", ar: "اسم المحارب الخاص بك" },
   createRoom: { en: "⚔️ Create Battle Room", ar: "⚔️ إنشاء غرفة معركة" },
@@ -316,12 +319,15 @@ export default function HomePage() {
   const [selectedCats, setSelectedCats] = useState<string[]>(["general"]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>(["trivia"]);
   const [joinCode, setJoinCode] = useState("");
-  const [joinError, setJoinError] = useState<"invalid" | "guest" | "connection" | null>(null);
+  const [joinError, setJoinError] = useState<keyof typeof T.joinErrors | null>(null);
+  const [invitedRoomId, setInvitedRoomId] = useState<string | null>(null);
+  const [invitedAsSpectator, setInvitedAsSpectator] = useState(false);
   const joinCodeInput = useRef<HTMLInputElement>(null);
+  const playerNameInput = useRef<HTMLInputElement>(null);
   const joinViewButton = useRef<HTMLButtonElement>(null);
   const wizardHeading = useRef<HTMLHeadingElement>(null);
   const returnToJoinButton = useRef(false);
-  const canJoin = /^[A-Z0-9]{6}$/.test(joinCode);
+  const canJoin = !!invitedRoomId || isRoomCode(joinCode);
   const [loading, setLoading] = useState(false);
   const [inputUsername, setInputUsername] = useState(username || `Warrior${Math.floor(Math.random() * 9999)}`);
   const [customConfig, setCustomConfig] = useState<CustomGameSettings>(() => ({
@@ -344,12 +350,29 @@ export default function HomePage() {
   useEffect(() => { if (view !== "create") setRoomPassword(""); }, [view]);
 
   useEffect(() => {
-    if (view === "join") joinCodeInput.current?.focus();
+    if (typeof window === "undefined" || typeof window.location?.search !== "string") return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("join");
+    const room = params.get("room");
+    if (code === null && room === null) return;
+    const inviteLanguage = params.get("lang");
+    if (inviteLanguage === "ar" || inviteLanguage === "en") setLanguage(inviteLanguage);
+    const normalizedCode = normalizeRoomCode(code ?? "");
+    const validRoom = code === null && isRoomId(room) ? room : null;
+    setJoinCode(normalizedCode);
+    setInvitedRoomId(validRoom);
+    setInvitedAsSpectator(params.get("spectate") === "true");
+    setJoinError(validRoom || isRoomCode(normalizedCode) ? null : "format");
+    setView("join");
+  }, [setLanguage]);
+
+  useEffect(() => {
+    if (view === "join") (invitedRoomId ? playerNameInput.current : joinCodeInput.current)?.focus();
     if (view === "home" && returnToJoinButton.current) {
       returnToJoinButton.current = false;
       joinViewButton.current?.focus();
     }
-  }, [view]);
+  }, [view, invitedRoomId]);
 
   useEffect(() => {
     if (view === "create") wizardHeading.current?.focus();
@@ -359,6 +382,9 @@ export default function HomePage() {
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
+  const inviteReturnPath = view === "join"
+    ? createRoomInvitePath({ code: joinCode, roomId: invitedRoomId ?? undefined, language, spectate: invitedAsSpectator }) : "";
+  const accountHref = userId ? "/profile" : inviteReturnPath ? `/login?returnTo=${encodeURIComponent(inviteReturnPath)}` : "/login";
 
   async function handleCreateGame() {
     if (!canCreateWithQuestions) {
@@ -466,7 +492,7 @@ export default function HomePage() {
           body: JSON.stringify({ username: inputUsername.trim() || undefined }),
         });
         if (!res.ok) {
-          setJoinError("guest");
+          setJoinError(res.status === 429 ? "rateLimited" : "guest");
           return;
         }
         const data = await res.json();
@@ -475,13 +501,21 @@ export default function HomePage() {
         connectSocket(data.userId, data.username, data.token, true);
       }
 
+      if (invitedRoomId) {
+        router.push(`/lobby/${encodeURIComponent(invitedRoomId)}${invitedAsSpectator ? "?spectate=true" : ""}`);
+        return;
+      }
       const res = await fetch(`${API}/api/games/join/${joinCode}`);
       if (!res.ok) {
-        setJoinError(res.status === 404 ? "invalid" : "connection");
+        setJoinError(res.status === 404 ? "invalid" : res.status === 429 ? "rateLimited" : "connection");
         return;
       }
       const { gameId } = await res.json();
-      router.push(`/lobby/${gameId}`);
+      if (!isRoomId(gameId)) {
+        setJoinError("connection");
+        return;
+      }
+      router.push(`/lobby/${encodeURIComponent(gameId)}${invitedAsSpectator ? "?spectate=true" : ""}`);
     } catch {
       setJoinError("connection");
     } finally {
@@ -511,7 +545,7 @@ export default function HomePage() {
 
   const nameField = <div className={styles.nameField}>
     <label htmlFor="player-name">{isRTL ? "ادخل اسمك" : "Enter your warrior name"}</label>
-    <input id="player-name" className={styles.textInput} value={inputUsername}
+    <input ref={playerNameInput} id="player-name" className={styles.textInput} value={inputUsername} readOnly={loading}
       onChange={event => setInputUsername(event.target.value)} maxLength={20} autoComplete="nickname"
       placeholder={isRTL ? "ادخل اسمك" : "Enter your warrior name"} aria-describedby="player-name-help" />
     <p id="player-name-help">{isRTL ? "يظهر اسمك للاعبين الآخرين." : "This is how the other players will see you."}</p>
@@ -527,7 +561,7 @@ export default function HomePage() {
             <button type="button" className={styles.languageButton} onClick={() => setLanguage(language === "en" ? "ar" : "en")}>
               {isRTL ? "English" : "العربية"}
             </button>
-            <Link href={userId ? "/profile" : "/login"} className={styles.accountLink}>
+            <Link href={accountHref} className={styles.accountLink}>
               {userId ? (isRTL ? "الملف الشخصي" : "Profile") : (isRTL ? "تسجيل دخول" : "Sign In")}
             </Link>
           </nav>
@@ -550,7 +584,7 @@ export default function HomePage() {
               <button type="button" className={styles.primaryButton} onClick={() => { setStep(1); setView("create"); }}>
                 {isRTL ? "إنشاء غرفة معركة" : "Create Battle Room"}<span aria-hidden="true">{isRTL ? "←" : "→"}</span>
               </button>
-              <button type="button" ref={joinViewButton} className={styles.secondaryButton} onClick={() => { setJoinError(null); setView("join"); }}>
+              <button type="button" ref={joinViewButton} className={styles.secondaryButton} onClick={() => { setJoinError(null); setInvitedRoomId(null); setInvitedAsSpectator(false); setView("join"); }}>
                 {isRTL ? "انضمام عبر الكود" : "Join with Code"}
               </button>
             </div>
@@ -667,16 +701,25 @@ export default function HomePage() {
         </section>}
 
         {view === "join" && <section className={styles.joinShell}>
-          <button type="button" className={styles.backButton} disabled={loading} onClick={() => { returnToJoinButton.current = true; setView("home"); }}>{T.back[language]}</button>
+          <button type="button" className={styles.backButton} disabled={loading} onClick={() => { returnToJoinButton.current = true; setInvitedRoomId(null); setInvitedAsSpectator(false); setView("home"); }}>{T.back[language]}</button>
           <form className={styles.joinCard} onSubmit={handleJoinGame} aria-busy={loading}>
-            <h1 id="join-code-heading">{isRTL ? "كود الانضمام" : "Join Code"}</h1>
-            <p id="join-code-help" className={styles.intro}>{isRTL ? "أدخل رمز الغرفة المكون من 6 خانات" : "Enter the 6-character room code"}</p>
-            <input ref={joinCodeInput} className={styles.codeInput} aria-labelledby="join-code-heading" aria-describedby={joinError ? "join-code-help join-code-error" : "join-code-help"}
-              aria-invalid={joinError === "invalid"} autoCapitalize="characters" autoComplete="off" spellCheck={false} dir="ltr" readOnly={loading}
-              value={joinCode} onChange={event => { setJoinCode(event.target.value.toUpperCase()); setJoinError(null); }} placeholder="ABCXYZ" maxLength={6} />
+            <h1 id="join-code-heading">{invitedRoomId ? (isRTL ? "الانضمام إلى الغرفة" : "Join invited room") : (isRTL ? "كود الانضمام" : "Join Code")}</h1>
+            <p id="join-code-help" className={styles.intro}>{canJoin
+              ? invitedAsSpectator
+                ? (isRTL ? "اختر اسمك لمشاهدة المعركة." : "Choose your name to watch the match.")
+                : (isRTL ? "اختر اسمك ثم انضم إلى الغرفة." : "Choose your name, then join the room.")
+              : (isRTL ? "أدخل رمز الغرفة المكون من 6 خانات" : "Enter the 6-character room code")}</p>
+            {!invitedRoomId && <input ref={joinCodeInput} className={styles.codeInput} aria-labelledby="join-code-heading" aria-describedby={joinError ? "join-code-help join-code-error" : "join-code-help"}
+              aria-invalid={joinError === "invalid" || joinError === "format"} autoCapitalize="characters" autoComplete="off" spellCheck={false} dir="ltr" readOnly={loading}
+              value={joinCode} onChange={event => { setJoinCode(normalizeRoomCode(event.target.value)); setJoinError(null); }} placeholder="ABCXYZ" maxLength={32} />}
             {nameField}
             {joinError && <p id="join-code-error" role="alert" className={styles.error}>{T.joinErrors[joinError][language]}</p>}
-            <button type="submit" className={styles.primaryButton} disabled={loading || !canJoin}>{loading ? (isRTL ? "جارٍ الانضمام..." : "Joining...") : (isRTL ? "كود الانضمام" : "Join Code")}</button>
+            <button type="submit" className={styles.primaryButton} disabled={loading || !canJoin}>{loading
+              ? invitedAsSpectator ? (isRTL ? "جارٍ فتح المعركة..." : "Opening match...") : (isRTL ? "جارٍ الانضمام..." : "Joining...")
+              : invitedAsSpectator ? (isRTL ? "شاهد المعركة" : "Watch match") : (isRTL ? "انضم إلى الغرفة" : "Join room")}</button>
+            {invitedRoomId && <button type="button" className={styles.textButton} disabled={loading} onClick={() => { setInvitedRoomId(null); setInvitedAsSpectator(false); setJoinCode(""); setJoinError(null); }}>
+              {isRTL ? "استخدام رمز غرفة أخرى" : "Use another room code"}
+            </button>}
           </form>
         </section>}
 

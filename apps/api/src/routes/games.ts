@@ -8,6 +8,7 @@ import {
   GAME_MODE_CONFIG,
 } from "@quiz-battle/shared";
 import { prisma } from "@quiz-battle/db";
+import { DEFAULT_CUSTOM_SETTINGS, PowerUpType, type CustomGameSettings } from "@quiz-battle/shared";
 import { KEYS } from "../lib/redis";
 import { setActiveGame } from "../lib/gameOrchestrator";
 import type { JWTPayload } from "./auth";
@@ -16,6 +17,18 @@ import { hasRoomAccess, protectRoom, validRoomPassword } from "../lib/roomAccess
 // Local fallback for join code resolution (works without Redis)
 const localJoinCodes = new Map<string, string>(); // code -> gameId
 
+const customSettingsSchema = z.object({
+  name: z.string().trim().min(1).max(60).default(DEFAULT_CUSTOM_SETTINGS.name),
+  rounds: z.number().int().min(1).max(30).default(DEFAULT_CUSTOM_SETTINGS.rounds),
+  timePerQuestion: z.number().int().min(5).max(60).default(DEFAULT_CUSTOM_SETTINGS.timePerQuestion),
+  difficulty: z.nativeEnum(Difficulty).default(DEFAULT_CUSTOM_SETTINGS.difficulty),
+  enabledPowerUps: z.array(z.nativeEnum(PowerUpType).refine(power => power !== PowerUpType.DoublePick,
+    "Double pick is not supported in Custom battles")).max(8)
+    .transform(powers => [...new Set(powers)]).default(DEFAULT_CUSTOM_SETTINGS.enabledPowerUps),
+  maxPlayers: z.number().int().min(2).max(20).default(DEFAULT_CUSTOM_SETTINGS.maxPlayers),
+  categoryFilter: z.string().trim().min(1).max(100).nullable().default(null),
+});
+
 const createRoomSchema = z.object({
   mode: z.nativeEnum(GameMode), difficulty: z.nativeEnum(Difficulty),
   rounds: z.number().int().min(1).max(15).optional(),
@@ -23,6 +36,7 @@ const createRoomSchema = z.object({
   subcategories: z.array(z.string().min(1).max(100)).max(200).optional(),
   language: z.enum(["en", "ar"]).optional(), username: z.string().max(100).optional(),
   userId: z.string().optional(), password: z.string().optional(), isPrivate: z.boolean().optional(),
+  customSettings: customSettingsSchema.optional(),
 }).passthrough();
 
 function generateJoinCode(): string {
@@ -56,7 +70,15 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     const parsed = createRoomSchema.safeParse(req.body);
     if (!parsed.success) return reply.status(400).send({ error: "Invalid room configuration" });
     const body = parsed.data;
-    const { mode, difficulty, rounds, categories, password, isPrivate } = body;
+    const { mode, rounds, password, isPrivate } = body;
+    if (body.customSettings && mode !== GameMode.Custom) {
+      return reply.status(400).send({ error: "Custom settings require Custom mode" });
+    }
+    const customSettings = mode === GameMode.Custom ? customSettingsSchema.parse(body.customSettings || {
+      ...DEFAULT_CUSTOM_SETTINGS, difficulty: body.difficulty, ...(rounds === undefined ? {} : { rounds }),
+    }) as CustomGameSettings : undefined;
+    const difficulty = customSettings?.difficulty || body.difficulty;
+    const categories = customSettings?.categoryFilter ? [customSettings.categoryFilter] : body.categories;
     const privateRoom = !!isPrivate || !!password;
     if (privateRoom && !validRoomPassword(password)) {
       return reply.status(400).send({ error: "A private room requires a password of 1 to 72 UTF-8 bytes" });
@@ -85,6 +107,8 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     if (rounds !== undefined) {
       totalRounds = Math.min(Math.max(rounds, 1), 15);
     }
+    if (customSettings) totalRounds = customSettings.rounds;
+    const maxPlayers = customSettings?.maxPlayers || config.maxPlayers;
 
     const creditTier = getCreditTier(totalRounds);
     const creditUseResult = await prisma.$transaction(async (tx) => {
@@ -156,13 +180,14 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       questions: [],
       currentRound: 0,
       totalRounds,
-      maxPlayers: config.maxPlayers,
+      maxPlayers,
+      ...(customSettings ? { customSettings } : {}),
       questionStartTime: 0,
       answersThisRound: {},
       lastAnswerByPlayer: {},
       activeEffects: [],
       categories,
-      subcategories: body.subcategories,
+      subcategories: customSettings?.categoryFilter ? undefined : body.subcategories,
       language: body.language || 'en',
       isPrivate: privateRoom,
       chat: [], // Initialize empty chat
@@ -182,7 +207,8 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       joinCode,
       mode,
       difficulty,
-      maxPlayers: config.maxPlayers,
+      maxPlayers,
+      ...(customSettings ? { customSettings } : {}),
       totalRounds,
       isPrivate: privateRoom,
       shortGamesRemaining: creditUseResult.shortGamesRemaining,
@@ -221,60 +247,28 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       mode: game.mode, difficulty: game.difficulty, status: game.status,
       currentRound: game.currentRound, totalRounds: game.totalRounds, maxPlayers: game.maxPlayers,
       language: game.language, category: game.categories?.join(", "), isPrivate: !!game.isPrivate,
+      customSettings: game.customSettings,
       players: Object.values(game.players),
     });
   });
 
   // GET /api/games/leaderboard/global — Global leaderboard
   app.get("/leaderboard/global", async (req, reply) => {
-    const redis = (app as unknown as { redis: import("../lib/redis").SafeRedis }).redis;
-    if (!redis) {
-      // Fallback to database if Redis is not available
-      const users = await prisma.user.findMany({
-        
-        take: 50,
-        select: { id: true, username: true },
-      });
-      return reply.send(
-        users.map((u, i) => ({ userId: u.id, username: u.username, score: 0, rank: i + 1 }))
-      );
-    }
-
-    const entries = await redis.zrevrangebyscore(
-      KEYS.leaderboard,
-      "+inf",
-      "-inf",
-      "WITHSCORES",
-      "LIMIT",
-      0,
-      50
-    );
-
-    // Get userIds from entries
-    const userIds: string[] = [];
-    for (let i = 0; i < entries.length; i += 2) {
-      userIds.push(entries[i]);
-    }
-
-    // Fetch usernames from database
-    const users = await prisma.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, username: true },
-    });
-    const usernameMap = new Map(users.map((u) => [u.id, u.username]));
-
-    const leaderboard: { userId: string; username: string; score: number; rank: number }[] = [];
-    for (let i = 0; i < entries.length; i += 2) {
-      const userId = entries[i];
-      leaderboard.push({
-        userId,
-        username: usernameMap.get(userId) || "Unknown Warrior",
-        score: parseInt(entries[i + 1]),
-        rank: i / 2 + 1,
-      });
-    }
-
-    return reply.send(leaderboard);
+    const entries = await prisma.$queryRaw<{ userId: string; username: string; score: bigint }[]>`
+      SELECT u.id AS "userId", u.username, SUM(s.score) AS score
+      FROM "User" u
+      JOIN "PlayerGameStat" s ON s."userId" = u.id
+      JOIN "GameSession" g ON g.id = s."gameSessionId"
+      WHERE g."endedAt" IS NOT NULL
+      GROUP BY u.id, u.username
+      ORDER BY score DESC, u.id ASC
+      LIMIT 50
+    `;
+    let rank = 0;
+    return reply.send(entries.map((entry, index) => {
+      if (!index || entry.score !== entries[index - 1].score) rank = index + 1;
+      return { ...entry, score: Number(entry.score), rank };
+    }));
   });
 
   // GET /api/games/active — Get a list of currently active games for spectating

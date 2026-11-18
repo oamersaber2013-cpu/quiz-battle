@@ -361,6 +361,18 @@ try {
     category: "science", difficulty: "scholar", legacy: true,
     password: "  Test Only Private Room 19!  ", outsider,
   }));
+  const stats = await request(base, "GET", "/api/user/stats", null, host.token);
+  const hostRows = completedMatches.map(match => match.results.find(player => player.userId === host.userId));
+  assert.equal(stats.totalGames, completedMatches.length);
+  assert.equal(stats.wins, hostRows.filter(player => player.rank === 1).length);
+  assert.equal(stats.totalScore, hostRows.reduce((sum, player) => sum + player.score, 0));
+  assert.deepEqual(stats.history.map(row => row.id).sort(), completedMatches.map(match => match.gameId).sort());
+  assert.equal((await request(base, "GET", "/api/user/stats", null, outsider.token)).totalGames, 0);
+  await request(base, "GET", "/api/user/stats", null, null, 401);
+  const leaderboard = await request(base, "GET", "/api/games/leaderboard/global");
+  assert.equal(leaderboard.find(row => row.userId === host.userId)?.score, stats.totalScore);
+  report.checks.push({ name: "authenticated profile totals, personal history and global leaderboard match completed games", passed: true });
+  console.log(`PASS ${report.checks.at(-1).name}`);
   const expired = completedMatches[0];
   await delay(Math.max(0, expired.endedAt + 31000 - Date.now()));
   await request(base, "GET", `/api/games/${expired.gameId}`, null, host.token, 404);

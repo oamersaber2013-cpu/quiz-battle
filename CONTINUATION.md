@@ -1,6 +1,14 @@
-# Sword of Knowledge continuation - 17 November 2026
+# Sword of Knowledge continuation - 18 November 2026
 
 PR #1 continues from main commit `4547a7b` and is open for review.
+
+## Free public deployment
+
+[Play Sword of Knowledge](https://saif-almaarifa.onrender.com). The web and API
+are free Render services that follow the PR branch. Saved results and player
+accounts use a separate Supabase PostgreSQL database. Active rooms use API
+process memory. A service restart ends those rooms. Railway retains its
+previous database.
 
 ## Gameplay and reliability
 

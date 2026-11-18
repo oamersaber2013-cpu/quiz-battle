@@ -7,6 +7,7 @@ import { registerUser, loginUser, loginWithGoogle, loginWithFacebook } from "../
 import { validateEmail, validateUsername } from "../lib/sanitize";
 import { trackEvent } from "../lib/analytics";
 import { SocialLoginError } from "../lib/googleIdentity";
+import { randomBytes } from "node:crypto";
 
 const authRateLimit = createRateLimitHook(rateLimits.auth);
 
@@ -22,6 +23,9 @@ const loginSchema = z.object({
 }).strict();
 const googleSchema = z.object({ idToken: z.string().min(1).max(10000) }).strict();
 const facebookSchema = z.object({ accessToken: z.string().min(1).max(10000) }).strict();
+const guestSchema = z.object({
+  username: z.string().trim().min(1).max(20).regex(/^[\p{L}\p{M}\p{N}_ -]+$/u).optional(),
+}).strict();
 
 export type JWTPayload = {
   userId: string;
@@ -41,23 +45,35 @@ export const authRouter: FastifyPluginAsync = async (app) => {
 
   // ─── POST /api/auth/guest ─────────────────────────────────────
   app.post("/guest", async (req, reply) => {
-    const username = `Warrior${Math.floor(Math.random() * 9999)}`;
-    try {
-      const user = await prisma.user.create({ data: { username } });
-      const token = await reply.jwtSign({ userId: user.id, username: user.username });
-      return reply.send({
-        userId: user.id,
-        username: user.username,
-        token,
-        isGuest: true,
-        hasPurchasedGame: user.hasPurchasedGame,
-        shortGames: user.shortGamesRemaining,
-        longGames: user.longGamesRemaining,
-      });
-    } catch (err) {
-      console.error("[Auth] Guest create error:", err);
-      return reply.status(500).send({ error: "Database error" });
+    const parsed = guestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.status(400).send({ error: "Invalid guest name" });
+    const requestedName = parsed.data.username;
+    let username = requestedName ?? `Warrior${randomBytes(4).toString("hex")}`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const user = await prisma.user.create({ data: { username } });
+        const token = await reply.jwtSign({ userId: user.id, username: user.username });
+        return reply.send({
+          userId: user.id,
+          username: user.username,
+          token,
+          isGuest: true,
+          hasPurchasedGame: user.hasPurchasedGame,
+          shortGames: user.shortGamesRemaining,
+          longGames: user.longGamesRemaining,
+        });
+      } catch (err) {
+        if ((err as { code?: string } | null)?.code === "P2002") {
+          username = requestedName
+            ? `${requestedName.slice(0, 13)}_${randomBytes(3).toString("hex")}`
+            : `Warrior${randomBytes(4).toString("hex")}`;
+          continue;
+        }
+        console.error("[Auth] Guest create error:", err);
+        return reply.status(500).send({ error: "Database error" });
+      }
     }
+    return reply.status(503).send({ error: "Unable to create guest. Please try again." });
   });
 
   // ─── POST /api/auth/register ──────────────────────────────────

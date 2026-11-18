@@ -10,13 +10,14 @@ jest.mock("../lib/questions", () => ({
   clearUsedQuestions: jest.fn(),
 }));
 
-import { Difficulty, GameMode, GameStatus, PowerUpType } from "@quiz-battle/shared";
+import { Difficulty, GameMode, GameStatus, PowerUpType, DEFAULT_CUSTOM_SETTINGS } from "@quiz-battle/shared";
 import type { PlayerState } from "@quiz-battle/shared";
 import {
   confirmPowerUpSelection, getActiveGame, handlePowerUp, handlePowerUpSelection, removeActiveGame, setActiveGame, startGame,
   startPowerUpSelectionPhase,
 } from "../lib/gameOrchestrator";
 import { SafeRedis } from "../lib/redis";
+import { getConquestState } from "../lib/conquestOrchestrator";
 
 describe("Power-up selection through the first round", () => {
   const gameId = "power-up-room";
@@ -60,6 +61,60 @@ describe("Power-up selection through the first round", () => {
     startPowerUpSelectionPhase(io, redis, gameId);
     return players;
   }
+
+  it.each(["selection entry", "direct start"])("starts the real Conquest draft without standard powers through %s", async entry => {
+    const players = installGame();
+    const game = getActiveGame(gameId)!;
+    game.mode = GameMode.Conquest;
+    game.totalRounds = 12;
+    players.host.powerUpInventory = [PowerUpType.TimeWarp];
+    if (entry === "selection entry") startPowerUpSelectionPhase(io, redis, gameId);
+    else await startGame(io, redis, gameId);
+    expect(game.status).toBe(GameStatus.Question);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(getConquestState(gameId)).toMatchObject({ phase: "draft", totalRounds: 12,
+      draftPhase: { currentRound: 1 } });
+    expect(emit).toHaveBeenCalledWith("conquest:draftQuestion", expect.objectContaining({ round: 1 }));
+    expect(emit).toHaveBeenCalledWith("game:stateSync", expect.objectContaining({ room: expect.objectContaining({
+      status: GameStatus.Question, powerUpSelection: expect.objectContaining({ isSelecting: false }),
+    }) }));
+    for (const event of ["game:powerUpSelectStart", "game:countdown", "game:question"]) {
+      expect(emit).not.toHaveBeenCalledWith(event, expect.anything());
+    }
+    expect(players.host.powerUpInventory).toEqual([]);
+    expect(players.guest.powerUpInventory).toEqual([]);
+    removeActiveGame(gameId);
+  });
+
+  it("starts Custom without a forge when all powers are disabled and uses the requested deadline", async () => {
+    const players = installGame();
+    const game = getActiveGame(gameId)!;
+    game.mode = GameMode.Custom;
+    game.customSettings = { ...DEFAULT_CUSTOM_SETTINGS, rounds: 1, timePerQuestion: 5, enabledPowerUps: [] };
+    startPowerUpSelectionPhase(io, redis, gameId);
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(emit).not.toHaveBeenCalledWith("game:powerUpSelectStart", expect.anything());
+    expect(emit).toHaveBeenCalledWith("game:question", expect.objectContaining({ question: expect.objectContaining({ timeLimit: 5 }) }));
+    expect(players.host.powerUpInventory).toEqual([]);
+    expect(players.guest.powerUpInventory).toEqual([]);
+    expect(await handlePowerUp(game, io, redis, "host", PowerUpType.Shield)).toMatchObject({ success: false });
+  });
+
+  it("offers and grants only enabled Custom powers, including the default choices", async () => {
+    const players = installGame();
+    const game = getActiveGame(gameId)!;
+    game.mode = GameMode.Custom;
+    game.customSettings = { ...DEFAULT_CUSTOM_SETTINGS, rounds: 1, enabledPowerUps: [PowerUpType.TimeWarp] };
+    startPowerUpSelectionPhase(io, redis, gameId);
+    expect(emit).toHaveBeenCalledWith("game:powerUpSelectStart", expect.objectContaining({ availablePowerUps: [PowerUpType.TimeWarp] }));
+    expect(handlePowerUpSelection(gameId, "host", PowerUpType.Shield).success).toBe(false);
+    expect(handlePowerUpSelection(gameId, "host", PowerUpType.TimeWarp).success).toBe(true);
+    confirmPowerUpSelection(io, redis, gameId, "host");
+    confirmPowerUpSelection(io, redis, gameId, "guest");
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(players.host.powerUpInventory).toEqual([PowerUpType.TimeWarp]);
+    expect(players.guest.powerUpInventory).toEqual([PowerUpType.TimeWarp]);
+  });
 
   it("starts a solo battle as soon as its human confirms and preserves the exact choices", async () => {
     const players = begin("bot");

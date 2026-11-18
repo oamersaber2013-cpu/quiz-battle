@@ -185,7 +185,6 @@ function GamePageContent() {
     lastAnswerResult,
     setTimeLeft,
     selectAnswer,
-    conquestState,
     invasionState,
     powerUpSelection,
     removeEffect,
@@ -211,7 +210,7 @@ function GamePageContent() {
     if (status !== GameStatus.Question || !currentQuestion || !questionStartedAt) return;
 
     // Only show transition after first round
-    if (mode !== GameMode.Chaos && currentRound > 1 && currentRound !== transitionRound) {
+    if (mode !== GameMode.Chaos && mode !== GameMode.Conquest && currentRound > 1 && currentRound !== transitionRound) {
       setShowTransition(true);
       setTransitionRound(currentRound);
       return;
@@ -402,24 +401,23 @@ function GamePageContent() {
     );
   }
 
+  if (mode === GameMode.Conquest) {
+    return (
+      <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: 16 }}>
+        <div style={{ width: "100%", maxWidth: 960, margin: "0 auto" }}>
+          {isSpectating && <p className="glass-card p-3 text-center">{T.spectator[language]}</p>}
+          {invasionState
+            ? <InvasionGame onAnswer={handleAnswer} isSpectating={isSpectating} />
+            : <ConquestGame />}
+          <ChatWindow gameId={gameId} />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className={`page ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh", padding: "16px" }}>
-      <div style={{ maxWidth: (mode === GameMode.Conquest || invasionState) ? 1200 : 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
-        {/* Conquest mode map — show in background */}
-        {mode === GameMode.Conquest && conquestState && (
-          <div style={{ position: 'relative', marginBottom: 20 }}>
-            <ConquestGame />
-          </div>
-        )}
-
-        {/* Invasion mode map — Phase 2 of conquest */}
-        {invasionState && (
-          <div style={{ position: 'relative', marginBottom: 20 }}>
-            <InvasionGame />
-          </div>
-        )}
-
-        {/* Standard mode UI */}
+      <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
         {isSpectating && (
           <div className="glass-card p-3 text-center" style={{ border: "1px solid var(--clr-primary)", background: "rgba(108, 99, 255, 0.1)" }}>
             <strong>{T.spectator[language]}</strong>
@@ -495,19 +493,7 @@ function GamePageContent() {
         )}
 
         {currentQuestion && (
-          <div className={questionArenaClass} style={mode === GameMode.Conquest ? { 
-            position: 'relative',
-            zIndex: 100,
-            width: '100%',
-            maxWidth: '600px',
-            margin: '0 auto',
-            background: 'rgba(15, 23, 42, 0.98)',
-            backdropFilter: 'blur(12px)',
-            border: '2px solid var(--clr-primary)',
-            borderRadius: '16px',
-            padding: '24px',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.6)'
-          } : {}}>
+          <div className={questionArenaClass}>
             {(isFrozen || isSandstormed || hasTimeWarp || hasShield) && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
                 {isFrozen && <span className="battle-status battle-status-frozen">❄️ {T.frozen[language]}</span>}
@@ -674,7 +660,10 @@ function GamePageContent() {
                     else if (selectedAnswer !== null || isFrozen) extraClass = "disabled";
 
                     return (
-                      <div
+                      <button
+                        type="button"
+                        disabled={isSpectating || isFrozen || status !== GameStatus.Question || isEliminated || selectedAnswer !== null || timeLeft <= 0 || currentPlayer?.isEliminated}
+                        aria-pressed={isSelected}
                         key={i}
                         className={`answer-option ${extraClass}`}
                         onClick={isSpectating || isFrozen || status === GameStatus.AnswerReveal ? undefined : () => handleAnswer(i)}
@@ -701,7 +690,7 @@ function GamePageContent() {
                           {OPTION_LETTERS[i]}
                         </div>
                         <span style={{ flex: 1, textAlign: isRTL ? "right" : "left", position: "relative", zIndex: 1 }}>{option}</span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { useGameStore } from "@/store/gameStore";
+import { usePlayerStats } from "@/hooks/usePlayerStats";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -8,6 +9,7 @@ import { motion } from "framer-motion";
 export default function ProfilePage() {
   const router = useRouter();
   const { userId, username, role, isSubscribed, language, logout, balanceQar } = useGameStore();
+  const { ready, stats, failed, retry } = usePlayerStats();
   const isRTL = language === "ar";
 
   const T = {
@@ -28,10 +30,10 @@ export default function ProfilePage() {
   };
 
   useEffect(() => {
-    if (!userId) {
+    if (ready && !userId) {
       router.push("/");
     }
-  }, [userId, router]);
+  }, [ready, userId, router]);
 
   if (!userId) return null;
 
@@ -40,18 +42,9 @@ export default function ProfilePage() {
     router.push("/");
   }
 
-  // Generate member since date
-  const memberSince = new Date().toLocaleDateString(language === "ar" ? "ar-QA" : "en-US", {
-    year: "numeric",
-    month: "short"
-  });
-
-  // Sample achievements (placeholder)
-  const achievements = [
-    { icon: "🏆", name: { en: "First Victory", ar: "أول انتصار" }, color: "#FFD700" },
-    { icon: "⚡", name: { en: "Speed Demon", ar: "شيطان السرعة" }, color: "#00BFFF" },
-    { icon: "🎯", name: { en: "Sharp Shooter", ar: "القناص" }, color: "#32CD32" },
-  ];
+  const memberSince = stats ? new Date(stats.memberSince).toLocaleDateString(language, {
+    year: "numeric", month: "short",
+  }) : "—";
 
   return (
     <main className="page" dir={isRTL ? "rtl" : "ltr"} style={{ padding: "24px 20px" }}>
@@ -143,7 +136,7 @@ export default function ProfilePage() {
               style={{ flex: 1, minWidth: 120 }}
             >
               <div className="text-muted text-xs uppercase tracking-wider mb-1">{isRTL ? "إجمالي المعارك" : "Total Battles"}</div>
-              <div className="font-black text-xl">—</div>
+              <div className="font-black text-xl">{stats?.totalGames ?? "—"}</div>
             </motion.div>
             <motion.div
               whileHover={{ scale: 1.05 }}
@@ -151,7 +144,7 @@ export default function ProfilePage() {
               style={{ flex: 1, minWidth: 120 }}
             >
               <div className="text-muted text-xs uppercase tracking-wider mb-1">{T.wins[language]}</div>
-              <div className="font-black text-xl" style={{ color: "var(--clr-gold)" }}>—</div>
+              <div className="font-black text-xl" style={{ color: "var(--clr-gold)" }}>{stats?.wins ?? "—"}</div>
             </motion.div>
             <motion.div
               whileHover={{ scale: 1.05 }}
@@ -198,7 +191,7 @@ export default function ProfilePage() {
           <h3 className="font-bold mb-4">{T.quickActions[language]}</h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Link href="/game/play" className="btn btn-primary w-full text-center p-4">
+              <Link href="/" className="btn btn-primary w-full text-center p-4">
                 {T.playNow[language]}
               </Link>
             </motion.div>
@@ -219,26 +212,9 @@ export default function ProfilePage() {
         >
           <h3 className="font-bold mb-4">{T.achievements[language]}</h3>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: isRTL ? "flex-end" : "flex-start" }}>
-            {achievements.map((achievement, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, scale: 0 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.9 + index * 0.1 }}
-                whileHover={{ scale: 1.1, rotate: 5 }}
-                className="flex flex-col items-center p-3 rounded-xl bg-white/5 border border-white/10"
-                style={{ minWidth: 80 }}
-              >
-                <motion.div
-                  animate={{ rotate: [0, 10, -10, 0] }}
-                  transition={{ repeat: Infinity, duration: 2, delay: index * 0.3 }}
-                  style={{ fontSize: "2rem", filter: `drop-shadow(0 0 8px ${achievement.color})` }}
-                >
-                  {achievement.icon}
-                </motion.div>
-                <span className="text-xs text-muted mt-1 text-center">{achievement.name[language]}</span>
-              </motion.div>
-            ))}
+            {stats?.achievements.map(item => <span key={item.nameEn}>🏅 {isRTL ? item.nameAr : item.nameEn}</span>)}
+            {stats?.achievements.length === 0 && <span>{isRTL ? "لم تحصل على إنجازات بعد." : "No achievements earned yet."}</span>}
+            {failed && <button className="btn btn-secondary" onClick={retry}>{isRTL ? "تعذر تحميل الإحصائيات. حاول مجددًا" : "Statistics unavailable. Try again"}</button>}
           </div>
         </motion.div>
 

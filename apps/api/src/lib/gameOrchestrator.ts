@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
-import { initConquestGame } from "./conquestOrchestrator";
-import { registerInvasionCompletionHandler } from "./invasionOrchestrator";
+import { initConquestGame, removeConquestGame } from "./conquestOrchestrator";
+import { deleteInvasionGame, registerInvasionCompletionHandler } from "./invasionOrchestrator";
 import type { SafeRedis } from "../lib/redis";
 import {
   GameMode,
@@ -15,6 +15,7 @@ import {
   toSafeClientQuestion,
   FinalResult,
   AnswerReveal,
+  CustomGameSettings,
 } from "@quiz-battle/shared";
 import { KEYS, getRoomState, setRoomState } from "../lib/redis";
 import { prisma } from "@quiz-battle/db";
@@ -63,6 +64,7 @@ interface GameState {
   currentRound: number;
   totalRounds: number;
   maxPlayers: number;
+  customSettings?: CustomGameSettings;
   questionStartTime: number;
   answersThisRound: Record<string, { index?: number; answer?: SubmittedAnswer; timestamp: number; latencyMs: number }>;
   lastAnswerByPlayer: Record<string, boolean>; // for WHOLE power-up
@@ -137,6 +139,9 @@ export function removeActiveGame(gameId: string): void {
   clearResultTimers(gameId);
   removeRoomAccess(gameId);
   cleanupChaosRoom(gameId);
+  removeConquestGame(gameId);
+  deleteInvasionGame(gameId);
+  removeBots(gameId);
   clearUsedQuestions(gameId); // Clean up question tracking
 }
 
@@ -170,15 +175,38 @@ export async function startGame(
   game.finalResults = undefined;
   game.resultsPersisted = undefined;
 
+  // Conquest owns its draft, deadlines and territory rounds. Lock the room
+  // before the first await and do not grant powers used only by quiz rounds.
+  if (game.mode === GameMode.Conquest) {
+    game.status = GameStatus.Question;
+    Object.values(game.players).forEach(player => { player.powerUpInventory = []; });
+  }
+
   // Track game start
   await trackEvent("game_started", game.hostId, { gameId, mode: game.mode, difficulty: game.difficulty });
 
-  // Update status
-  game.status = GameStatus.Countdown;
-  
-  // Clear used questions for this game
+  // Clear used questions for this game.
   clearUsedQuestions(gameId);
-  
+  if (game.mode === GameMode.Conquest) {
+    await syncToRedis(redis, game);
+    // Lobby clients navigate when their authoritative room status changes.
+    io.to(gameId).emit("game:stateSync", { room: {
+      gameId, joinCode: game.joinCode, hostId: game.hostId, mode: game.mode,
+      difficulty: game.difficulty, status: game.status, isPrivate: !!game.isPrivate,
+      currentRound: 0, totalRounds: game.totalRounds, maxPlayers: game.maxPlayers,
+      language: game.language, category: game.categories?.join(", "),
+      players: Object.values(game.players), currentQuestion: null, activeEffects: [],
+      powerUpSelection: { availablePowerUps: [], selectedPowerUps: [], maxSelections: 0,
+        timeLeft: 0, isSelecting: false },
+    } });
+    const playerIds = Object.keys(game.players);
+    const playerNames = Object.fromEntries(playerIds.map(id => [id, game.players[id].username]));
+    await initConquestGame(io, gameId, playerIds, playerNames, game.difficulty,
+      game.language, game.categories, game.totalRounds);
+    return;
+  }
+
+  game.status = GameStatus.Countdown;
   game.questions = await fetchQuestions(
     game.difficulty, 
     game.totalRounds, 
@@ -186,31 +214,20 @@ export async function startGame(
     game.subcategories, 
     game.language,
     gameId, // Pass gameId to track used questions
-    { singleChoiceOnly: game.mode === GameMode.Chaos || game.mode === GameMode.Conquest }
+    { singleChoiceOnly: game.mode === GameMode.Chaos }
   );
 
-
-
-  if (game.mode === GameMode.Conquest) {
-    // Initialize 10 territories (matching the new world map)
-    game.territories = {};
-    game.playerTerritories = {};
-    const playerIds = Object.keys(game.players);
-    
-    for (let i = 1; i <= 10; i++) {
-      const territoryId = String(i);
-      // Distribute territories evenly
-      const ownerId = playerIds[(i - 1) % playerIds.length];
-      game.territories[territoryId] = ownerId;
-      if (!game.playerTerritories[ownerId]) game.playerTerritories[ownerId] = [];
-      game.playerTerritories[ownerId].push(territoryId);
-    }
+  if (game.mode === GameMode.Custom && game.customSettings) {
+    const timeLimit = game.customSettings.timePerQuestion;
+    game.questions = game.questions.map(question => ({ ...question, timeLimit }));
   }
+
+
 
   const modeConfig = GAME_MODE_CONFIG[game.mode];
   if (!modeConfig.hasPowerUps || !options.preserveSelectedPowerUps) {
     Object.values(game.players).forEach((p) => {
-      p.powerUpInventory = modeConfig.hasPowerUps ? [...STARTER_POWER_UPS] : [];
+      p.powerUpInventory = modeConfig.hasPowerUps ? [...getAllowedPowerUps(game)] : [];
     });
   }
 
@@ -229,7 +246,10 @@ async function runRounds(
   redis: SafeRedis,
   game: GameState
 ): Promise<void> {
+  const startedWithOpponents = Object.values(game.players).filter(player => !player.isEliminated).length > 1;
   for (let i = 0; i < game.questions.length; i++) {
+    if (game.mode === GameMode.Survival && startedWithOpponents &&
+        Object.values(game.players).filter(player => !player.isEliminated).length <= 1) break;
     const activePlayers = Object.values(game.players).filter((p) => !p.isEliminated && p.isConnected);
     if (activePlayers.length < 1) break;
 
@@ -487,7 +507,14 @@ async function endGame(
     if (activeGames.get(game.gameId) !== game) return;
   }
   const answerHistory = answerHistories.get(game.gameId) || new Map<string, ScoredAnswer[]>();
-  await finishCompletedGame(io, game, computeFinalResults(game.players, answerHistory, game.difficulty));
+  const results = computeFinalResults(game.players, answerHistory, game.difficulty);
+  if (game.mode === GameMode.Survival) {
+    // Survival standings put remaining competitors ahead of eliminated players;
+    // their earned quiz scores remain unchanged.
+    results.sort((a, b) => Number(game.players[a.userId].isEliminated) - Number(game.players[b.userId].isEliminated) || b.score - a.score);
+    results.forEach((result, index) => { result.rank = index + 1; });
+  }
+  await finishCompletedGame(io, game, results);
 }
 
 async function finishCompletedGame(io: TypedServer, game: GameState, results: FinalResult[]): Promise<void> {
@@ -551,13 +578,16 @@ registerInvasionCompletionHandler(async (io, completed) => {
   const results = completed.playerIds.map(userId => {
     const player = game.players[userId];
     const score = completed.scores[userId] || 0;
+    const stats = completed.answerStats?.[userId];
     if (player) player.score = score;
     return {
       userId, username: player?.username || completed.playerNames[userId] || userId,
       ...(player?.avatar ? { avatar: player.avatar } : {}),
       score, rank: 0,
-      // Territory scoring does not track quiz-answer counts or response times.
-      correctAnswers: 0, totalAnswers: 0, avgAnswerTime: 0, xpEarned: 0,
+      correctAnswers: stats?.correctAnswers ?? 0,
+      totalAnswers: stats?.totalAnswers ?? 0,
+      avgAnswerTime: stats?.totalAnswers ? Math.round(stats.totalResponseTimeMs / stats.totalAnswers) : 0,
+      xpEarned: 0,
     };
   }).sort((a, b) => b.score - a.score);
   results.forEach((result, index) => result.rank = index + 1);
@@ -814,14 +844,20 @@ interface PowerUpSelectionState {
 
 const powerUpSelections = new Map<string, PowerUpSelectionState>(); // gameId -> selection state
 
+function getAllowedPowerUps(game: GameState): PowerUpType[] {
+  return game.mode === GameMode.Custom && game.customSettings
+    ? game.customSettings.enabledPowerUps : STARTER_POWER_UPS;
+}
+
 export function getPowerUpSelectionSnapshot(
   gameId: string,
   userId: string
 ): import("@quiz-battle/shared").SyncedGameRoom["powerUpSelection"] {
   const selection = powerUpSelections.get(gameId);
-  if (!selection) return undefined;
+  const game = activeGames.get(gameId);
+  if (!selection || !game) return undefined;
   return {
-    availablePowerUps: [...STARTER_POWER_UPS],
+    availablePowerUps: [...getAllowedPowerUps(game)],
     selectedPowerUps: [...(selection.selections[userId] || [])],
     maxSelections: MAX_POWERUP_SELECTIONS,
     timeLeft: Math.max(0, Math.ceil((selection.startedAt + POWERUP_SELECTION_TIME_MS - Date.now()) / 1000)),
@@ -836,6 +872,12 @@ const redisRef = new Map<string, SafeRedis>();
 export function startPowerUpSelectionPhase(io: TypedServer, redis: SafeRedis, gameId: string): void {
   const game = activeGames.get(gameId);
   if (!game) return;
+
+  if (game.mode === GameMode.Conquest || getAllowedPowerUps(game).length === 0) {
+    game.status = GameStatus.Countdown;
+    void startGame(io, redis, gameId).catch(console.error);
+    return;
+  }
 
   // Store io reference
   ioRef.set(gameId, io);
@@ -861,7 +903,7 @@ export function startPowerUpSelectionPhase(io: TypedServer, redis: SafeRedis, ga
 
   // Notify all players
   io.to(gameId).emit("game:powerUpSelectStart", {
-    availablePowerUps: STARTER_POWER_UPS,
+    availablePowerUps: getAllowedPowerUps(game),
     maxSelections: MAX_POWERUP_SELECTIONS,
     timeLimit: POWERUP_SELECTION_TIME_MS / 1000,
   });
@@ -894,7 +936,7 @@ export function handlePowerUpSelection(
   if (selectionState.confirmed.has(userId)) return { success: false, error: "Power-up selection is already confirmed" };
 
   // Check if powerup is valid
-  if (!STARTER_POWER_UPS.includes(powerUp)) {
+  if (!getAllowedPowerUps(game).includes(powerUp)) {
     return { success: false, error: "Invalid powerup" };
   }
 
@@ -980,7 +1022,8 @@ function finalizePowerUpSelection(
     const selections = selectionState.selections[userId] || [];
     if (selections.length === 0) {
       // Assign random default powerups
-      const defaults = [PowerUpType.FiftyFifty, PowerUpType.Shield, PowerUpType.Freeze];
+      const defaults = game.mode === GameMode.Custom ? getAllowedPowerUps(game).slice(0, MAX_POWERUP_SELECTIONS)
+        : [PowerUpType.FiftyFifty, PowerUpType.Shield, PowerUpType.Freeze];
       selectionState.selections[userId] = defaults;
     }
     // Assign to player inventory
@@ -1000,25 +1043,7 @@ function finalizePowerUpSelection(
   // Start the actual game
   console.log(`[PowerUp Selection] Finalized for game ${gameId}, starting game...`);
   
-  if (game.mode === GameMode.Conquest) {
-    const playerIds = Object.keys(game.players);
-    const playerNames: Record<string, string> = {};
-    playerIds.forEach((pid) => {
-      playerNames[pid] = game.players[pid].username;
-    });
-    game.status = GameStatus.Question;
-    initConquestGame(
-      io,
-      gameId,
-      playerIds,
-      playerNames,
-      game.difficulty,
-      game.language,
-      game.categories
-    ).catch(console.error);
-  } else {
-    startGame(io, redis, gameId, { preserveSelectedPowerUps: true }).catch(console.error);
-  }
+  startGame(io, redis, gameId, { preserveSelectedPowerUps: true }).catch(console.error);
 
   // Broadcast state change to all clients
   const updatedGame = activeGames.get(gameId);

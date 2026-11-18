@@ -1,8 +1,15 @@
 import { Server } from "socket.io";
-import { Difficulty, ServerToClientEvents, ClientToServerEvents } from "@quiz-battle/shared";
+import { Difficulty, ServerToClientEvents, ClientToServerEvents, CONQUEST_TERRITORIES } from "@quiz-battle/shared";
 import { fetchQuestions } from "./questions";
+import { getBotInfo } from "./aiBots";
 
 type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
+
+export interface ConquestAnswerStats {
+  correctAnswers: number;
+  totalAnswers: number;
+  totalResponseTimeMs: number;
+}
 
 export interface InvasionCompletion {
   gameId: string;
@@ -10,6 +17,7 @@ export interface InvasionCompletion {
   playerNames: Record<string, string>;
   scores: Record<string, number>;
   totalRounds: number;
+  answerStats?: Record<string, ConquestAnswerStats>;
 }
 let completionHandler: ((io: TypedServer, completed: InvasionCompletion) => Promise<void>) | undefined;
 
@@ -33,43 +41,19 @@ export interface InvasionTerritory {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// REAL WORLD TERRITORIES — 20 Countries with Accurate Geography
+// SHARED TERRITORIES — 20 countries with schematic SVG geometry
 // Scales based on player count: 3 players → 15 territories, 5 players → 20
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const INVASION_TERRITORIES: InvasionTerritory[] = [
-  // North America (0-2)
-  { id: 0, name: "Canada", nameAr: "كندا", path: "M50,15 L95,10 L110,30 L85,50 L55,45 L40,25 Z", center: { x: 75, y: 28 }, ownerId: null, troopCount: 0 },
-  { id: 1, name: "USA", nameAr: "الولايات المتحدة", path: "M55,52 L110,48 L120,75 L70,82 L50,65 Z", center: { x: 85, y: 65 }, ownerId: null, troopCount: 0 },
-  { id: 2, name: "Mexico", nameAr: "المكسيك", path: "M55,85 L90,80 L100,100 L65,110 L50,100 Z", center: { x: 75, y: 95 }, ownerId: null, troopCount: 0 },
-  
-  // South America (3-6)
-  { id: 3, name: "Colombia", nameAr: "كولومبيا", path: "M85,112 L115,108 L120,125 L95,130 L80,120 Z", center: { x: 100, y: 118 }, ownerId: null, troopCount: 0 },
-  { id: 4, name: "Brazil", nameAr: "البرازيل", path: "M95,135 L140,128 L155,160 L125,180 L95,165 L85,145 Z", center: { x: 120, y: 155 }, ownerId: null, troopCount: 0 },
-  { id: 5, name: "Argentina", nameAr: "الأرجنتين", path: "M95,185 L125,180 L115,235 L90,225 Z", center: { x: 108, y: 208 }, ownerId: null, troopCount: 0 },
-  { id: 6, name: "Chile", nameAr: "تشيلي", path: "M80,180 L95,178 L85,240 L75,235 Z", center: { x: 82, y: 210 }, ownerId: null, troopCount: 0 },
-  
-  // Europe (7-9)
-  { id: 7, name: "UK", nameAr: "بريطانيا", path: "M125,35 L145,32 L148,48 L128,52 L120,45 Z", center: { x: 135, y: 42 }, ownerId: null, troopCount: 0 },
-  { id: 8, name: "France", nameAr: "فرنسا", path: "M145,55 L168,52 L172,75 L148,80 L140,68 Z", center: { x: 158, y: 65 }, ownerId: null, troopCount: 0 },
-  { id: 9, name: "Germany", nameAr: "ألمانيا", path: "M168,50 L195,48 L198,72 L172,75 L168,60 Z", center: { x: 182, y: 60 }, ownerId: null, troopCount: 0 },
-  
-  // Africa (10-14)
-  { id: 10, name: "Egypt", nameAr: "مصر", path: "M175,85 L205,82 L208,105 L178,108 L172,95 Z", center: { x: 190, y: 95 }, ownerId: null, troopCount: 0 },
-  { id: 11, name: "Nigeria", nameAr: "نيجيريا", path: "M155,118 L185,115 L190,140 L160,145 L152,132 Z", center: { x: 172, y: 130 }, ownerId: null, troopCount: 0 },
-  { id: 12, name: "DR Congo", nameAr: "الكونغو", path: "M175,150 L210,145 L215,185 L180,190 L172,168 Z", center: { x: 192, y: 168 }, ownerId: null, troopCount: 0 },
-  { id: 13, name: "South Africa", nameAr: "جنوب أفريقيا", path: "M180,205 L215,200 L220,235 L185,240 L175,220 Z", center: { x: 198, y: 220 }, ownerId: null, troopCount: 0 },
-  { id: 14, name: "Madagascar", nameAr: "مدغشقر", path: "M235,200 L248,198 L245,230 L232,228 Z", center: { x: 240, y: 215 }, ownerId: null, troopCount: 0 },
-  
-  // Asia (15-18)
-  { id: 15, name: "Russia", nameAr: "روسيا", path: "M200,15 L300,10 L310,50 L210,55 L195,35 Z", center: { x: 255, y: 32 }, ownerId: null, troopCount: 0 },
-  { id: 16, name: "China", nameAr: "الصين", path: "M250,65 L320,58 L325,105 L255,112 L245,85 Z", center: { x: 288, y: 85 }, ownerId: null, troopCount: 0 },
-  { id: 17, name: "India", nameAr: "الهند", path: "M235,115 L275,112 L280,155 L245,165 L235,140 Z", center: { x: 258, y: 138 }, ownerId: null, troopCount: 0 },
-  { id: 18, name: "Japan", nameAr: "اليابان", path: "M335,75 L355,72 L360,95 L342,100 L335,85 Z", center: { x: 348, y: 85 }, ownerId: null, troopCount: 0 },
-  
-  // Australia (19)
-  { id: 19, name: "Australia", nameAr: "أستراليا", path: "M290,195 L360,188 L370,245 L300,255 L285,220 Z", center: { x: 328, y: 222 }, ownerId: null, troopCount: 0 },
-];
+export const INVASION_TERRITORIES: InvasionTerritory[] = CONQUEST_TERRITORIES.map((territory) => ({
+  id: territory.id,
+  name: territory.name,
+  nameAr: territory.nameAr,
+  path: territory.path,
+  center: { ...territory.center },
+  ownerId: null,
+  troopCount: 0,
+}));
 
 // Territory adjacency based on real-world borders
 export const INVASION_TERRITORY_ADJACENCY: Record<number, number[]> = {
@@ -132,6 +116,7 @@ interface InvasionInternalState {
   difficulty: Difficulty;
   language: "en" | "ar";
   categories?: string[];
+  answerStats: Record<string, ConquestAnswerStats>;
   
   // Current round question
   currentQuestion: {
@@ -175,12 +160,26 @@ interface InvasionInternalState {
   roundStarting: boolean;
   questionTimer: ReturnType<typeof setTimeout> | null;
   phaseTimer: ReturnType<typeof setTimeout> | null;
+  botTimers: Set<ReturnType<typeof setTimeout>>;
 }
 
 export const INVASION_GAMES = new Map<string, InvasionInternalState>();
 const BASE_TROOPS = 100;
 const ATTACK_DAMAGE = 50;
 const SELECTION_TIMEOUT_MS = 10000; // 10 seconds per pick
+
+function clearBotTimers(state: InvasionInternalState): void {
+  state.botTimers.forEach(clearTimeout);
+  state.botTimers.clear();
+}
+
+function scheduleBotTask(state: InvasionInternalState, delay: number, action: () => void): void {
+  const timer = setTimeout(() => {
+    state.botTimers.delete(timer);
+    if (INVASION_GAMES.get(state.gameId) === state) action();
+  }, delay);
+  state.botTimers.add(timer);
+}
 
 // ─── Public Functions ────────────────────────────────────────
 
@@ -190,6 +189,15 @@ export interface InvasionOptions {
   categories?: string[];
   totalRounds?: number;
   playerNames?: Record<string, string>;
+  answerStats?: Record<string, ConquestAnswerStats>;
+}
+
+function copyAnswerStats(playerIds: string[], initial?: Record<string, ConquestAnswerStats>): Record<string, ConquestAnswerStats> {
+  return Object.fromEntries(playerIds.map(playerId => [playerId, {
+    correctAnswers: initial?.[playerId]?.correctAnswers ?? 0,
+    totalAnswers: initial?.[playerId]?.totalAnswers ?? 0,
+    totalResponseTimeMs: initial?.[playerId]?.totalResponseTimeMs ?? 0,
+  }]));
 }
 
 export function createInvasionGame(gameId: string, playerIds: string[], options: InvasionOptions = {}): void {
@@ -219,6 +227,7 @@ export function createInvasionGame(gameId: string, playerIds: string[], options:
     difficulty: options.difficulty || Difficulty.Medium,
     language: options.language || "en",
     categories: options.categories,
+    answerStats: copyAnswerStats(playerIds, options.answerStats),
     currentQuestion: null,
     playerResponses: {},
     lastRanking: [],
@@ -235,6 +244,7 @@ export function createInvasionGame(gameId: string, playerIds: string[], options:
     roundStarting: false,
     questionTimer: null,
     phaseTimer: null,
+    botTimers: new Set(),
   });
 }
 
@@ -280,6 +290,7 @@ export function createInvasionGameFromConquest(
     difficulty: options.difficulty || Difficulty.Medium,
     language: options.language || "en",
     categories: options.categories,
+    answerStats: copyAnswerStats(playerIds, options.answerStats),
     currentQuestion: null,
     playerResponses: {},
     lastRanking: [],
@@ -296,6 +307,7 @@ export function createInvasionGameFromConquest(
     roundStarting: false,
     questionTimer: null,
     phaseTimer: null,
+    botTimers: new Set(),
   });
 }
 
@@ -342,6 +354,21 @@ export async function startInvasionRound(
     startTime: Date.now(),
     timeLimit: question.timeLimit,
   };
+
+  for (const playerId of state.playerIds) {
+    const bot = getBotInfo(playerId);
+    if (!bot) continue;
+    const ranges = { easy: [5000, 10000], medium: [3000, 7000], hard: [1000, 4000] };
+    const [min, max] = ranges[bot.difficulty];
+    const delay = Math.max(0, Math.min(question.timeLimit * 1000 - 1, min + Math.floor(Math.random() * (max - min))));
+    const currentQuestion = state.currentQuestion;
+    scheduleBotTask(state, delay, () => {
+      if (state.currentQuestion !== currentQuestion) return;
+      const accuracy = { easy: 0.42, medium: 0.62, hard: 0.82 };
+      const answer = Math.random() < accuracy[bot.difficulty] ? question.correctIndex : Math.floor(Math.random() * question.options.length);
+      recordAnswer(gameId, playerId, answer);
+    });
+  }
   
   // Broadcast question to all players
   io.to(gameId).emit("invasion:roundStart", {
@@ -382,6 +409,10 @@ export function recordAnswer(
     responseTimeMs,
     isCorrect,
   };
+  const stats = state.answerStats[playerId];
+  stats.totalAnswers++;
+  if (isCorrect) stats.correctAnswers++;
+  stats.totalResponseTimeMs += responseTimeMs;
 }
 
 async function processQuestionResults(
@@ -390,6 +421,7 @@ async function processQuestionResults(
 ): Promise<void> {
   const state = INVASION_GAMES.get(gameId);
   if (!state || state.phase !== "question") return;
+  clearBotTimers(state);
   
   // Filter only correct players and sort by response time
   const correctPlayers = Object.entries(state.playerResponses)
@@ -473,6 +505,7 @@ function processNextPicker(
 ): void {
   const state = INVASION_GAMES.get(gameId);
   if (!state || state.phase !== "selection" || !state.selectionPhase.isActive) return;
+  clearBotTimers(state);
   if (state.selectionPhase.timerHandle) clearTimeout(state.selectionPhase.timerHandle);
   state.selectionPhase.timerHandle = null;
   
@@ -522,6 +555,16 @@ function processNextPicker(
     }
     processNextPicker(gameId, io);
   }, SELECTION_TIMEOUT_MS);
+
+  if (getBotInfo(currentPicker.playerId)) {
+    const picksRemaining = currentPicker.picks;
+    scheduleBotTask(state, 800 + Math.floor(Math.random() * 1200), () => {
+      if (state.phase !== "selection" || state.selectionPhase.pickingPlayerId !== currentPicker.playerId || currentPicker.picks !== picksRemaining) return;
+      const available = getSelectableTerritories(state, currentPicker.playerId);
+      const target = available[Math.floor(Math.random() * available.length)];
+      if (target !== undefined) selectTerritory(gameId, currentPicker.playerId, target, io);
+    });
+  }
 }
 
 function getSelectableTerritories(
@@ -673,6 +716,7 @@ function endInvasionGame(gameId: string, io: TypedServer): void {
       await completionHandler?.(io, {
         gameId, playerIds: [...state.playerIds], playerNames: { ...state.playerNames },
         scores, totalRounds: state.totalRounds,
+        answerStats: copyAnswerStats(state.playerIds, state.answerStats),
       });
     } catch (error) {
       console.error("[Invasion] Results finalization failed:", error);
@@ -694,6 +738,7 @@ export function getInvasionState(gameId: string): InvasionInternalState | undefi
 
 export function deleteInvasionGame(gameId: string): void {
   const state = INVASION_GAMES.get(gameId);
+  if (state) clearBotTimers(state);
   if (state?.questionTimer) clearTimeout(state.questionTimer);
   if (state?.phaseTimer) clearTimeout(state.phaseTimer);
   if (state?.selectionPhase.timerHandle) clearTimeout(state.selectionPhase.timerHandle);

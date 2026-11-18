@@ -2,6 +2,8 @@ import { Server } from "socket.io";
 import type { SafeRedis } from "./redis";
 import { Difficulty, ServerToClientEvents, ClientToServerEvents, ConquestClientState } from "@quiz-battle/shared";
 import { fetchQuestions } from "./questions";
+import { getBotInfo } from "./aiBots";
+import type { ConquestAnswerStats } from "./invasionOrchestrator";
 import { 
   WORLD_TERRITORIES, 
   getTerritoriesForPlayerCount as getWorldMapTerritories,
@@ -38,6 +40,9 @@ interface ConquestInternalState {
   draftPhase: {
     currentRound: number;
     questionStartedAt: number;
+    pickTurnId: string | null;
+    pickEndsAt: number | null;
+    pickSequence: number;
     question: { id: string; text: string; options: string[]; timeLimit: number; correctIndex: number } | null;
     answers: Map<string, { answer: number; responseTimeMs: number }>; // playerId -> answer
     picksRemaining: Map<string, number>; // playerId -> picks remaining this round
@@ -67,7 +72,11 @@ interface ConquestInternalState {
   difficulty: Difficulty;
   language: "en" | "ar";
   categories?: string[];
+  totalRounds: number;
+  answerStats: Record<string, ConquestAnswerStats>;
   playerNames: Record<string, string>;
+  roundStarting: boolean;
+  scheduledTasks: Set<ReturnType<typeof setTimeout>>;
 }
 
 const games = new Map<string, ConquestInternalState>();
@@ -80,7 +89,8 @@ function currentPlayer(s: ConquestInternalState): string {
   const active = activePlayers(s);
   return active[s.currentTurnIndex % active.length];
 }
-export function safeConquestState(s: ConquestInternalState): ConquestClientState {
+export function safeConquestState(s: ConquestInternalState, viewerId?: string): ConquestClientState {
+  const ownAnswer = viewerId ? s.draftPhase?.answers.get(viewerId) : undefined;
   return {
     territories: s.territories,
     fortHealth: s.fortHealth,
@@ -91,6 +101,14 @@ export function safeConquestState(s: ConquestInternalState): ConquestClientState
     eliminatedPlayers: s.eliminatedPlayers,
     draftPhase: s.draftPhase ? {
       currentRound: s.draftPhase.currentRound,
+      questionStartedAt: s.draftPhase.questionStartedAt,
+      questionEndsAt: s.draftPhase.questionStartedAt + (s.draftPhase.question?.timeLimit || 0) * 1000,
+      ...(viewerId && s.turnOrder.includes(viewerId) ? {
+        selectedAnswer: ownAnswer?.answer ?? null,
+        answeredAt: ownAnswer ? s.draftPhase.questionStartedAt + ownAnswer.responseTimeMs : null,
+      } : {}),
+      pickTurnId: s.draftPhase.pickTurnId,
+      pickEndsAt: s.draftPhase.pickEndsAt,
       question: s.draftPhase.question ? {
         id: s.draftPhase.question.id,
         text: s.draftPhase.question.text,
@@ -140,6 +158,19 @@ function emit(io: TypedServer, s: ConquestInternalState) {
   io.to(s.gameId).emit("conquest:state", safeConquestState(s));
 }
 
+function clearScheduledTasks(s: ConquestInternalState): void {
+  s.scheduledTasks.forEach(clearTimeout);
+  s.scheduledTasks.clear();
+}
+
+function scheduleTask(s: ConquestInternalState, delay: number, action: () => void): void {
+  const timer = setTimeout(() => {
+    s.scheduledTasks.delete(timer);
+    if (games.get(s.gameId) === s) action();
+  }, delay);
+  s.scheduledTasks.add(timer);
+}
+
 // ─── Init ────────────────────────────────────────────────────
 export async function initConquestGame(
   io: TypedServer,
@@ -148,7 +179,8 @@ export async function initConquestGame(
   playerNames: Record<string, string>,
   difficulty: Difficulty,
   language: "en" | "ar",
-  categories?: string[]
+  categories?: string[],
+  totalRounds = 10
 ): Promise<void> {
   // Get scaled real-world territories based on player count
   const playerCount = playerIds.length;
@@ -175,6 +207,9 @@ export async function initConquestGame(
   const draftPhase = {
     currentRound: 0,
     questionStartedAt: 0,
+    pickTurnId: null,
+    pickEndsAt: null,
+    pickSequence: 0,
     question: null as { id: string; text: string; options: string[]; timeLimit: number; correctIndex: number } | null,
     answers: new Map<string, { answer: number; responseTimeMs: number }>(),
     picksRemaining: new Map<string, number>(),
@@ -194,8 +229,11 @@ export async function initConquestGame(
     draftPhase,
     currentBattle: null,
     rebuildSession: null,
-    difficulty, language, categories,
+    difficulty, language, categories, totalRounds,
+    answerStats: Object.fromEntries(playerIds.map(playerId => [playerId, { correctAnswers: 0, totalAnswers: 0, totalResponseTimeMs: 0 }])),
     playerNames,
+    roundStarting: false,
+    scheduledTasks: new Set(),
   };
 
   games.set(gameId, state);
@@ -423,6 +461,7 @@ function endGame(io: TypedServer, s: ConquestInternalState) {
 
 export function removeConquestGame(gameId: string) {
   const s = games.get(gameId);
+  if (s) clearScheduledTasks(s);
   if (s?.draftPhase?.timerHandle) clearTimeout(s.draftPhase.timerHandle);
   if (s?.currentBattle?.timerHandle) clearTimeout(s.currentBattle.timerHandle);
   if (s?.rebuildSession?.timerHandle) clearTimeout(s.rebuildSession.timerHandle);
@@ -436,12 +475,19 @@ export async function startDraftRound(
   gameId: string
 ): Promise<void> {
   const s = games.get(gameId);
-  if (!s || !s.draftPhase) return;
+  if (!s || !s.draftPhase || s.roundStarting) return;
+  s.roundStarting = true;
 
-  const questions = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, gameId, { singleChoiceOnly: true });
+  let questions: Awaited<ReturnType<typeof fetchQuestions>>;
+  try {
+    questions = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, gameId, { singleChoiceOnly: true });
+  } finally {
+    s.roundStarting = false;
+  }
   const q = questions[0];
   if (!q || games.get(gameId) !== s || !s.draftPhase) return;
   if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);
+  clearScheduledTasks(s);
 
   // Clear previous round data
   s.draftPhase.question = {
@@ -457,12 +503,16 @@ export async function startDraftRound(
   s.draftPhase.currentPickerIndex = 0;
   s.draftPhase.currentRound++;
   s.draftPhase.questionStartedAt = Date.now();
+  s.draftPhase.pickTurnId = null;
+  s.draftPhase.pickEndsAt = null;
 
   s.phase = "draft";
 
   // Broadcast question to all players
   io.to(gameId).emit("conquest:draftQuestion", {
     round: s.draftPhase.currentRound,
+    questionStartedAt: s.draftPhase.questionStartedAt,
+    questionEndsAt: s.draftPhase.questionStartedAt + q.timeLimit * 1000,
     question: {
       id: q.id,
       text: q.text,
@@ -471,10 +521,24 @@ export async function startDraftRound(
     }
   });
 
-  // Set timer for round end (question time + 3s buffer)
+  // The visible deadline is also the server's answer deadline.
   s.draftPhase.timerHandle = setTimeout(() => {
-    processDraftRound(io, gameId);
-  }, (q.timeLimit + 3) * 1000);
+    if (games.get(gameId) === s) void processDraftRound(io, gameId);
+  }, q.timeLimit * 1000);
+
+  const round = s.draftPhase.currentRound;
+  for (const playerId of s.turnOrder) {
+    const bot = getBotInfo(playerId);
+    if (!bot) continue;
+    const ranges = { easy: [5000, 10000], medium: [3000, 7000], hard: [1000, 4000] };
+    const [min, max] = ranges[bot.difficulty];
+    const delay = Math.min(q.timeLimit * 1000 - 1, min + Math.floor(Math.random() * (max - min)));
+    scheduleTask(s, Math.max(0, delay), () => {
+      const accuracy = { easy: 0.42, medium: 0.62, hard: 0.82 };
+      const answer = Math.random() < accuracy[bot.difficulty] ? q.correctIndex : Math.floor(Math.random() * q.options.length);
+      recordDraftAnswer(gameId, playerId, answer, delay, { questionId: q.id, round }, io);
+    });
+  }
 
   emit(io, s);
 }
@@ -483,24 +547,37 @@ export function recordDraftAnswer(
   gameId: string,
   playerId: string,
   answerIndex: number,
-  _responseTimeMs: number
+  _responseTimeMs: number,
+  expected?: { questionId?: string; round?: number },
+  io?: TypedServer
 ): { success: boolean; error?: string } {
   const s = games.get(gameId);
-  if (!s || s.phase !== "draft" || !s.draftPhase) {
+  if (!s || !s.draftPhase || (s.phase !== "draft" && s.phase !== "draft_selection")) {
     return { success: false, error: "Not in draft phase" };
   }
 
-  if (s.draftPhase.answers.has(playerId)) {
-    return { success: false, error: "Already answered" };
-  }
-
   const question = s.draftPhase.question;
+  if ((expected?.questionId !== undefined && expected.questionId !== question?.id) ||
+      (expected?.round !== undefined && expected.round !== s.draftPhase.currentRound)) {
+    return { success: false, error: "Draft question has changed" };
+  }
   if (!s.turnOrder.includes(playerId) || !question || !Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= question.options.length) {
     return { success: false, error: "Invalid draft answer" };
   }
+  const previous = s.draftPhase.answers.get(playerId);
+  if (previous) return previous.answer === answerIndex ? { success: true } : { success: false, error: "Already answered" };
+  if (s.phase !== "draft") return { success: false, error: "Not in draft phase" };
   const responseTimeMs = Math.max(0, Date.now() - s.draftPhase.questionStartedAt);
-  if (responseTimeMs > question.timeLimit * 1000) return { success: false, error: "Answer time expired" };
+  if (responseTimeMs >= question.timeLimit * 1000) return { success: false, error: "Answer time expired" };
   s.draftPhase.answers.set(playerId, { answer: answerIndex, responseTimeMs });
+  const stats = s.answerStats[playerId];
+  stats.totalAnswers++;
+  if (answerIndex === question.correctIndex) stats.correctAnswers++;
+  stats.totalResponseTimeMs += responseTimeMs;
+  if (io) {
+    emit(io, s);
+    if (s.draftPhase.answers.size === s.turnOrder.length) void processDraftRound(io, gameId);
+  }
   return { success: true };
 }
 
@@ -515,6 +592,7 @@ export async function processDraftRound(
   if (!q) return;
   if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);
   s.draftPhase.timerHandle = null;
+  clearScheduledTasks(s);
 
   // Calculate rankings: correct + fast answers first
   const playerIds = s.turnOrder;
@@ -611,20 +689,37 @@ function startNextPick(io: TypedServer, s: ConquestInternalState): void {
     return;
   }
 
+  if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);
+  clearScheduledTasks(s);
+  const turnId = `${s.draftPhase.currentRound}:${++s.draftPhase.pickSequence}`;
+  s.draftPhase.pickTurnId = turnId;
+  s.draftPhase.pickEndsAt = Date.now() + 10000;
+
   // Notify whose turn to pick
   io.to(s.gameId).emit("conquest:draftPickTurn", {
     playerId: currentPicker,
     playerName: s.playerNames[currentPicker] || currentPicker,
     picksRemaining,
-    availableTerritories: s.draftPhase.availableTerritories
+    availableTerritories: s.draftPhase.availableTerritories,
+    turnId,
+    endsAt: s.draftPhase.pickEndsAt,
   });
 
   // Set timeout for pick (10 seconds)
-  if (s.draftPhase.timerHandle) clearTimeout(s.draftPhase.timerHandle);
   s.draftPhase.timerHandle = setTimeout(() => {
+    if (games.get(s.gameId) !== s || s.draftPhase?.pickTurnId !== turnId) return;
     // Auto-skip if timeout
     skipDraftPick(io, s.gameId);
   }, 10000);
+
+  if (getBotInfo(currentPicker)) {
+    scheduleTask(s, 800 + Math.floor(Math.random() * 1200), () => {
+      if (s.phase !== "draft_selection" || s.draftPhase?.pickTurnId !== turnId) return;
+      const available = s.draftPhase.availableTerritories;
+      const territoryId = available[Math.floor(Math.random() * available.length)];
+      if (territoryId) selectDraftTerritory(io, s.gameId, currentPicker, territoryId, turnId);
+    });
+  }
 
   emit(io, s);
 }
@@ -633,11 +728,17 @@ export function selectDraftTerritory(
   io: TypedServer,
   gameId: string,
   playerId: string,
-  territoryId: string
+  territoryId: string,
+  expectedTurnId?: string
 ): { success: boolean; error?: string } {
   const s = games.get(gameId);
   if (!s || s.phase !== "draft_selection" || !s.draftPhase) {
     return { success: false, error: "Not draft selection phase" };
+  }
+
+  if ((expectedTurnId !== undefined && expectedTurnId !== s.draftPhase.pickTurnId) ||
+      (s.draftPhase.pickEndsAt !== null && Date.now() >= s.draftPhase.pickEndsAt)) {
+    return { success: false, error: "Draft pick turn has changed" };
   }
 
   // Check if it's this player's turn
@@ -718,7 +819,7 @@ function checkDraftComplete(io: TypedServer, s: ConquestInternalState): void {
       s.playerNames,
       s.territories as Record<string, string>, // Filter out nulls via type assertion
       s.fortTerritoryId,
-      { difficulty: s.difficulty, language: s.language, categories: s.categories }
+      { difficulty: s.difficulty, language: s.language, categories: s.categories, totalRounds: s.totalRounds, answerStats: s.answerStats }
     );
 
     // Notify clients that invasion phase is starting

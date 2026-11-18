@@ -3,6 +3,7 @@
 // ============================================================
 
 export * from "./enums";
+export * from "./territories";
 
 import {
   Difficulty,
@@ -208,6 +209,27 @@ export interface ChatMessage {
   isSystem?: boolean;
 }
 
+export interface CustomGameSettings {
+  name: string;
+  rounds: number;
+  timePerQuestion: number;
+  difficulty: Difficulty;
+  enabledPowerUps: PowerUpType[];
+  maxPlayers: number;
+  categoryFilter: string | null;
+}
+
+export const DEFAULT_CUSTOM_SETTINGS: CustomGameSettings = {
+  name: "Custom Battle",
+  rounds: 10,
+  timePerQuestion: 15,
+  difficulty: Difficulty.Scholar,
+  enabledPowerUps: [PowerUpType.Shield, PowerUpType.FiftyFifty, PowerUpType.DoubleDown,
+    PowerUpType.Freeze, PowerUpType.Sandstorm, PowerUpType.Steal],
+  maxPlayers: 8,
+  categoryFilter: null,
+};
+
 export interface GameRoom {
   gameId: string;
   joinCode: string;
@@ -219,6 +241,7 @@ export interface GameRoom {
   currentRound: number;
   totalRounds: number;
   maxPlayers: number;
+  customSettings?: CustomGameSettings;
   category?: string;
   subcategory?: string;
   language?: "en" | "ar";
@@ -324,6 +347,12 @@ export interface ConquestClientState {
   eliminatedPlayers: string[];
   draftPhase?: {
     currentRound: number;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
+    selectedAnswer?: number | null;
+    answeredAt?: number | null;
+    pickTurnId?: string | null;
+    pickEndsAt?: number | null;
     question: ConquestDuelQuestion | null;
     answered: number;
     totalPlayers: number;
@@ -499,6 +528,8 @@ export interface ServerToClientEvents {
   // Conquest Draft Phase events (Splitting the world)
   "conquest:draftQuestion": (data: {
     round: number;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
     question: { id: string; text: string; options: string[]; timeLimit: number };
   }) => void;
   "conquest:draftRanking": (data: {
@@ -511,6 +542,8 @@ export interface ServerToClientEvents {
     playerName: string;
     picksRemaining: number;
     availableTerritories: string[];
+    turnId?: string;
+    endsAt?: number;
   }) => void;
   "conquest:territoryClaimed": (data: {
     territoryId: string;
@@ -672,9 +705,12 @@ export interface ClientToServerEvents {
     cb?: (res: AckResponse) => void
   ) => void;
   "conquest:rebuildAnswer": (data: { gameId: string; answerIndex: number }) => void;
-  "conquest:draftAnswer": (data: { gameId: string; answerIndex: number; responseTimeMs: number }) => void;
+  "conquest:draftAnswer": (
+    data: { gameId: string; answerIndex: number; responseTimeMs: number; questionId?: string; round?: number },
+    cb?: (res: AckResponse) => void
+  ) => void;
   "conquest:selectDraftTerritory": (
-    data: { gameId: string; territoryId: string },
+    data: { gameId: string; territoryId: string; turnId?: string },
     cb?: (res: AckResponse) => void
   ) => void;
   "conquest:answer": (data: { gameId: string; answerIndex: number; responseTimeMs: number }) => void;

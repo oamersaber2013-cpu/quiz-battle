@@ -1,360 +1,487 @@
 "use client";
-import { useGameStore } from "@/store/gameStore";
-import { getSocket } from "@/lib/socket";
-import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect } from "react";
-import { emitConquestAttack } from "@/lib/socket";
-import { WorldMap, SoundEffects, VICTORY_STATEMENTS, DEFEAT_STATEMENTS, TERRITORIES } from "./WorldMap";
 
-// Sound effect instance
-const soundEffects = new SoundEffects();
+import { useEffect, useRef, useState } from "react";
+import { useGameStore } from "@/store/gameStore";
+import {
+  emitConquestAttack,
+  emitConquestRebuild,
+  getSocket,
+} from "@/lib/socket";
+import { WorldMap, TERRITORIES } from "./WorldMap";
+import styles from "./ConquestGame.module.css";
+
+const PLAYER_COLORS = [
+  "#fb7185",
+  "#60a5fa",
+  "#4ade80",
+  "#facc15",
+  "#c084fc",
+  "#f472b6",
+  "#fb923c",
+  "#22d3ee",
+];
 
 export function ConquestGame() {
-  const {
-    conquestState,
-    userId,
-    language,
-    players,
-    gameId,
-    addToast
-  } = useGameStore();
-
-  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
-  const [draftStartTime, setDraftStartTime] = useState<number>(Date.now);
-  const draftQuestionId = conquestState?.draftPhase?.question?.id;
-  const conquestPhase = conquestState?.phase;
-  useEffect(() => {
-    if (conquestPhase === "draft" && draftQuestionId) setDraftStartTime(Date.now());
-  }, [conquestPhase, draftQuestionId]);
-
-  // Handle battle results with sounds and statements
-  useEffect(() => {
-    const socket = getSocket();
-    
-    const handleDuelResult = (data: { attackerWon: boolean; tieBreaker?: boolean }) => {
-      if (data.tieBreaker) return;
-      
-      const isAr = language === "ar";
-      
-      if (data.attackerWon) {
-        // Victory!
-        soundEffects.playVictory();
-        const statement = VICTORY_STATEMENTS[Math.floor(Math.random() * VICTORY_STATEMENTS.length)];
-        addToast("success", isAr ? statement.ar : statement.en);
-      } else {
-        // Defeat
-        soundEffects.playDefeat();
-        const statement = DEFEAT_STATEMENTS[Math.floor(Math.random() * DEFEAT_STATEMENTS.length)];
-        addToast("error", isAr ? statement.ar : statement.en);
-      }
-    };
-    
-    socket.on("conquest:duelResult", handleDuelResult);
-    return () => {
-      socket.off("conquest:duelResult", handleDuelResult);
-    };
-  }, [addToast, language]);
-
-  if (!conquestState) {
+  const { conquestState, gameId, language } = useGameStore();
+  if (!conquestState)
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <motion.div 
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-            className="text-4xl mb-4"
-          >
-            ⚔️
-          </motion.div>
-          <h2 className="text-xl font-bold">{language === "ar" ? "جاري التحميل..." : "Loading..."}</h2>
-        </div>
-      </div>
+      <p role="status">
+        {language === "ar" ? "جارٍ تحميل المعركة..." : "Loading the battle..."}
+      </p>
     );
-  }
+  const questionId =
+    conquestState.currentBattle?.question.id ??
+    conquestState.rebuildSession?.question.id ??
+    conquestState.draftPhase?.question?.id;
+  const turnKey =
+    conquestState.draftPhase?.pickTurnId ?? conquestState.currentTurnIndex;
+  return (
+    <ConquestBoard
+      key={`${gameId}:${conquestState.phase}:${conquestState.draftPhase?.currentRound}:${questionId}:${turnKey}`}
+    />
+  );
+}
 
+function ConquestBoard() {
+  const { conquestState, userId, language, players, gameId, addToast } =
+    useGameStore();
+  const state = conquestState!;
+  const { phase, draftPhase, currentBattle, rebuildSession } = state;
   const isAr = language === "ar";
-  const {
-    territories,
-    fortHealth,
-    fortTerritoryId,
-    turnOrder,
-    currentTurnIndex,
-    phase,
-    eliminatedPlayers,
-    currentBattle,
-    rebuildSession,
-    draftPhase
-  } = conquestState;
-  const territoryOwners = territories as Record<string, string | null>;
-  const normalizedFortTerritoryId = Object.fromEntries(
-    Object.entries(fortTerritoryId).map(([pid, tid]) => [pid, String(tid)])
-  ) as Record<string, string>;
-
-  const currentTurnPlayerId = turnOrder[currentTurnIndex];
-  const isMyTurn = currentTurnPlayerId === userId;
-  const isBattling = currentBattle && (currentBattle.attackerId === userId || currentBattle.defenderId === userId);
-  const isRebuilding = rebuildSession && rebuildSession.playerId === userId;
-
-  const handleTerritoryClick = (tid: string) => {
-    if (phase === "draft_selection") {
-      if (draftPhase?.pickOrder[draftPhase.currentPickerIndex] !== userId) return;
-      if (!draftPhase?.availableTerritories?.includes(tid)) return;
-      getSocket().emit("conquest:selectDraftTerritory", { gameId: gameId!, territoryId: tid });
-      return;
-    }
-    if (!isMyTurn || phase !== "select_target") return;
-    const ownerId = territoryOwners[tid];
-    if (ownerId === userId) return;
-    setSelectedTarget(tid);
+  const participant =
+    players.some((player) => player.userId === userId) &&
+    !state.eliminatedPlayers.includes(userId ?? "");
+  const pickerId = draftPhase?.pickOrder[draftPhase.currentPickerIndex];
+  const turnPlayerId =
+    phase === "draft_selection"
+      ? pickerId
+      : state.turnOrder[state.currentTurnIndex];
+  const isMyTurn = participant && turnPlayerId === userId;
+  const isBattling =
+    currentBattle?.attackerId === userId ||
+    currentBattle?.defenderId === userId;
+  const isRebuilding = rebuildSession?.playerId === userId;
+  const question =
+    currentBattle?.question ??
+    rebuildSession?.question ??
+    (phase === "draft" ? draftPhase?.question : null);
+  const questionKey = `${gameId}:${phase}:${draftPhase?.currentRound}:${question?.id}`;
+  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [submission, setSubmission] = useState<{
+    index: number;
+    pending: boolean;
+  } | null>(null);
+  const [actionPending, setActionPending] = useState(false);
+  const [now, setNow] = useState(Date.now);
+  const mountedAt = useRef(Date.now());
+  const answerLocked = useRef(false);
+  const actionLocked = useRef(false);
+  const active = useRef(true);
+  const answerRequestId = useRef(0);
+  const requestTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const questionStartedAt =
+    (phase === "draft" ? draftPhase?.questionStartedAt : undefined) ??
+    mountedAt.current;
+  const questionEndsAt =
+    (phase === "draft" ? draftPhase?.questionEndsAt : undefined) ??
+    questionStartedAt + (question?.timeLimit ?? 30) * 1000;
+  const deadline =
+    phase === "draft_selection"
+      ? draftPhase?.pickEndsAt
+      : question
+        ? questionEndsAt
+        : undefined;
+  const secondsLeft = deadline
+    ? Math.max(0, Math.ceil((deadline - now) / 1000))
+    : null;
+  const selectedAnswer =
+    phase === "draft"
+      ? (draftPhase?.selectedAnswer ?? submission?.index)
+      : submission?.index;
+  const serverAnswered =
+    phase === "draft"
+      ? draftPhase?.selectedAnswer != null || draftPhase?.answeredAt != null
+      : currentBattle
+        ? currentBattle.attackerId === userId
+          ? currentBattle.attackerAnswered
+          : currentBattle.defenderAnswered
+        : Boolean(isRebuilding && rebuildSession?.answered);
+  const answered = serverAnswered || submission !== null;
+  const canAnswer =
+    participant &&
+    (phase === "draft" || isBattling || isRebuilding) &&
+    !answered &&
+    secondsLeft !== 0;
+  const colorFor = (id: string) =>
+    PLAYER_COLORS[
+      Math.max(
+        0,
+        players.findIndex((player) => player.userId === id),
+      ) % PLAYER_COLORS.length
+    ];
+  const playerName = (id?: string) =>
+    players.find((player) => player.userId === id)?.username ??
+    (isAr ? "اللاعب" : "the player");
+  const territoryName = (id: string) => {
+    const territory = TERRITORIES.find((item) => item.id === id);
+    return (isAr ? territory?.nameAr : territory?.name) ?? id;
   };
 
-  const handleAttack = async () => {
-    if (selectedTarget === null || !gameId) return;
-    await emitConquestAttack(gameId, selectedTarget);
-    setSelectedTarget(null);
-  };
+  useEffect(() => {
+    active.current = true;
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => {
+      active.current = false;
+      clearInterval(timer);
+      clearTimeout(requestTimeout.current);
+    };
+  }, []);
 
-  const handleRebuild = () => {
-    if (!gameId) return;
-    getSocket().emit("conquest:rebuild", { gameId });
-  };
+  const showActionError = () =>
+    addToast(
+      "error",
+      isAr
+        ? "تعذر إتمام الطلب. حاول مرة أخرى."
+        : "The request failed. Please try again.",
+    );
 
-  const handleAnswer = (index: number) => {
-    if (!gameId) return;
+  function handleAnswer(index: number) {
+    if (!gameId || !question || !canAnswer || answerLocked.current) return;
+    answerLocked.current = true;
+    setSubmission({ index, pending: phase === "draft" });
     if (phase === "draft") {
-      getSocket().emit("conquest:draftAnswer", { gameId, answerIndex: index, responseTimeMs: Date.now() - draftStartTime });
+      const requestId = ++answerRequestId.current;
+      const finish = (success: boolean) => {
+        if (!active.current || answerRequestId.current !== requestId) return;
+        answerRequestId.current++;
+        clearTimeout(requestTimeout.current);
+        const latest = useGameStore.getState();
+        const draft = latest.conquestState?.draftPhase;
+        const latestKey = `${latest.gameId}:${latest.conquestState?.phase}:${draft?.currentRound}:${draft?.question?.id}`;
+        if (latestKey !== questionKey) return;
+        if (!success) {
+          if (draft?.selectedAnswer != null) {
+            setSubmission({ index: draft.selectedAnswer, pending: false });
+            return;
+          }
+          answerLocked.current = false;
+          setSubmission(null);
+          showActionError();
+          return;
+        }
+        if (latest.conquestState && draft) {
+          latest.setConquestState({
+            ...latest.conquestState,
+            draftPhase: {
+              ...draft,
+              selectedAnswer: index,
+              answeredAt: Date.now(),
+            },
+          });
+        }
+        setSubmission({ index, pending: false });
+      };
+      requestTimeout.current = setTimeout(() => finish(false), 5000);
+      getSocket().emit(
+        "conquest:draftAnswer",
+        {
+          gameId,
+          answerIndex: index,
+          responseTimeMs: Math.max(0, Date.now() - questionStartedAt),
+          questionId: question.id,
+          round: draftPhase!.currentRound,
+        },
+        (response) => finish(response.success),
+      );
     } else if (isBattling) {
       getSocket().emit("conquest:duelAnswer", { gameId, answerIndex: index });
     } else if (isRebuilding) {
-      getSocket().emit("conquest:rebuildAnswer", { gameId, answerIndex: index });
+      getSocket().emit("conquest:rebuildAnswer", {
+        gameId,
+        answerIndex: index,
+      });
     }
-  };
+  }
 
-  const getPlayerDetails = (pid: string) => players.find(p => p.userId === pid);
+  function handleTerritoryClick(territoryId: string) {
+    if (!gameId || !isMyTurn || actionLocked.current) return;
+    if (phase !== "draft_selection") {
+      if (
+        phase === "select_target" &&
+        state.territories[territoryId] !== userId
+      )
+        setSelectedTarget(territoryId);
+      return;
+    }
+    if (
+      !draftPhase?.availableTerritories.includes(territoryId) ||
+      secondsLeft === 0
+    )
+      return;
+    actionLocked.current = true;
+    setActionPending(true);
+    requestTimeout.current = setTimeout(() => {
+      if (!active.current) return;
+      actionLocked.current = false;
+      setActionPending(false);
+      showActionError();
+    }, 5000);
+    getSocket().emit(
+      "conquest:selectDraftTerritory",
+      { gameId, territoryId, turnId: draftPhase.pickTurnId ?? undefined },
+      (response) => {
+        if (!active.current) return;
+        clearTimeout(requestTimeout.current);
+        actionLocked.current = false;
+        setActionPending(false);
+        if (!response.success) showActionError();
+      },
+    );
+  }
 
-  // Colors for players
-  const playerColors = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#ec4899", "#f97316", "#06b6d4"];
-  const getColor = (pid: string) => {
-    const idx = players.findIndex(p => p.userId === pid);
-    return playerColors[idx % playerColors.length] || "#94a3b8";
-  };
+  async function handleAction(rebuild: boolean) {
+    if (!gameId || actionLocked.current || (!rebuild && !selectedTarget))
+      return;
+    actionLocked.current = true;
+    setActionPending(true);
+    try {
+      const response = rebuild
+        ? await emitConquestRebuild(gameId)
+        : await emitConquestAttack(gameId, selectedTarget!);
+      if (!response.success) showActionError();
+      else setSelectedTarget(null);
+    } catch {
+      showActionError();
+    } finally {
+      if (active.current) {
+        actionLocked.current = false;
+        setActionPending(false);
+      }
+    }
+  }
+
+  const availableTerritories =
+    phase === "draft_selection"
+      ? (draftPhase?.availableTerritories ?? [])
+      : Object.keys(state.territories).filter(
+          (id) => state.territories[id] && state.territories[id] !== userId,
+        );
+  const map = (
+    <WorldMap
+      territories={state.territories}
+      fortTerritoryId={state.fortTerritoryId}
+      playerColors={Object.fromEntries(
+        players.map((player) => [player.userId, colorFor(player.userId)]),
+      )}
+      currentPlayerId={userId ?? ""}
+      selectedTarget={selectedTarget}
+      phase={phase}
+      language={language}
+      isMyTurn={isMyTurn && !actionPending && secondsLeft !== 0}
+      availableTerritories={availableTerritories}
+      onTerritoryClick={handleTerritoryClick}
+    />
+  );
 
   return (
-    <div className="flex flex-col w-full h-[calc(100vh-80px)] bg-slate-900 text-white relative overflow-hidden font-sans">
-      
-      {/* ─── Top Player Bar ─── */}
-      <div className="flex items-center justify-center gap-3 p-3 z-10" style={{
-        background: 'linear-gradient(180deg, #2d3748 0%, #1a202c 100%)',
-        borderBottom: '3px solid #4a5568'
-      }}>
-        {players.map((p) => {
-          const isTurn = p.userId === currentTurnPlayerId;
-          const isElim = eliminatedPlayers.includes(p.userId);
-          const fHealth = fortHealth[p.userId] ?? 3;
-          const color = getColor(p.userId);
-          
-          return (
-            <div key={p.userId} style={{
-              display: 'flex',
-              alignItems: 'center',
-              background: 'linear-gradient(180deg, #8b7355 0%, #6b5344 100%)',
-              borderRadius: '8px',
-              padding: '8px 16px',
-              border: isTurn ? '3px solid #fbbf24' : '2px solid #5a4a2a',
-              boxShadow: isTurn ? '0 0 15px rgba(251, 191, 36, 0.5)' : '0 4px 8px rgba(0,0,0,0.3)',
-              minWidth: '180px',
-              transform: isTurn ? 'scale(1.05)' : 'scale(1)',
-              transition: 'all 0.3s ease',
-              opacity: isElim ? 0.5 : 1
-            }}>
-              {/* Pirate Avatar */}
-              <div style={{
-                width: '50px',
-                height: '50px',
-                borderRadius: '6px',
-                border: '2px solid #3d2515',
-                background: 'linear-gradient(135deg, #d4a574 0%, #8b6914 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '28px',
-                marginRight: '12px',
-                boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.3)'
-              }}>
-                {isElim ? "💀" : "🏴‍☠️"}
-              </div>
-              
-              {/* Player Info */}
-              <div style={{ flex: 1 }}>
-                <div style={{
-                  fontWeight: 'bold',
-                  color: 'white',
-                  fontSize: '14px',
-                  textShadow: '1px 1px 2px rgba(0,0,0,0.5)',
-                  marginBottom: '4px'
-                }}>
-                  {p.username}
-                </div>
-                <div style={{
-                  fontSize: '18px',
-                  fontWeight: 'bold',
-                  color: color
-                }}>
-                  {p.score || 0}
-                </div>
-                {/* Fort Health Dots */}
-                <div style={{ display: 'flex', gap: '3px', marginTop: '4px' }}>
-                  {[1,2,3].map(i => (
-                    <div key={i} style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      backgroundColor: i <= fHealth ? '#fbbf24' : '#4a5568',
-                      border: '1px solid #2d3748',
-                      boxShadow: i <= fHealth ? '0 0 5px #fbbf24' : 'none'
-                    }} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+    <section
+      className={styles.root}
+      dir={isAr ? "rtl" : "ltr"}
+      aria-label={isAr ? "معركة الغزو" : "Conquest battle"}
+    >
+      <div className={styles.players}>
+        {players.map((player) => (
+          <div
+            key={player.userId}
+            className={styles.player}
+            style={{ borderColor: colorFor(player.userId) }}
+          >
+            <strong>
+              {player.username}
+              {player.userId === userId ? (isAr ? " (أنت)" : " (you)") : ""}
+            </strong>
+            <span>
+              {
+                Object.values(state.territories).filter(
+                  (owner) => owner === player.userId,
+                ).length
+              }{" "}
+              {isAr ? "أقاليم" : "territories"}
+            </span>
+            <span>
+              {isAr ? "الحصن" : "Fort"}{" "}
+              <bdi>{state.fortHealth[player.userId] ?? 3}/3</bdi>
+            </span>
+          </div>
+        ))}
       </div>
-
-      {/* ─── Main Map Area ─── */}
-      <div className="flex-1 relative flex items-center justify-center p-8" style={{ 
-        background: 'linear-gradient(180deg, #5a9aa8 0%, #4a8a98 50%, #3d7a8c 100%)',
-      }}>
-        {/* WorldMap Component with geographic continent shapes */}
-        <WorldMap 
-          territories={territoryOwners}
-          fortTerritoryId={normalizedFortTerritoryId}
-          playerColors={players.reduce((acc, p) => ({ ...acc, [p.userId]: getColor(p.userId) }), {} as Record<string, string>)}
-          currentPlayerId={userId ?? ""}
-          onTerritoryClick={handleTerritoryClick}
-          selectedTarget={selectedTarget}
-          isMyTurn={isMyTurn}
-          phase={phase}
-        />
-
-        {/* ─── Action Panel ─── */}
-        {isMyTurn && phase === "select_target" && (
-          <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4 bg-slate-900/90 p-4 rounded-2xl border border-slate-700 shadow-2xl backdrop-blur-md z-40">
-            {selectedTarget !== null ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="text-lg">
-                  {isAr ? "مهاجمة" : "Attack"} <span className="font-bold text-amber-400">
-                    {isAr ? TERRITORIES.find(t=>t.id===selectedTarget)?.nameAr : TERRITORIES.find(t=>t.id===selectedTarget)?.name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={handleAttack} 
-                    className="bg-red-600 hover:bg-red-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white px-6 py-2 rounded-xl font-bold transition flex items-center gap-2"
-                  >
-                    ⚔️ {isAr ? "هجوم!" : "Attack!"}
-                  </button>
-                  <button onClick={() => setSelectedTarget(null)} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl">
-                    {isAr ? "إلغاء" : "Cancel"}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-6">
-                <div className="text-xl font-bold text-amber-400 flex items-center gap-2">
-                  🗺️ {isAr ? "دورك! اختر أرضاً للهجوم" : "Your Turn! Select a territory to attack"}
-                </div>
-                {(fortHealth[userId] ?? 3) < 3 && (
-                  <button onClick={handleRebuild} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-xl font-bold transition flex items-center gap-2 shadow-lg shadow-amber-900/50">
-                    🏰 {isAr ? "إعادة بناء الحصن" : "Rebuild Fort"}
-                  </button>
-                )}
-              </div>
+      {question ? (
+        <div className={styles.questionCard}>
+          <div className={styles.questionMeta}>
+            <strong>
+              {phase === "draft"
+                ? isAr
+                  ? `توزيع القواعد · الجولة ${draftPhase?.currentRound}`
+                  : `Draft · Round ${draftPhase?.currentRound}`
+                : isAr
+                  ? "سؤال المعركة"
+                  : "Battle question"}
+            </strong>
+            {secondsLeft !== null && (
+              <span
+                className={styles.timer}
+                data-testid="conquest-countdown"
+                role="timer"
+                aria-label={isAr ? "الثواني المتبقية" : "Seconds remaining"}
+              >
+                {secondsLeft}
+              </span>
             )}
-          </motion.div>
-        )}
-
-        {phase === "draft_selection" && (
-          <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4 bg-slate-900/90 p-4 rounded-2xl border border-amber-500 shadow-2xl backdrop-blur-md z-40">
-            <div className="flex items-center gap-6">
-              <div className="text-xl font-bold text-amber-400 flex items-center gap-2">
-                {draftPhase?.pickOrder[draftPhase.currentPickerIndex] === userId 
-                  ? (isAr ? "🗺️ دورك لاختيار قاعدة!" : "🗺️ Your Turn! Select a starting base")
-                  : (isAr ? `ننتظر ${getPlayerDetails(draftPhase?.pickOrder[draftPhase?.currentPickerIndex || 0] || "")?.username} ليختار` : `Waiting for ${getPlayerDetails(draftPhase?.pickOrder[draftPhase?.currentPickerIndex || 0] || "")?.username} to pick`)}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </div>
-
-      {/* ─── Battle / Draft Overlay ─── */}
-      <AnimatePresence>
-        {(currentBattle || rebuildSession || (phase === "draft" && draftPhase?.question)) && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-6 backdrop-blur-md">
-            
-            {/* Duel Header */}
-            {currentBattle && (
-              <div className="flex items-center gap-12 mb-12">
-                <div className="text-center">
-                  <div className="text-6xl mb-4">🏴‍☠️</div>
-                  <div className="text-2xl font-bold" style={{ color: getColor(currentBattle.attackerId) }}>{getPlayerDetails(currentBattle.attackerId)?.username}</div>
-                  <div className="text-red-400 font-bold">{isAr ? "المهاجم" : "Attacker"}</div>
-                </div>
-                <div className="text-5xl font-black text-amber-500 animate-pulse">VS</div>
-                <div className="text-center">
-                  <div className="text-6xl mb-4">🏰</div>
-                  <div className="text-2xl font-bold" style={{ color: getColor(currentBattle.defenderId) }}>{getPlayerDetails(currentBattle.defenderId)?.username}</div>
-                  <div className="text-blue-400 font-bold">{isAr ? "المدافع" : "Defender"}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Question Card */}
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-3xl bg-slate-800 rounded-3xl p-8 border-2 border-amber-500/30 shadow-2xl shadow-amber-500/10">
-              <div className="text-center mb-8">
-                <span className="bg-amber-500/20 text-amber-400 px-4 py-1 rounded-full text-sm font-bold uppercase tracking-wider">
-                  {phase === "draft" ? (isAr ? "توزيع القواعد" : "Draft Phase") : rebuildSession ? (isAr ? "سؤال البناء" : "Rebuild Question") : (isAr ? "سؤال المعركة" : "Battle Question")}
+          </div>
+          {currentBattle && (
+            <p className={styles.status}>
+              {playerName(currentBattle.attackerId)} ⚔️{" "}
+              {playerName(currentBattle.defenderId)}
+            </p>
+          )}
+          <h2 className={styles.question}>{question.text}</h2>
+          <div className={styles.answers}>
+            {question.options.map((option, index) => (
+              <button
+                key={index}
+                type="button"
+                data-answer-index={index}
+                className={`${styles.answer} ${selectedAnswer === index ? styles.selectedAnswer : ""}`}
+                aria-pressed={selectedAnswer === index}
+                disabled={!canAnswer}
+                onClick={() => handleAnswer(index)}
+              >
+                <span className={styles.answerLetter} aria-hidden="true">
+                  {String.fromCharCode(65 + index)}
                 </span>
-              </div>
-              <h2 className="text-3xl md:text-4xl font-bold text-center mb-12 leading-tight">
-                {currentBattle?.question.text || rebuildSession?.question.text || draftPhase?.question?.text}
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {(currentBattle?.question.options || rebuildSession?.question.options || draftPhase?.question?.options || []).map((opt: string, i: number) => {
-                  const amIActive = isBattling || isRebuilding || phase === "draft";
-                  const didIAnswer = currentBattle ? (currentBattle.attackerId === userId ? currentBattle.attackerAnswered : currentBattle.defenderAnswered) : rebuildSession ? rebuildSession.answered : (phase === "draft" ? !!draftPhase?.answered : false); // Note: we need to check if user answered in draft. For now we use the fact that answer is sent
-                  const userHasAnsweredDraft = phase === "draft" && draftPhase?.answered && false; // We don't have user specific answer state in draftPhase client state, so we just let them click once and disable it locally or rely on server to ignore. Actually, let's disable on click if we add local state.
-                  
-                  return (
-                    <button
-                      key={i}
-                      disabled={!amIActive || didIAnswer}
-                      onClick={(e) => {
-                        handleAnswer(i);
-                        (e.target as HTMLButtonElement).disabled = true;
-                      }}
-                      className={`p-6 rounded-2xl text-xl font-bold transition-all duration-300 border-2 
-                        ${amIActive && !didIAnswer 
-                          ? 'border-slate-600 hover:border-amber-400 hover:bg-slate-700 active:scale-95 bg-slate-800' 
-                          : 'border-slate-700 bg-slate-800/50 opacity-50 cursor-not-allowed'}`}
-                    >
-                      {opt}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {((isBattling && currentBattle && ((currentBattle.attackerId === userId && currentBattle.attackerAnswered) || (currentBattle.defenderId === userId && currentBattle.defenderAnswered))) || (isRebuilding && rebuildSession?.answered) || (phase === "draft" && draftPhase?.answered === draftPhase?.totalPlayers)) && (
-                <div className="mt-8 text-center text-amber-400 font-bold animate-pulse">
-                  {phase === "draft" ? (isAr ? "في انتظار بقية اللاعبين..." : "Waiting for other players...") : (isAr ? "في انتظار الخصم..." : "Waiting for opponent...")}
-                </div>
-              )}
-            </motion.div>
-          </motion.div>
+                <span>{option}</span>
+                {selectedAnswer === index && <span aria-hidden="true">✓</span>}
+              </button>
+            ))}
+          </div>
+          <p className={styles.status} role="status">
+            {submission?.pending
+              ? isAr
+                ? "جارٍ إرسال إجابتك..."
+                : "Submitting your answer..."
+              : answered
+                ? isAr
+                  ? "تم حفظ إجابتك. في انتظار بقية اللاعبين..."
+                  : "Answer saved. Waiting for the other players..."
+                : secondsLeft === 0
+                  ? isAr
+                    ? "انتهى الوقت. في انتظار النتيجة..."
+                    : "Time is up. Waiting for the result..."
+                  : !participant
+                    ? isAr
+                      ? "أنت تشاهد المعركة"
+                      : "You are watching the battle"
+                    : isAr
+                      ? "اختر إجابة واحدة"
+                      : "Choose one answer"}
+          </p>
+          {phase === "draft" && (
+            <p className={styles.progress}>
+              {isAr ? "الإجابات المستلمة" : "Answers received"}{" "}
+              <bdi>
+                {draftPhase?.answered ?? 0}/
+                {draftPhase?.totalPlayers ?? players.length}
+              </bdi>
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className={styles.turnPanel} role="status">
+          <strong>
+            {isMyTurn
+              ? isAr
+                ? "دورك! اختر إقليماً من الخريطة أو القائمة"
+                : "Your turn! Choose a territory on the map or list"
+              : isAr
+                ? `في انتظار ${playerName(turnPlayerId)}`
+                : `Waiting for ${playerName(turnPlayerId)}`}
+          </strong>
+          {phase === "draft_selection" && (
+            <span>
+              {draftPhase?.picksRemaining[pickerId ?? ""] ?? 0}{" "}
+              {isAr ? "اختيارات متبقية" : "picks remaining"}
+            </span>
+          )}
+          {secondsLeft !== null && (
+            <span role="timer" className={styles.timer}>
+              {secondsLeft}
+            </span>
+          )}
+        </div>
+      )}
+      {question ? (
+        <details className={styles.mapDetails}>
+          <summary>{isAr ? "عرض الخريطة" : "View map"}</summary>
+          {map}
+        </details>
+      ) : (
+        map
+      )}
+      {isMyTurn &&
+        (phase === "draft_selection" || phase === "select_target") && (
+          <div
+            className={styles.territoryChoices}
+            aria-label={isAr ? "الأقاليم المتاحة" : "Available territories"}
+          >
+            {availableTerritories.map((id) => (
+              <button
+                type="button"
+                key={id}
+                className="btn btn-secondary"
+                disabled={actionPending || secondsLeft === 0}
+                aria-pressed={selectedTarget === id}
+                onClick={() => handleTerritoryClick(id)}
+              >
+                {territoryName(id)}
+              </button>
+            ))}
+          </div>
         )}
-      </AnimatePresence>
-
-    </div>
+      {isMyTurn && phase === "select_target" && (
+        <div className={styles.actions}>
+          {selectedTarget && (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={actionPending}
+                onClick={() => handleAction(false)}
+              >
+                {isAr
+                  ? `هجوم على ${territoryName(selectedTarget)}`
+                  : `Attack ${territoryName(selectedTarget)}`}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setSelectedTarget(null)}
+              >
+                {isAr ? "إلغاء" : "Cancel"}
+              </button>
+            </>
+          )}
+          {(state.fortHealth[userId ?? ""] ?? 3) < 3 && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={actionPending}
+              onClick={() => handleAction(true)}
+            >
+              {isAr ? "إعادة بناء الحصن" : "Rebuild fort"}
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

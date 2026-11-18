@@ -1,0 +1,20 @@
+.map {
+  isolation: isolate;
+}
+.marker:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 6px;
+  border-radius: 50%;
+  z-index: 40 !important;
+}
+.marker:disabled {
+  opacity: 1;
+}
+@media (max-width: 600px) {
+  .marker > div {
+    transform: scale(0.7);
+  }
+  .marker > div:last-child {
+    display: none;
+  }
+}

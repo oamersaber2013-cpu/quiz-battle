@@ -151,7 +151,7 @@ export async function fetchQuestions(
   gameId?: string,
   options: { singleChoiceOnly?: boolean } = {}
 ): Promise<Array<ClientQuestion & { correctIndex: number }>> {
-  const catArray = Array.isArray(categories) ? categories : (categories ? [categories] : ["General"]);
+  const catArray = Array.isArray(categories) ? (categories.length ? categories : ["General"]) : (categories ? [categories] : ["General"]);
   const subcatArray = Array.isArray(subcategories) ? subcategories : (subcategories ? [subcategories] : []);
   
   // Get question type distribution for this difficulty
@@ -379,23 +379,34 @@ async function fetchSingleCategoryQuestions(
 
   // PRIORITY 5: Final Bank Fallback
   if (remaining > 0) {
-    const pool = (QUESTION_BANK[difficulty] || QUESTION_BANK[Difficulty.Novice]).map((q, index) => ({ ...q, id: `bank:${difficulty}:${index}` }));
-    const availablePool = gameId
+    const pool = (QUESTION_BANK[difficulty] || QUESTION_BANK[Difficulty.Novice])
+      .map((q, index) => ({ ...q, id: `bank:${difficulty}:${index}` }))
+      .filter(supported);
+    let availablePool = gameId
       ? pool.filter(q => !isQuestionUsed(gameId, q.id))
-      : pool;
-    
-    const shuffled = [...availablePool].sort(() => Math.random() - 0.5);
-    results.push(...shuffled.slice(0, remaining).map(q => {
-      const questionId = q.id;
-      if (gameId) markQuestionUsed(gameId, questionId);
-      
-      return {
-        ...q,
-        id: questionId,
-        text: language === 'ar' ? (q.textAr || q.text) : q.text,
-        options: language === 'ar' && q.optionsAr ? q.optionsAr : q.options,
-      };
-    }));
+      : [...pool];
+
+    // A configured match can outlast a finite offline bank. Reuse only after
+    // every compatible bank entry was delivered; keep other sources' history.
+    while (results.length < count && pool.length > 0) {
+      if (availablePool.length === 0) {
+        if (gameId) pool.forEach(q => usedQuestionIds.get(gameId)?.delete(q.id));
+        availablePool = [...pool];
+      }
+      const selected = [...availablePool].sort(() => Math.random() - 0.5).slice(0, count - results.length);
+      for (const q of selected) {
+        if (gameId) markQuestionUsed(gameId, q.id);
+        results.push({
+          ...q,
+          // Keep delivery identities distinct even when the content is reused.
+          id: generateQuestionId(),
+          text: language === 'ar' ? (q.textAr || q.text) : q.text,
+          options: language === 'ar' && q.optionsAr ? q.optionsAr : q.options,
+        });
+      }
+      const selectedIds = new Set(selected.map(q => q.id));
+      availablePool = availablePool.filter(q => !selectedIds.has(q.id));
+    }
   }
 
   return results.slice(0, count);

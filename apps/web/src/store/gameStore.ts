@@ -15,6 +15,7 @@ import {
   SubmittedAnswer,
   AnswerReveal,
   ChaosClientSnapshot,
+  CustomGameSettings,
 } from "@quiz-battle/shared";
 import { soundManager } from "@/lib/sounds";
 
@@ -77,6 +78,7 @@ export interface GameStore {
   mode: GameMode | null;
   difficulty: Difficulty | null;
   category: string | null;
+  customSettings: CustomGameSettings | null;
   status: GameStatus;
   players: PlayerState[];
   currentPlayer: PlayerState | null;
@@ -203,6 +205,7 @@ const initialGameState = {
   mode: null,
   difficulty: null,
   category: null,
+  customSettings: null,
   status: GameStatus.Lobby,
   players: [],
   currentPlayer: null,
@@ -285,6 +288,7 @@ export const useGameStore = create<GameStore>()(
           mode: data.mode,
           difficulty: data.difficulty,
           category: data.category ?? null,
+          customSettings: data.customSettings ?? null,
           language: data.language ?? state.language,
         })),
 
@@ -375,7 +379,24 @@ export const useGameStore = create<GameStore>()(
 
   // Conquest / Invasion actions
 
-      setConquestState: (state) => set({ conquestState: state }),
+      setConquestState: (nextState) => set((state) => {
+        const previousDraft = state.conquestState?.draftPhase;
+        const nextDraft = nextState?.draftPhase;
+        const sameQuestion = previousDraft && nextDraft
+          && previousDraft.currentRound === nextDraft.currentRound
+          && previousDraft.question?.id === nextDraft.question?.id;
+        if (!nextState || !sameQuestion) return { conquestState: nextState };
+        return {
+          conquestState: {
+            ...nextState,
+            draftPhase: {
+              ...nextDraft,
+              selectedAnswer: nextDraft.selectedAnswer === undefined ? previousDraft.selectedAnswer : nextDraft.selectedAnswer,
+              answeredAt: nextDraft.answeredAt === undefined ? previousDraft.answeredAt : nextDraft.answeredAt,
+            },
+          },
+        };
+      }),
       setInvasionState: (state) => set({ invasionState: state }),
       setInvasionQuestion: (question) => set((state) => ({ 
         invasionState: state.invasionState ? {
@@ -438,6 +459,7 @@ export const useGameStore = create<GameStore>()(
             joinCode: room.joinCode,
             hostId: room.hostId || null,
             mode: room.mode,
+            customSettings: room.customSettings ?? null,
             difficulty: room.difficulty,
             category: room.category || null,
             status: room.status,

@@ -92,35 +92,19 @@ export async function getSavedGameResults(gameId: string, viewerId: string): Pro
 }
 
 export async function getGameHistory(userId: string, limit: number = 10) {
-  try {
-    const stats = await prisma.playerGameStat.findMany({
-      where: { userId },
-      include: {
-        gameSession: true,
-      },
-      orderBy: { joinedAt: "desc" },
-      take: limit,
-    });
-
-    return stats.map((stat) => ({
-      id: stat.gameSession.id,
-      joinCode: stat.gameSession.joinCode,
-      mode: stat.gameSession.mode,
-      difficulty: stat.gameSession.difficulty,
-      totalRounds: stat.gameSession.totalRounds,
-      playedAt: stat.gameSession.playedAt,
-      playerStats: {
-        score: stat.score,
-        rank: stat.rank,
-        correctAnswers: stat.correctAnswers,
-        totalAnswers: stat.totalAnswers,
-        powerUpsUsed: stat.powerUpsUsed ? JSON.parse(stat.powerUpsUsed) : [],
-      },
-    }));
-  } catch (error) {
-    console.error("[GamePersistence] Failed to get game history:", error);
-    return [];
-  }
+  const stats = await prisma.playerGameStat.findMany({
+    where: { userId, gameSession: { endedAt: { not: null } } },
+    select: {
+      score: true, rank: true,
+      gameSession: { select: { id: true, mode: true, endedAt: true, _count: { select: { playerStats: true } } } },
+    },
+    orderBy: [{ gameSession: { endedAt: "desc" } }, { gameSessionId: "asc" }],
+    take: limit,
+  });
+  return stats.map(({ gameSession, score, rank }) => ({
+    id: gameSession.id, mode: gameSession.mode, endedAt: gameSession.endedAt,
+    playerCount: gameSession._count.playerStats, score, rank,
+  }));
 }
 
 export async function getLeaderboard(mode?: GameMode, limit: number = 50) {
@@ -154,52 +138,19 @@ export async function getLeaderboard(mode?: GameMode, limit: number = 50) {
 }
 
 export async function getUserStats(userId: string) {
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        username: true,
-      },
-    });
-
-    if (!user) return null;
-
-    // Calculate additional stats
-    const playerStats = await prisma.playerGameStat.findMany({
-      where: { userId },
-    });
-
-    const stats = playerStats.reduce(
-      (acc, s) => {
-        acc.winCount += s.rank === 1 ? 1 : 0;
-        acc.totalGamesPlayed += 1;
-        acc.totalQuestionsAnswered += s.totalAnswers;
-        acc.totalCorrectAnswers += s.correctAnswers;
-        acc.totalScore += s.score;
-        return acc;
-      },
-      {
-        winCount: 0,
-        totalGamesPlayed: 0,
-        totalQuestionsAnswered: 0,
-        totalCorrectAnswers: 0,
-        totalScore: 0,
-      }
-    );
-
-    return {
-      userId,
-      username: user.username,
-      ...stats,
-      avgScore: playerStats.length > 0 ? stats.totalScore / playerStats.length : 0,
-      winRate: playerStats.length > 0 ? stats.winCount / playerStats.length : 0,
-      rank: "bronze",
-      xp: 0,
-    };
-  } catch (error) {
-    console.error("[GamePersistence] Failed to get user stats:", error);
-    return null;
-  }
+  const where = { userId, gameSession: { endedAt: { not: null } } };
+  const [user, totals, wins, history] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: {
+      createdAt: true, achievements: { select: { achievement: { select: { nameEn: true, nameAr: true } } } },
+    } }),
+    prisma.playerGameStat.aggregate({ where, _count: true, _sum: { score: true, totalAnswers: true, correctAnswers: true } }),
+    prisma.playerGameStat.count({ where: { ...where, rank: 1 } }),
+    getGameHistory(userId),
+  ]);
+  if (!user) return null;
+  return {
+    memberSince: user.createdAt, achievements: user.achievements.map(row => row.achievement),
+    totalGames: totals._count, wins, totalScore: totals._sum.score ?? 0,
+    totalAnswers: totals._sum.totalAnswers ?? 0, correctAnswers: totals._sum.correctAnswers ?? 0, history,
+  };
 }
-

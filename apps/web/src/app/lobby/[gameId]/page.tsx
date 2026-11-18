@@ -8,7 +8,6 @@ import { useGameConnection } from "@/hooks/useGameConnection";
 import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 import { ChatWindow } from "@/components/ChatWindow";
-import { CustomModeBuilder } from "@/components/CustomModeBuilder";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -65,14 +64,12 @@ function LobbyPageContent() {
 
   const { 
     userId, username, token, isGuest, joinCode, mode, difficulty, category, 
-    players, status, addToast, language, hostId
+    players, status, addToast, language, hostId, customSettings
   } = useGameStore();
   
   const { joining, passwordRequired, passwordError, passwordPending, submitPassword } = useGameConnection(gameId, isSpectating);
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [showCustomBuilder, setShowCustomBuilder] = useState(false);
-  const [customConfig, setCustomConfig] = useState<any>(null);
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
@@ -214,37 +211,12 @@ function LobbyPageContent() {
           </div>
         </div>
 
-        {/* Custom Mode Configuration (host only, Custom mode) */}
-        {mode === GameMode.Custom && isHost && (
-          <div className="animate-fade-in" style={{ marginBottom: 20 }}>
-            {!showCustomBuilder ? (
-              <button
-                className="btn btn-secondary w-full"
-                onClick={() => setShowCustomBuilder(true)}
-                style={{ height: 50, fontSize: "1rem" }}
-              >
-                {T.configureCustom[language]}
-              </button>
-            ) : (
-              <div className="glass-card p-4">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <span className="font-bold">{T.configureCustom[language]}</span>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setShowCustomBuilder(false)}>
-                    ✕
-                  </button>
-                </div>
-                <CustomModeBuilder
-                  isOpen={true}
-                  onClose={() => setShowCustomBuilder(false)}
-                  onSave={(config) => {
-                    setCustomConfig(config);
-                    addToast("success", T.customConfigSaved[language]);
-                  }}
-                  language={language}
-                />
-              </div>
-            )}
-          </div>
+        {mode === GameMode.Custom && customSettings && (
+          <section className="glass-card p-4 mb-5" aria-label={isRTL ? "إعدادات المعركة المخصصة" : "Custom battle settings"}>
+            <h2 className="font-bold mb-2">{customSettings.name}</h2>
+            <p>{customSettings.rounds} {isRTL ? "جولات" : "rounds"} · {customSettings.timePerQuestion} {isRTL ? "ثانية لكل سؤال" : "seconds per question"}</p>
+            <p>{isRTL ? "الحد الأقصى للاعبين" : "Player limit"} {customSettings.maxPlayers} · {isRTL ? "القوى المتاحة" : "Available powers"} {customSettings.enabledPowerUps.length}</p>
+          </section>
         )}
 
         {/* Start button (host only) */}

@@ -30,7 +30,10 @@ const T = {
   ownedBy: { en: "Owned by", ar: "يملكه" },
 };
 
-export function InvasionGame() {
+export function InvasionGame({ onAnswer, isSpectating }: {
+  onAnswer: (index: number) => void;
+  isSpectating: boolean;
+}) {
   const {
     invasionState,
     userId,
@@ -98,14 +101,14 @@ export function InvasionGame() {
   const isMyTurn = currentTurn === userId;
 
   return (
-    <div className="w-full" style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div className="w-full" style={{ maxWidth: 820, margin: "0 auto", display: "grid", gap: 12 }}>
       {/* Header Bar */}
       <div className="glass-card p-4 mb-4 flex items-center justify-between">
         <div>
           <div className="text-muted text-sm">
             {T.round[isAr ? "ar" : "en"]} {currentRound} / {totalRounds}
           </div>
-          <div className="font-bold text-lg capitalize">{phase}</div>
+          <div className="font-bold text-lg">{isAr ? ({ question: "السؤال", ranking: "الترتيب", selection: "اختيار الأقاليم", ended: "انتهت المعركة" } as Record<string, string>)[phase] || "الغزو" : phase}</div>
         </div>
         <div className="text-right">
           {phase === "selection" && currentPlayer && (
@@ -126,17 +129,34 @@ export function InvasionGame() {
         </div>
       </div>
 
+      {phase === "question" && currentQuestion && (
+        <section className="glass-card p-4" aria-labelledby="invasion-question">
+          <span>{isAr ? "الوقت المتبقي" : "Time left"} <bdi>{timeLeft}</bdi> {isAr ? "ث" : "s"}</span>
+          <h2 id="invasion-question" style={{ margin: "12px 0" }}>{currentQuestion.text}</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 8 }}>
+            {currentQuestion.options?.map((option, index) => (
+              <button key={index} type="button" className={`answer-option ${selectedAnswer === index ? "selected" : ""}`}
+                disabled={isSpectating || selectedAnswer !== null || timeLeft <= 0}
+                aria-pressed={selectedAnswer === index} onClick={() => onAnswer(index)}>
+                {option}
+              </button>
+            ))}
+          </div>
+          {selectedAnswer !== null && <p role="status">{isAr ? "تم تسجيل إجابتك" : "Your answer is recorded"}</p>}
+        </section>
+      )}
+
       {/* World Map */}
       <div
         className="relative w-full rounded-2xl overflow-hidden"
         style={{
           background: "linear-gradient(180deg, #0c4a6e 0%, #082f49 40%, #064e3b 70%, #14532d 100%)",
-          aspectRatio: "2 / 1",
+          position: "relative", overflow: "hidden", borderRadius: 14, aspectRatio: "5 / 3", minHeight: 280,
           boxShadow: "0 20px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.08)",
         }}
       >
         {/* Grid lines for map feel */}
-        <svg className="absolute inset-0 w-full h-full opacity-10" preserveAspectRatio="none">
+        <svg aria-hidden="true" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.1 }} preserveAspectRatio="none">
           <defs>
             <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
               <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="0.5" />
@@ -147,9 +167,9 @@ export function InvasionGame() {
 
         {/* Territories */}
         <svg
-          viewBox="0 0 250 150"
+          viewBox={territories.length <= 12 ? "32 0 190 254" : "24 0 360 265"}
           className="absolute inset-0 w-full h-full"
-          style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))" }}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))" }}
         >
           {territories.map((t) => {
             const isSelectable =
@@ -161,7 +181,16 @@ export function InvasionGame() {
             return (
               <g
                 key={t.id}
-                onClick={() => handleTerritoryClick(Number(t.id))}
+                role={isSelectable ? "button" : undefined}
+                tabIndex={isSelectable ? 0 : undefined}
+                aria-label={isAr ? t.nameAr : t.name}
+                onKeyDown={event => {
+                  if (isSelectable && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                    handleTerritoryClick(Number(t.id));
+                  }
+                }}
+                onClick={isSelectable ? () => handleTerritoryClick(Number(t.id)) : undefined}
                 style={{
                   cursor: isSelectable ? "pointer" : "default",
                 }}
@@ -230,7 +259,7 @@ export function InvasionGame() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               className="absolute inset-0 flex items-center justify-center"
-              style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+              style={{ position: "absolute", inset: 0, overflowY: "auto", background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
             >
               <div className="glass-card p-6 max-w-md w-full mx-4">
                 <h3 className="text-xl font-bold text-center mb-4">
@@ -275,7 +304,7 @@ export function InvasionGame() {
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="absolute top-4 left-1/2 -translate-x-1/2"
+              className="text-center" style={{ position: "absolute", top: 4, insetInline: 0, pointerEvents: "none" }}
             >
               <div
                 className="px-4 py-2 rounded-full font-bold text-sm"
@@ -296,7 +325,7 @@ export function InvasionGame() {
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               className="absolute inset-0 flex items-center justify-center"
-              style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}
+              style={{ position: "absolute", inset: 0, overflowY: "auto", background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}
             >
               <div className="glass-card p-8 text-center max-w-md mx-4">
                 <div className="text-5xl mb-4">🏆</div>

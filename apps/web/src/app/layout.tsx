@@ -5,6 +5,7 @@ import { ToastContainer } from "@/components/ToastContainer";
 export const metadata: Metadata = {
   title: "سيف المعرفة | Sword of Knowledge — Real-Time Quiz Battle",
   description: "سيف المعرفة هي لعبة تحدي ثقافي مباشر. نافس أصدقاءك، استخدم القوى الخارقة، وتسلق المراتب. Sword of Knowledge is a real-time multiplayer quiz battle game.",
+  manifest: "/manifest.json",
   icons: {
     icon: "/icon-192.svg",
     apple: "/icon-192.svg",

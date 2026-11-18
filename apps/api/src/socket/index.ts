@@ -58,6 +58,7 @@ function roomSnapshot(game: NonNullable<ReturnType<typeof getActiveGame>>, viewe
     mode: game.mode, difficulty: game.difficulty, status: game.status,
     isPrivate: !!game.isPrivate,
     currentRound: game.currentRound, totalRounds: game.totalRounds, maxPlayers: game.maxPlayers,
+    customSettings: game.customSettings,
     category: game.categories?.join(", "), language: game.language,
     players: Object.values(game.players), activeEffects: game.activeEffects,
     currentQuestion: question ? toSafeClientQuestion(question) : null,
@@ -173,7 +174,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         }
 
         const config = GAME_MODE_CONFIG[activeGame.mode];
-        if (Object.keys(activeGame.players).length >= config.maxPlayers && !activeGame.players[userId]) {
+        if (Object.keys(activeGame.players).length >= activeGame.maxPlayers && !activeGame.players[userId]) {
           cb?.({ success: false, error: "Game is full" });
           return;
         }
@@ -206,7 +207,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         if (activeGame.mode === GameMode.Conquest) {
           const cState = getConquestState(gameId);
           if (cState) {
-            socket.emit("conquest:state", safeConquestState(cState));
+            socket.emit("conquest:state", safeConquestState(cState, userId));
           }
         }
         syncInvasion(gameId);
@@ -462,17 +463,20 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     });
 
     // ─── Draft Phase (Splitting the World) ───────────────────────
-    socket.on("conquest:draftAnswer", ({ gameId, answerIndex, responseTimeMs }) => {
-      if (!canParticipate(gameId)) return;
-      const result = recordDraftAnswer(gameId, userId, answerIndex, responseTimeMs);
-      if (!result.success) {
+    socket.on("conquest:draftAnswer", ({ gameId, answerIndex, responseTimeMs, questionId, round }, cb) => {
+      if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
+      const result = recordDraftAnswer(gameId, userId, answerIndex, responseTimeMs, { questionId, round }, io as TypedServer);
+      const state = getConquestState(gameId);
+      if (state) socket.emit("conquest:state", safeConquestState(state, userId));
+      cb?.(result);
+      if (!result.success && !cb) {
         socket.emit("game:error", { message: result.error || "Unable to record draft answer" });
       }
     });
 
-    socket.on("conquest:selectDraftTerritory", ({ gameId, territoryId }, cb) => {
+    socket.on("conquest:selectDraftTerritory", ({ gameId, territoryId, turnId }, cb) => {
       if (!canParticipate(gameId)) { cb?.({ success: false, error: "Player not in game" }); return; }
-      const result = selectDraftTerritory(io as TypedServer, gameId, userId, String(territoryId));
+      const result = selectDraftTerritory(io as TypedServer, gameId, userId, String(territoryId), turnId);
       cb?.(result);
     });
 

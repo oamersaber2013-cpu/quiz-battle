@@ -1,7 +1,9 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { CONQUEST_TERRITORIES } from "@quiz-battle/shared";
+import { motion } from "framer-motion";
+import { useEffect, useRef } from "react";
+import styles from "./WorldMap.module.css";
 
 // MAP CAPACITY CONFIGURATION
 export const MAP_CAPACITY = {
@@ -21,46 +23,17 @@ interface WorldMapProps {
   phase: string;
   onTerritoryCaptured?: (territoryId: string, isEnemy: boolean) => void;
   currentPlayerId: string;
+  language?: "en" | "ar";
+  availableTerritories?: string[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 24 REAL WORLD REGIONS - Dynamically selected based on player count
-// ═══════════════════════════════════════════════════════════════════════════════
-export const TERRITORIES = [
-  // NORTH AMERICA (4 territories)
-  { id: "0", name: "Alaska", nameAr: "ألاسكا", icon: "🏔️", x: 12, y: 20 },
-  { id: "1", name: "Canada", nameAr: "كندا", icon: "🍁", x: 22, y: 25 },
-  { id: "2", name: "USA West", nameAr: "الغرب الأمريكي", icon: "🦅", x: 18, y: 38 },
-  { id: "3", name: "USA East", nameAr: "الشرق الأمريكي", icon: "🗽", x: 28, y: 38 },
-
-  // SOUTH AMERICA (3 territories)
-  { id: "4", name: "Mexico", nameAr: "المكسيك", icon: "🌵", x: 22, y: 48 },
-  { id: "5", name: "Brazil", nameAr: "البرازيل", icon: "🦜", x: 32, y: 65 },
-  { id: "6", name: "Andes", nameAr: "جبال الأنديز", icon: "🦙", x: 28, y: 72 },
-
-  // EUROPE (5 territories)
-  { id: "7", name: "Greenland", nameAr: "جرينلاند", icon: "🧊", x: 38, y: 15 },
-  { id: "8", name: "Scandinavia", nameAr: "إسكندنافيا", icon: "❄️", x: 48, y: 22 },
-  { id: "9", name: "Britain", nameAr: "بريطانيا", icon: "💂", x: 42, y: 32 },
-  { id: "10", name: "Western Europe", nameAr: "أوروبا الغربية", icon: "🏰", x: 46, y: 38 },
-  { id: "11", name: "Eastern Europe", nameAr: "أوروبا الشرقية", icon: "⛪", x: 52, y: 35 },
-
-  // AFRICA (5 territories)
-  { id: "12", name: "North Africa", nameAr: "شمال أفريقيا", icon: "🐪", x: 48, y: 50 },
-  { id: "13", name: "West Africa", nameAr: "غرب أفريقيا", icon: "🌍", x: 42, y: 58 },
-  { id: "14", name: "Central Africa", nameAr: "وسط أفريقيا", icon: "🦁", x: 52, y: 60 },
-  { id: "15", name: "East Africa", nameAr: "شرق أفريقيا", icon: "🦒", x: 58, y: 58 },
-  { id: "16", name: "South Africa", nameAr: "جنوب أفريقيا", icon: "💎", x: 52, y: 72 },
-
-  // ASIA (7 territories)
-  { id: "17", name: "Siberia", nameAr: "سيبيريا", icon: "🐻", x: 68, y: 18 },
-  { id: "18", name: "Central Asia", nameAr: "آسيا الوسطى", icon: "🏛️", x: 60, y: 40 },
-  { id: "19", name: "Middle East", nameAr: "الشرق الأوسط", icon: "🕌", x: 55, y: 48 },
-  { id: "20", name: "India", nameAr: "الهند", icon: "🛕", x: 65, y: 52 },
-  { id: "21", name: "East Asia", nameAr: "شرق آسيا", icon: "🏯", x: 72, y: 42 },
-  { id: "22", name: "Southeast Asia", nameAr: "جنوب شرق آسيا", icon: "🎋", x: 75, y: 55 },
-  { id: "23", name: "Australia", nameAr: "أستراليا", icon: "🦘", x: 82, y: 75 },
-];
+// Use the same country IDs and names as the server territory ownership state.
+export const TERRITORIES = CONQUEST_TERRITORIES.map((territory) => ({
+  id: String(territory.id),
+  name: territory.name,
+  nameAr: territory.nameAr,
+  ...territory.worldMap,
+}));
 
 // For backward compatibility
 export const CONTINENTS = TERRITORIES;
@@ -160,6 +133,8 @@ export function WorldMap({
   phase,
   onTerritoryCaptured,
   currentPlayerId,
+  language = "ar",
+  availableTerritories,
 }: WorldMapProps) {
   const soundRef = useRef<SoundEffects | null>(null);
   const prevTerritories = useRef(territories);
@@ -186,6 +161,7 @@ export function WorldMap({
 
   const isClickable = (tid: string) => {
     if (!isMyTurn) return false;
+    if (availableTerritories && !availableTerritories.includes(tid)) return false;
     if (phase === "draft_selection") return !territories[tid]; // Can pick unclaimed
     if (phase === "select_target") {
       const owner = territories[tid];
@@ -196,9 +172,11 @@ export function WorldMap({
 
   return (
     <div
+      className={styles.map}
       style={{
         width: "100%",
-        maxWidth: "1100px",
+        maxWidth: "820px",
+        margin: "0 auto",
         position: "relative",
         borderRadius: "16px",
         overflow: "hidden",
@@ -209,7 +187,7 @@ export function WorldMap({
       {/* Real world map image as background */}
       <img
         src="/world-map.png"
-        alt="World Map"
+        alt={language === "ar" ? "خريطة العالم" : "World map"}
         draggable={false}
         style={{
           width: "100%",
@@ -229,11 +207,13 @@ export function WorldMap({
         const isMyTerritory = ownerId === currentPlayerId;
 
         return (
-          <motion.div
+          <button
             key={marker.id}
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: parseInt(marker.id) * 0.06, type: "spring", stiffness: 200, damping: 15 }}
+            type="button"
+            className={styles.marker}
+            disabled={!clickable}
+            aria-label={`${language === "ar" ? marker.nameAr : marker.name}${isFort ? (language === "ar" ? " · حصن" : " · fort") : ""}`}
+            aria-pressed={isSelected}
             onClick={() => clickable && onTerritoryClick?.(marker.id)}
             style={{
               position: "absolute",
@@ -241,6 +221,10 @@ export function WorldMap({
               top: `${marker.y}%`,
               transform: "translate(-50%, -50%)",
               cursor: clickable ? "pointer" : "default",
+              padding: 0,
+              border: 0,
+              background: "transparent",
+              color: "#fff",
               zIndex: isSelected ? 30 : 10,
             }}
           >
@@ -362,20 +346,11 @@ export function WorldMap({
                     textShadow: "0 1px 3px rgba(0,0,0,0.6)",
                   }}
                 >
-                  {marker.nameAr}
-                </div>
-                <div
-                  style={{
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: "8px",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {marker.name}
+                  {language === "ar" ? marker.nameAr : marker.name}
                 </div>
               </div>
             </div>
-          </motion.div>
+          </button>
         );
       })}
 

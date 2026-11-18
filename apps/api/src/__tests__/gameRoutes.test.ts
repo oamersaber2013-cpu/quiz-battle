@@ -6,7 +6,7 @@ import Fastify from "fastify";
 import fastifyJwt from "@fastify/jwt";
 import jwt from "jsonwebtoken";
 import { prisma } from "@quiz-battle/db";
-import { Difficulty, GameMode, GameStatus } from "@quiz-battle/shared";
+import { Difficulty, GameMode, GameStatus, PowerUpType } from "@quiz-battle/shared";
 import { gamesRouter } from "../routes/games";
 import { getActiveGame, setActiveGame, getAllActiveGames } from "../lib/gameOrchestrator";
 import { authorizeRoomAccess, removeRoomAccess } from "../lib/roomAccess";
@@ -40,6 +40,43 @@ async function createApp() {
 }
 
 const config = { mode: GameMode.Classic, difficulty: Difficulty.Novice, rounds: 1, isPrivate: true };
+
+it("uses validated Custom settings for the actual room and response", async () => {
+  const app = await createApp();
+  const customSettings = {
+    name: "  A short custom battle  ", rounds: 22, timePerQuestion: 5,
+    difficulty: Difficulty.Master, enabledPowerUps: [PowerUpType.TimeWarp],
+    maxPlayers: 4, categoryFilter: "science",
+  };
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/games", headers: auth("host"), payload: {
+      mode: GameMode.Custom, difficulty: Difficulty.Novice, rounds: 1, categories: ["general"],
+      subcategories: ["trivia"], customSettings,
+    } });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ totalRounds: 22, maxPlayers: 4, difficulty: Difficulty.Master,
+      customSettings: { ...customSettings, name: customSettings.name.trim() } });
+    expect(rooms.get("test-room")).toMatchObject({ totalRounds: 22, maxPlayers: 4,
+      categories: ["science"], subcategories: undefined, difficulty: Difficulty.Master });
+    const summary = await app.inject({ method: "GET", url: "/api/games/test-room" });
+    expect(summary.json().customSettings).toEqual(response.json().customSettings);
+  } finally { await app.close(); }
+});
+
+it.each([
+  { rounds: 0 }, { rounds: 31 }, { timePerQuestion: 4 }, { timePerQuestion: 61 },
+  { maxPlayers: 1 }, { maxPlayers: 21 }, { enabledPowerUps: ["forged"] },
+  { enabledPowerUps: [PowerUpType.DoublePick] },
+])("rejects invalid Custom configuration before creating a room", async customSettings => {
+  const app = await createApp();
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/games", headers: auth("host"), payload: {
+      mode: GameMode.Custom, difficulty: Difficulty.Novice, customSettings,
+    } });
+    expect(response.statusCode).toBe(400);
+    expect(setActiveGame).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+});
 
 it("keeps room passwords and answer records out of the public room summary", async () => {
   (getActiveGame as jest.Mock).mockReturnValue({

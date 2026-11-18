@@ -46,17 +46,25 @@ test("preserves Arabic language and RTL after a reload", async ({ page }) => {
 });
 
 test("joins by keyboard and announces an invalid room code", async ({ page }) => {
-  const cors = { "Access-Control-Allow-Origin": "*" };
-  await page.route("**/api/auth/guest", (route) => route.fulfill({
-    headers: cors,
-    json: { userId: "join-player", username: "Warrior", token: "fixture-token", isGuest: true },
-  }));
+  const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
+  await page.route("**/api/auth/guest", async (route) => {
+    if (route.request().method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: cors });
+      return;
+    }
+    expect(route.request().postDataJSON()).toEqual({ username: "Keyboard Guest" });
+    await route.fulfill({
+      headers: cors,
+      json: { userId: "join-player", username: "Keyboard Gues_ab12ef", token: "fixture-token", isGuest: true },
+    });
+  });
   await page.route("**/api/games/join/AB12CD", (route) => route.fulfill({
     headers: cors,
     status: 404,
     json: { error: "Game not found" },
   }));
 
+  await page.getByRole("textbox", { name: "Enter your warrior name" }).fill("Keyboard Guest");
   const openJoin = page.getByRole("button", { name: /Join with Code/ });
   await openJoin.focus();
   await page.keyboard.press("Enter");
@@ -74,6 +82,8 @@ test("joins by keyboard and announces an invalid room code", async ({ page }) =>
   const lookup = page.waitForResponse((response) => response.url().endsWith("/api/games/join/AB12CD"));
   await code.press("Enter");
   expect((await lookup).status()).toBe(404);
+  const savedName = await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage") || "{}").state.username);
+  expect(savedName).toBe("Keyboard Gues_ab12ef");
   const joinError = page.locator("main").getByRole("alert");
   await expect(joinError).toHaveText("Invalid join code");
   await expect(code).toHaveAttribute("aria-invalid", "true");
@@ -81,4 +91,24 @@ test("joins by keyboard and announces an invalid room code", async ({ page }) =>
   await expect(joinError).toHaveCount(0);
   await page.getByRole("button", { name: /Back/ }).click();
   await expect(openJoin).toBeFocused();
+});
+
+test("recovers the same page after losing the connection", async ({ page, context }) => {
+  await page.goto("/stats");
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) await new Promise<void>(resolve => {
+      navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
+    });
+  });
+  await context.setOffline(true);
+  try {
+    await page.reload();
+    await expect(page.getByRole("link", { name: /Retry/ })).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+  await page.getByRole("link", { name: /Retry/ }).click();
+  await expect(page.getByRole("heading", { name: "Player statistics" })).toBeVisible();
+  await expect(page).toHaveURL(/\/stats$/);
 });

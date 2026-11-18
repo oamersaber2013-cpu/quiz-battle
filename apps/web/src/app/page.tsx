@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { GameMode, Difficulty, GAME_MODE_CONFIG } from "@quiz-battle/shared";
+import { GameMode, Difficulty, GAME_MODE_CONFIG, DEFAULT_CUSTOM_SETTINGS, type CustomGameSettings } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { connectSocket } from "@/lib/socket";
 import { ModeVisualSelector } from "@/components/ModeVisualSelector";
@@ -396,8 +396,9 @@ export default function HomePage() {
   const [inputUsername, setInputUsername] = useState(username || `Warrior${Math.floor(Math.random() * 9999)}`);
   const [botCount, setBotCount] = useState<number>(0);
   const [customRounds, setCustomRounds] = useState<number | null>(null);
-  const [showCustomBuilder, setShowCustomBuilder] = useState(false);
-  const [customConfig, setCustomConfig] = useState<any>(null);
+  const [customConfig, setCustomConfig] = useState<CustomGameSettings>(() => ({
+    ...DEFAULT_CUSTOM_SETTINGS, enabledPowerUps: [...DEFAULT_CUSTOM_SETTINGS.enabledPowerUps],
+  }));
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isCreating, setIsCreating] = useState(false);
   const [privateRoom, setPrivateRoom] = useState(false);
@@ -419,6 +420,10 @@ export default function HomePage() {
   useDocumentLocale(language);
 
   async function handleCreateGame() {
+    if (selectedMode === GameMode.Custom && !customConfig.name.trim()) {
+      addToast("error", isRTL ? "أدخل اسماً للمعركة." : "Enter a battle name.");
+      return;
+    }
     if (privateRoom && !isValidRoomPassword(roomPassword)) {
       addToast("error", isRTL ? "أدخل كلمة مرور قصيرة للغرفة." : "Enter a shorter room password.");
       return;
@@ -432,21 +437,27 @@ export default function HomePage() {
       let currentName = inputUsername;
 
       if (!currentId) {
-        const res = await fetch(`${API}/api/auth/guest`, { method: "POST" });
+        const res = await fetch(`${API}/api/auth/guest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: inputUsername.trim() || undefined }),
+        });
         if (!res.ok) {
           addToast("error", isRTL ? "فشل إنشاء حساب ضيف" : "Failed to create guest account");
           return;
         }
         const data = await res.json();
-        setAuth({ ...data, username: currentName });
-        connectSocket(data.userId, currentName, data.token, true);
+        setAuth(data);
+        setInputUsername(data.username);
+        connectSocket(data.userId, data.username, data.token, true);
         currentId = data.userId;
         currentToken = data.token;
+        currentName = data.username;
       }
 
       const gameConfig: any = {
         mode: selectedMode,
-        difficulty: selectedDiff,
+        difficulty: selectedMode === GameMode.Custom ? customConfig.difficulty : selectedDiff,
         categories: selectedCats,
         subcategories: selectedTopics,
         username: currentName,
@@ -483,7 +494,7 @@ export default function HomePage() {
         joinCode: game.joinCode,
         hostId: currentId || undefined,   // host is the creator
         mode: selectedMode, 
-        difficulty: selectedDiff,
+        difficulty: game.difficulty,
         category: selectedCats.join(", "),
         language: language
       });
@@ -504,14 +515,19 @@ export default function HomePage() {
     setLoading(true);
     try {
       if (!useGameStore.getState().userId) {
-        const res = await fetch(`${API}/api/auth/guest`, { method: "POST" });
+        const res = await fetch(`${API}/api/auth/guest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: inputUsername.trim() || undefined }),
+        });
         if (!res.ok) {
           setJoinError("guest");
           return;
         }
         const data = await res.json();
-        setAuth({ ...data, username: inputUsername });
-        connectSocket(data.userId, inputUsername, data.token, true);
+        setAuth(data);
+        setInputUsername(data.username);
+        connectSocket(data.userId, data.username, data.token, true);
       }
 
       const res = await fetch(`${API}/api/games/join/${joinCode}`);
@@ -902,10 +918,10 @@ export default function HomePage() {
             {step === 3 && (
               <div className="animate-fade-in">
                 <h2 className="text-2xl font-bold mb-6" style={{ textAlign: "center" }}>
-                  {T.difficulty[language]}
+                  {selectedMode === GameMode.Custom ? (isRTL ? "معركتك المخصصة" : "Your custom battle") : T.difficulty[language]}
                 </h2>
                 
-                <div className="glass-card p-6 mb-6">
+                {selectedMode !== GameMode.Custom && <div className="glass-card p-6 mb-6">
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
                     {DIFFICULTIES.map(({ value, label, color, icon }) => (
                       <button
@@ -934,7 +950,7 @@ export default function HomePage() {
                       </button>
                     ))}
                   </div>
-                </div>
+                </div>}
 
                 <div className="glass-card p-5 mb-6">
                   <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 700 }}>
@@ -964,7 +980,7 @@ export default function HomePage() {
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span className="text-muted">{isRTL ? "الصعوبة:" : "Difficulty:"}</span>
-                      <span className="font-bold">{DIFFICULTIES.find(d => d.value === selectedDiff)?.label[language]}</span>
+                      <span className="font-bold">{DIFFICULTIES.find(d => d.value === (selectedMode === GameMode.Custom ? customConfig.difficulty : selectedDiff))?.label[language]}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span className="text-muted">{isRTL ? "الفئات:" : "Categories:"}</span>
@@ -977,12 +993,8 @@ export default function HomePage() {
                 {selectedMode === GameMode.Custom && (
                   <div className="mb-6 animate-fade-in">
                     <CustomModeBuilder
-                      isOpen={true}
-                      onClose={() => {}}
-                      onSave={(config) => {
-                        setCustomConfig(config);
-                        addToast("success", isRTL ? "تم حفظ الإعدادات المخصصة" : "Custom settings saved");
-                      }}
+                      value={customConfig}
+                      onChange={setCustomConfig}
                       language={language}
                     />
                   </div>

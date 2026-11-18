@@ -58,6 +58,18 @@ describe("Socket identity and room authority", () => {
 
   afterEach(() => deleteInvasionGame("room"));
 
+  it("enforces the configured Custom player limit for a new lobby participant", async () => {
+    game.mode = GameMode.Custom;
+    game.status = GameStatus.Lobby;
+    game.maxPlayers = 2;
+    game.players = { host: game.players.host, existing: { userId: "existing", username: "Existing" } };
+    connect(socket);
+    const ack = jest.fn();
+    await handlers["game:join"]({ gameId: "room" }, ack);
+    expect(ack).toHaveBeenCalledWith({ success: false, error: "Game is full" });
+    expect(game.players).not.toHaveProperty("player");
+  });
+
   it("rejects arbitrary tokens and tokenless claimed guest ids", async () => {
     socket.handshake.auth = { token: "host", userId: "host" };
     const next = jest.fn();

@@ -20,6 +20,7 @@ import { createInvasionGame, deleteInvasionGame, getInvasionState } from "../lib
 import { SafeRedis } from "../lib/redis";
 import { registerSocketHandlers } from "../socket";
 import { protectRoom, removeRoomAccess } from "../lib/roomAccess";
+import { initConquestGame, removeConquestGame } from "../lib/conquestOrchestrator";
 
 describe("Socket.IO transport", () => {
   let io: Server;
@@ -80,6 +81,7 @@ describe("Socket.IO transport", () => {
   afterEach(() => {
     clients.splice(0).forEach(client => client.disconnect());
     deleteInvasionGame("wire-room");
+    removeConquestGame("wire-room");
     removeRoomAccess("wire-room");
   });
 
@@ -106,6 +108,31 @@ describe("Socket.IO transport", () => {
     expect(restored).not.toHaveProperty("answersThisRound");
     expect(restored).not.toHaveProperty("lastAnswerByPlayer");
     expect(restored).not.toHaveProperty("questions");
+  });
+
+  it("acknowledges a Conquest answer once and restores it with the original deadline on reconnect", async () => {
+    game.mode = GameMode.Conquest;
+    await initConquestGame(io as any, "wire-room", ["host", "player"], {}, Difficulty.Sage, "ar");
+    const first = await connect("player");
+    const initialState = once(first, "conquest:state");
+    await join(first);
+    const initial = await initialState;
+    const payload = { gameId: "wire-room", answerIndex: 1, responseTimeMs: 0, questionId: initial.draftPhase.question.id, round: initial.draftPhase.currentRound };
+    const submit = (data = payload) => new Promise<any>(resolve => first.emit("conquest:draftAnswer", data, resolve));
+    expect(await submit()).toEqual({ success: true });
+    expect(await submit()).toEqual({ success: true });
+    expect(await submit({ ...payload, round: 0 })).toMatchObject({ success: false });
+    first.disconnect();
+    const reconnect = await connect("player");
+    const restoredState = once(reconnect, "conquest:state");
+    await join(reconnect);
+    const restored = await restoredState;
+    expect(restored.draftPhase).toMatchObject({ selectedAnswer: 1, answered: 1, questionStartedAt: initial.draftPhase.questionStartedAt, questionEndsAt: initial.draftPhase.questionEndsAt });
+    expect(restored.draftPhase.question).not.toHaveProperty("correctIndex");
+    const spectator = await connect("spectator");
+    const publicState = once(spectator, "conquest:state");
+    await new Promise<void>(resolve => spectator.emit("game:spectate", { gameId: "wire-room" }, () => resolve()));
+    expect((await publicState).draftPhase).not.toHaveProperty("selectedAnswer");
   });
 
   it("ignores a forged host id and rejects outsider invasion controls over the wire", async () => {

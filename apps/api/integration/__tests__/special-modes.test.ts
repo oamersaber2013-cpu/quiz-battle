@@ -13,9 +13,9 @@ import { io as connect, Socket } from "socket.io-client";
 import jwt from "jsonwebtoken";
 import { Difficulty, GameMode, GameStatus, PowerUpType } from "@quiz-battle/shared";
 import { setActiveGame, removeActiveGame } from "../../src/lib/gameOrchestrator";
-import { removeBots } from "../../src/lib/aiBots";
+import { getBotInfo, removeBots } from "../../src/lib/aiBots";
 import { cleanupChaosV2 } from "../../src/lib/chaosEngineV2";
-import { removeConquestGame } from "../../src/lib/conquestOrchestrator";
+import { getConquestState, removeConquestGame } from "../../src/lib/conquestOrchestrator";
 import { deleteInvasionGame } from "../../src/lib/invasionOrchestrator";
 import { getJwtSecret } from "../../src/lib/jwtConfig";
 import { fetchQuestions } from "../../src/lib/questions";
@@ -257,23 +257,47 @@ describe("Special-mode matches over Socket.IO", () => {
     expect(saveGameSession).toHaveBeenCalledTimes(1);
   }, 20000);
 
-  it("runs the full Conquest draft, all ten Invasion rounds and final territory results", async () => {
-    createMatch(GameMode.Conquest, 10);
+  it("removes an active solo Conquest draft together with its bot actions", async () => {
+    createMatch(GameMode.Conquest, 12);
+    const first = await connectPlayer(host);
+    await join(first);
+    const forge = jest.fn();
+    first.socket.on("game:powerUpSelectStart", forge);
+    await success(first, "game:start");
+    await first.next("conquest:draftQuestion");
+    expect(forge).not.toHaveBeenCalled();
+    const state = getConquestState(gameId)!;
+    const botId = state.turnOrder.find(id => id !== host)!;
+    expect(getBotInfo(botId)).toBeDefined();
+    expect(state.scheduledTasks.size).toBe(1);
+    removeActiveGame(gameId);
+    expect(getConquestState(gameId)).toBeUndefined();
+    expect(getBotInfo(botId)).toBeNull();
+    expect(state.scheduledTasks.size).toBe(0);
+  });
+
+  it("runs the full Conquest draft, all twelve configured Invasion rounds and final territory results", async () => {
+    createMatch(GameMode.Conquest, 12);
     const first = await connectPlayer(host);
     let second = await connectPlayer(guest);
     const players = { [host]: first, [guest]: second };
     await join(first);
     await join(second);
-    await startMatch(first, second);
+    const forge = jest.fn();
+    first.socket.on("game:powerUpSelectStart", forge);
+    await success(first, "game:start");
+    const [started, peerStarted] = await Promise.all([first.next("game:stateSync"), second.next("game:stateSync")]);
+    expect(started).toEqual(peerStarted);
+    expect(started.room).toMatchObject({ status: GameStatus.Question, powerUpSelection: { isSelecting: false } });
     // Two forts are preclaimed. Ten unclaimed countries take three draft rounds.
     const drafted = new Set<string>();
     for (let round = 1; round <= 3; round++) {
       const question = await questionForBoth(first, second, "conquest:draftQuestion", round);
       for (const player of [first, second]) {
-        player.socket.emit("conquest:draftAnswer", { gameId, answerIndex: correctAnswer, responseTimeMs: 400 });
-        await success(player, "game:join");
+        await success(player, "conquest:draftAnswer", { gameId, answerIndex: correctAnswer, responseTimeMs: 400, questionId: question.id, round });
       }
-      await jest.advanceTimersByTimeAsync((question.timeLimit + 3) * 1000);
+      // All submitted answers advance immediately; no client-side countdown
+      // or extra buffer is needed to start the authoritative pick phase.
       const ranking = await first.next("conquest:draftRanking");
       expect(ranking.ranking.every(player => player.correct)).toBe(true);
       const pickCount = Math.min(4, 10 - drafted.size);
@@ -282,7 +306,7 @@ describe("Special-mode matches over Socket.IO", () => {
         const territoryId = turn.availableTerritories[0];
         expect(drafted.has(territoryId)).toBe(false);
         drafted.add(territoryId);
-        await success(players[turn.playerId], "conquest:selectDraftTerritory", { gameId, territoryId });
+        await success(players[turn.playerId], "conquest:selectDraftTerritory", { gameId, territoryId, turnId: turn.turnId });
       }
     }
     const draft = await first.next("conquest:draftComplete");
@@ -294,7 +318,7 @@ describe("Special-mode matches over Socket.IO", () => {
     expect(await second.next("invasion:state")).toEqual(initialInvasion);
     expect(Object.fromEntries(initialInvasion.territories.map(t => [t.id, t.ownerId]))).toEqual(draft.territories);
     // A normal client never needs to trigger the transition itself.
-    for (let round = 1; round <= 10; round++) {
+    for (let round = 1; round <= 12; round++) {
       const question = await questionForBoth(first, second, "invasion:roundStart", round);
       if (round === 1) {
         first.socket.emit("invasion:answer", { gameId, answer: correctAnswer, responseTimeMs: 0 });
@@ -343,7 +367,10 @@ describe("Special-mode matches over Socket.IO", () => {
       [guest]: draft.playerTerritories[guest].length - 1,
     });
     expect(end.results.map(player => [player.userId, player.score])).toEqual(Object.entries(invasionEnd.finalTerritories).sort((a, b) => Number(b[1]) - Number(a[1])));
+    expect(end.results.find(player => player.userId === host)).toMatchObject({ correctAnswers: 4, totalAnswers: 4, avgAnswerTime: 0 });
+    expect(end.results.find(player => player.userId === guest)).toMatchObject({ correctAnswers: 3, totalAnswers: 4, avgAnswerTime: 0 });
     expect(saveGameSession).toHaveBeenCalledTimes(1);
-    expect(saveGameSession).toHaveBeenCalledWith(expect.objectContaining({ gameId, mode: GameMode.Conquest, language: "ar", totalRounds: 10, players: end.results }));
+    expect(saveGameSession).toHaveBeenCalledWith(expect.objectContaining({ gameId, mode: GameMode.Conquest, language: "ar", totalRounds: 12, players: end.results }));
+    expect(forge).not.toHaveBeenCalled();
   }, 20000);
 });

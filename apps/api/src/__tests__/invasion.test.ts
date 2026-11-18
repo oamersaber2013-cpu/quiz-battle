@@ -2,6 +2,7 @@ jest.mock("../lib/questions", () => ({ fetchQuestions: jest.fn() }));
 
 import { Difficulty } from "@quiz-battle/shared";
 import { fetchQuestions } from "../lib/questions";
+import { fillWithBots, removeBots } from "../lib/aiBots";
 import {
   createInvasionGame,
   createInvasionGameFromConquest,
@@ -30,6 +31,7 @@ describe("Invasion round integrity", () => {
   });
 
   afterEach(() => {
+    removeBots("room");
     for (const id of INVASION_GAMES.keys()) deleteInvasionGame(id);
     jest.clearAllTimers();
     jest.useRealTimers();
@@ -57,6 +59,24 @@ describe("Invasion round integrity", () => {
     getInvasionState("room")!.phase = "ranking";
     recordAnswer("room", "player", 1);
     expect(getInvasionState("room")!.playerResponses).toEqual({});
+    expect(getInvasionState("room")!.answerStats).toEqual({
+      host: { correctAnswers: 0, totalAnswers: 0, totalResponseTimeMs: 0 },
+      player: { correctAnswers: 0, totalAnswers: 0, totalResponseTimeMs: 0 },
+    });
+  });
+
+  it("keeps cumulative accepted answer stats when a new Invasion round resets responses", async () => {
+    await startInvasionRound("room", io);
+    jest.advanceTimersByTime(400);
+    recordAnswer("room", "host", 0);
+    recordAnswer("room", "host", 1);
+    await jest.advanceTimersByTimeAsync(17600);
+    expect(getInvasionState("room")!.currentRound).toBe(2);
+    expect(getInvasionState("room")!.playerResponses).toEqual({});
+    jest.advanceTimersByTime(600);
+    recordAnswer("room", "host", 1);
+    expect(getInvasionState("room")!.answerStats.host).toEqual({ correctAnswers: 1, totalAnswers: 2, totalResponseTimeMs: 1000 });
+    expect(getInvasionState("room")!.answerStats.player).toEqual({ correctAnswers: 0, totalAnswers: 0, totalResponseTimeMs: 0 });
   });
 
   it("starts one question and one result timer for concurrent start requests", async () => {
@@ -122,5 +142,24 @@ describe("Invasion round integrity", () => {
     await startInvasionRound("room", io);
     expect(questions).toHaveBeenCalledWith(Difficulty.Legend, 1, ["history"], undefined, "ar", "room", { singleChoiceOnly: true });
     expect(getInvasionState("room")!.totalRounds).toBe(6);
+  });
+
+  it("lets the solo-fill bot answer and spend its Invasion picks", async () => {
+    deleteInvasionGame("room");
+    const random = jest.spyOn(Math, "random").mockReturnValue(0.1);
+    try {
+      const [botId] = await fillWithBots(io, "room", 1, 2);
+      createInvasionGame("room", ["host", botId]);
+      await startInvasionRound("room", io);
+      await jest.advanceTimersByTimeAsync(8000);
+      expect(getInvasionState("room")!.playerResponses[botId]).toMatchObject({ answer: 1, isCorrect: true });
+      await jest.advanceTimersByTimeAsync(13000);
+      expect(getInvasionState("room")!.lastRanking.find(row => row.playerId === botId)?.picks).toBe(0);
+      expect(getInvasionState("room")!.territories.filter(territory => territory.ownerId === botId).length).toBeGreaterThan(1);
+      deleteInvasionGame("room");
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      random.mockRestore();
+    }
   });
 });

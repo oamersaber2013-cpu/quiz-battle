@@ -38,9 +38,9 @@ RTL layout and join-code validation. They do not create a paid game or make a
 payment, and are not proof of a deployed multiplayer service.
 
 Run the opt-in special-mode suite after building the shared package. It plays
-two Chaos rounds and all ten Conquest/Invasion rounds over Socket.IO with
+two Chaos rounds and all twelve configured Conquest/Invasion rounds over Socket.IO with
 controlled gameplay clocks and stubbed questions and persistence. It also
-checks solo Classic power-up selection and use with a bot in the room.
+checks solo Classic powers and solo Conquest bot cleanup.
 
 ```sh
 npm run build -w @quiz-battle/shared
@@ -59,6 +59,28 @@ $env:PLAYWRIGHT_CHAOS_FIXTURE = '1'
 npm run build
 npm run test:e2e -w web -- chaos-reconnect.spec.ts --project=chromium --workers=1
 ```
+
+The Custom creation browser regression checks the visible settings and the exact
+room request. Custom API tests cover server validation, configured player limits,
+question deadlines and the permitted power inventory. Conquest startup tests
+ensure the real draft begins directly without the standard power forge.
+
+For an authorized hosted Conquest browser regression, point the runner at the
+matching deployed web and API services. This creates two signed test guests and
+a real room for each selected browser project. Run one project at a time:
+
+```powershell
+$env:PLAYWRIGHT_BASE_URL = 'https://your-web.example'
+$env:PLAYWRIGHT_LIVE_API = 'https://your-api.example'
+$env:PLAYWRIGHT_LIVE_CONQUEST = '1'
+npm run test:e2e -w web -- conquest-live.spec.ts --project=chromium --workers=1
+```
+
+Use `--project=mobile-chromium` for the mobile viewport. This optional test checks
+two Arabic draft rounds, answer contrast, the authoritative countdown, disabled
+answers, reload recovery, territory choices and horizontal overflow. It attaches
+a gameplay screenshot and disables traces to keep signed credentials out of
+trace artifacts. It does not replace a completed multiplayer match check.
 
 Database setup is separate and requires an isolated PostgreSQL database:
 

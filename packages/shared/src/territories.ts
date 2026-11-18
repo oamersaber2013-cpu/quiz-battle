@@ -8,7 +8,7 @@ export interface TerritoryDefinition {
 }
 
 // Country identity is shared by the draft map and invasion scoring.
-// SVG geometry is schematic. worldMap positions are percentages on the map image.
+// SVG geometry is schematic. worldMap positions are percentages of the 1024px square map asset.
 export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
   {
     id: 0,
@@ -16,7 +16,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "كندا",
     path: "M50,15 L95,10 L110,30 L85,50 L55,45 L40,25 Z",
     center: { x: 75, y: 28 },
-    worldMap: { icon: "🍁", x: 21, y: 24 },
+    worldMap: { icon: "🍁", x: 17.28515625, y: 26.07421875 },
   },
   {
     id: 1,
@@ -24,7 +24,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "الولايات المتحدة",
     path: "M55,52 L110,48 L120,75 L70,82 L50,65 Z",
     center: { x: 85, y: 65 },
-    worldMap: { icon: "🗽", x: 23, y: 38 },
+    worldMap: { icon: "🗽", x: 18.65234375, y: 36.23046875 },
   },
   {
     id: 2,
@@ -32,7 +32,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "المكسيك",
     path: "M55,85 L90,80 L100,100 L65,110 L50,100 Z",
     center: { x: 75, y: 95 },
-    worldMap: { icon: "🌵", x: 22, y: 49 },
+    worldMap: { icon: "🌵", x: 18.84765625, y: 43.5546875 },
   },
   {
     id: 3,
@@ -40,7 +40,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "كولومبيا",
     path: "M85,112 L115,108 L120,125 L95,130 L80,120 Z",
     center: { x: 100, y: 118 },
-    worldMap: { icon: "🌴", x: 28, y: 59 },
+    worldMap: { icon: "🌴", x: 27.5390625, y: 50.78125 },
   },
   {
     id: 4,
@@ -48,7 +48,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "البرازيل",
     path: "M95,135 L140,128 L155,160 L125,180 L95,165 L85,145 Z",
     center: { x: 120, y: 155 },
-    worldMap: { icon: "🦜", x: 34, y: 68 },
+    worldMap: { icon: "🦜", x: 31.93359375, y: 57.2265625 },
   },
   {
     id: 5,
@@ -56,7 +56,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "الأرجنتين",
     path: "M95,185 L125,180 L115,235 L90,225 Z",
     center: { x: 108, y: 208 },
-    worldMap: { icon: "🧉", x: 32, y: 84 },
+    worldMap: { icon: "🧉", x: 29.296875, y: 67.08984375 },
   },
   {
     id: 6,
@@ -64,7 +64,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "تشيلي",
     path: "M80,180 L95,178 L85,240 L75,235 Z",
     center: { x: 82, y: 210 },
-    worldMap: { icon: "🏔️", x: 27, y: 80 },
+    worldMap: { icon: "🏔️", x: 26.7578125, y: 68.65234375 },
   },
   {
     id: 7,
@@ -72,7 +72,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "بريطانيا",
     path: "M125,35 L145,32 L148,48 L128,52 L120,45 Z",
     center: { x: 135, y: 42 },
-    worldMap: { icon: "💂", x: 44, y: 29 },
+    worldMap: { icon: "💂", x: 46.38671875, y: 29.19921875 },
   },
   {
     id: 8,
@@ -80,7 +80,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "فرنسا",
     path: "M145,55 L168,52 L172,75 L148,80 L140,68 Z",
     center: { x: 158, y: 65 },
-    worldMap: { icon: "🗼", x: 46, y: 38 },
+    worldMap: { icon: "🗼", x: 47.65625, y: 33.30078125 },
   },
   {
     id: 9,
@@ -88,7 +88,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "ألمانيا",
     path: "M168,50 L195,48 L198,72 L172,75 L168,60 Z",
     center: { x: 182, y: 60 },
-    worldMap: { icon: "🏰", x: 51, y: 30 },
+    worldMap: { icon: "🏰", x: 50.09765625, y: 31.15234375 },
   },
   {
     id: 10,
@@ -96,7 +96,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "مصر",
     path: "M175,85 L205,82 L208,105 L178,108 L172,95 Z",
     center: { x: 190, y: 95 },
-    worldMap: { icon: "🏺", x: 55, y: 48 },
+    worldMap: { icon: "🏺", x: 55.6640625, y: 41.2109375 },
   },
   {
     id: 11,
@@ -104,7 +104,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "نيجيريا",
     path: "M155,118 L185,115 L190,140 L160,145 L152,132 Z",
     center: { x: 172, y: 130 },
-    worldMap: { icon: "🌍", x: 47, y: 56 },
+    worldMap: { icon: "🌍", x: 49.4140625, y: 49.4140625 },
   },
   {
     id: 12,
@@ -112,7 +112,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "الكونغو",
     path: "M175,150 L210,145 L215,185 L180,190 L172,168 Z",
     center: { x: 192, y: 168 },
-    worldMap: { icon: "🦍", x: 54, y: 64 },
+    worldMap: { icon: "🦍", x: 53.61328125, y: 53.80859375 },
   },
   {
     id: 13,
@@ -120,7 +120,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "جنوب أفريقيا",
     path: "M180,205 L215,200 L220,235 L185,240 L175,220 Z",
     center: { x: 198, y: 220 },
-    worldMap: { icon: "💎", x: 55, y: 80 },
+    worldMap: { icon: "💎", x: 53.7109375, y: 63.96484375 },
   },
   {
     id: 14,
@@ -128,7 +128,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "مدغشقر",
     path: "M235,200 L248,198 L245,230 L232,228 Z",
     center: { x: 240, y: 215 },
-    worldMap: { icon: "🌴", x: 63, y: 75 },
+    worldMap: { icon: "🌴", x: 61.23046875, y: 59.47265625 },
   },
   {
     id: 15,
@@ -136,7 +136,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "روسيا",
     path: "M200,15 L300,10 L310,50 L210,55 L195,35 Z",
     center: { x: 255, y: 32 },
-    worldMap: { icon: "🐻", x: 72, y: 22 },
+    worldMap: { icon: "🐻", x: 72.75390625, y: 21.97265625 },
   },
   {
     id: 16,
@@ -144,7 +144,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "الصين",
     path: "M250,65 L320,58 L325,105 L255,112 L245,85 Z",
     center: { x: 288, y: 85 },
-    worldMap: { icon: "🐼", x: 76, y: 42 },
+    worldMap: { icon: "🐼", x: 75.5859375, y: 36.23046875 },
   },
   {
     id: 17,
@@ -152,7 +152,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "الهند",
     path: "M235,115 L275,112 L280,155 L245,165 L235,140 Z",
     center: { x: 258, y: 138 },
-    worldMap: { icon: "🛕", x: 67, y: 53 },
+    worldMap: { icon: "🛕", x: 69.921875, y: 44.7265625 },
   },
   {
     id: 18,
@@ -160,7 +160,7 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "اليابان",
     path: "M335,75 L355,72 L360,95 L342,100 L335,85 Z",
     center: { x: 348, y: 85 },
-    worldMap: { icon: "⛩️", x: 86, y: 42 },
+    worldMap: { icon: "⛩️", x: 86.62109375, y: 37.890625 },
   },
   {
     id: 19,
@@ -168,6 +168,6 @@ export const CONQUEST_TERRITORIES: ReadonlyArray<TerritoryDefinition> = [
     nameAr: "أستراليا",
     path: "M290,195 L360,188 L370,245 L300,255 L285,220 Z",
     center: { x: 328, y: 222 },
-    worldMap: { icon: "🦘", x: 84, y: 79 },
+    worldMap: { icon: "🦘", x: 85.7421875, y: 62.20703125 },
   },
 ];

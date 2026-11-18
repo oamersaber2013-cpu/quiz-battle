@@ -239,6 +239,8 @@ const initialGameState = {
   },
 };
 
+let nextToastId = 0;
+
 export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
@@ -494,9 +496,10 @@ export const useGameStore = create<GameStore>()(
         }),
 
       addToast: (type, message) => {
-        const id = `toast_${Date.now()}`;
-        set((state) => ({
-          toasts: [...state.toasts, { id, type, message }],
+        if (get().toasts.some(item => item.type === type && item.message === message)) return;
+        const id = `toast_${++nextToastId}`;
+        set(state => ({
+          toasts: [...state.toasts.slice(-1), { id, type, message }],
         }));
 
         setTimeout(() => get().removeToast(id), 3000);

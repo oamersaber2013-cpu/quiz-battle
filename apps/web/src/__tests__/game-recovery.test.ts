@@ -393,3 +393,25 @@ describe("Time Warp deadline", () => {
     expect(useGameStore.getState().timeLeft).toBe(25);
   });
 });
+
+it("coalesces identical notifications and expires distinct simultaneous notifications independently", () => {
+  jest.useFakeTimers();
+  try {
+    useGameStore.setState({ toasts: [] });
+    const { addToast, removeToast } = useGameStore.getState();
+    addToast("info", "Your turn");
+    addToast("info", "Your turn");
+    expect(useGameStore.getState().toasts).toHaveLength(1);
+    addToast("info", "Country claimed");
+    addToast("success", "Recorded");
+    const [first, second] = useGameStore.getState().toasts;
+    expect(first.message).toBe("Country claimed");
+    expect(first.id).not.toBe(second.id);
+    removeToast(first.id);
+    expect(useGameStore.getState().toasts.map(item => item.message)).toEqual(["Recorded"]);
+    jest.advanceTimersByTime(3000);
+    expect(useGameStore.getState().toasts).toEqual([]);
+  } finally {
+    jest.useRealTimers();
+  }
+});

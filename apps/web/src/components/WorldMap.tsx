@@ -30,13 +30,25 @@ interface WorldMapProps {
   troops?: Record<string, number>;
 }
 
-// Use the same country IDs and names as the server territory ownership state.
-export const TERRITORIES = CONQUEST_TERRITORIES.map((territory) => ({
-  id: String(territory.id),
-  name: territory.name,
-  nameAr: territory.nameAr,
-  ...territory.worldMap,
-}));
+const MAP_IMAGE_SIZE = 1024;
+// Separate nearby controls while retaining the canonical geographic anchor.
+const MAP_MARKER_OFFSETS: Readonly<Record<number, readonly [number, number]>> = {
+  3: [-20, -10], 4: [15, 10], 6: [-58, 20], 7: [-64, -16],
+  8: [-18, 22], 9: [35, -20], 11: [-12, -12], 12: [12, 12],
+};
+
+// Country identity remains shared with server ownership and scoring.
+export const TERRITORIES = CONQUEST_TERRITORIES.map((territory) => {
+  const anchorX = Math.round(territory.worldMap.x / 100 * MAP_IMAGE_SIZE);
+  const anchorY = Math.round(territory.worldMap.y / 100 * MAP_IMAGE_SIZE);
+  const [offsetX, offsetY] = MAP_MARKER_OFFSETS[territory.id] ?? [0, 0];
+  return {
+    id: String(territory.id), name: territory.name, nameAr: territory.nameAr,
+    icon: territory.worldMap.icon,
+    x: anchorX / MAP_IMAGE_SIZE * 100, y: anchorY / MAP_IMAGE_SIZE * 100,
+    anchorX, anchorY, buttonX: anchorX + offsetX, buttonY: anchorY + offsetY,
+  };
+});
 
 // For backward compatibility
 export const CONTINENTS = TERRITORIES;
@@ -136,6 +148,16 @@ export function WorldMap({
         }}
       />
 
+      <svg className={styles.anchors} viewBox={`0 0 ${MAP_IMAGE_SIZE} ${MAP_IMAGE_SIZE}`} aria-hidden="true">
+        {TERRITORIES.filter(marker => territories[marker.id] !== undefined).map(marker => (
+          <g key={marker.id}>
+            <line data-territory-leader={marker.id} x1={marker.anchorX} y1={marker.anchorY}
+              x2={marker.buttonX} y2={marker.buttonY} />
+            <circle data-territory-anchor={marker.id} cx={marker.anchorX} cy={marker.anchorY} r={4} />
+          </g>
+        ))}
+      </svg>
+
       {/* Territory markers overlay */}
       {TERRITORIES.filter(t => territories[t.id] !== undefined).map((marker) => {
         const ownerId = territories[marker.id];
@@ -150,6 +172,7 @@ export function WorldMap({
             key={marker.id}
             type="button"
             className={styles.marker}
+            data-map-territory={marker.id}
             disabled={!clickable}
             aria-label={`${language === "ar" ? marker.nameAr : marker.name}${isFort ? (language === "ar" ? " · حصن" : " · fort") : ""}`}
             aria-description={troops ? `${troops[marker.id] ?? 0} ${language === "ar" ? "جندي" : "troops"}` : undefined}
@@ -157,8 +180,8 @@ export function WorldMap({
             onClick={() => clickable && onTerritoryClick?.(marker.id)}
             style={{
               position: "absolute",
-              left: `${marker.x}%`,
-              top: `${marker.y}%`,
+              left: `${marker.buttonX / MAP_IMAGE_SIZE * 100}%`,
+              top: `${marker.buttonY / MAP_IMAGE_SIZE * 100}%`,
               transform: "translate(-50%, -50%)",
               cursor: clickable ? "pointer" : "default",
               padding: 0,
@@ -173,7 +196,7 @@ export function WorldMap({
               <div
                 style={{
                   position: "absolute",
-                  inset: -8,
+                  inset: 0,
                   borderRadius: "50%",
                   border: "2px solid rgba(255, 215, 0, 0.4)",
                   animation: "pulse 1.5s ease-in-out infinite",
@@ -188,7 +211,7 @@ export function WorldMap({
                 transition={{ duration: 1.2, repeat: Infinity }}
                 style={{
                   position: "absolute",
-                  inset: -10,
+                  inset: -3,
                   borderRadius: "50%",
                   border: "3px solid #FFD700",
                   boxShadow: "0 0 20px rgba(255, 215, 0, 0.5)",
@@ -198,11 +221,10 @@ export function WorldMap({
 
             {/* Main territory badge */}
             <motion.div
+              className={styles.badge}
               whileHover={clickable ? { scale: 1.15, y: -3 } : {}}
               whileTap={clickable ? { scale: 0.95 } : {}}
               style={{
-                width: 52,
-                height: 52,
                 borderRadius: "50%",
                 background: ownerColor
                   ? `radial-gradient(circle at 30% 30%, ${ownerColor}ee, ${ownerColor}88)`
@@ -217,7 +239,6 @@ export function WorldMap({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "22px",
                 boxShadow: isSelected
                   ? "0 0 25px rgba(255, 215, 0, 0.6), 0 4px 12px rgba(0,0,0,0.4)"
                   : ownerColor
@@ -227,17 +248,16 @@ export function WorldMap({
                 position: "relative",
               }}
             >
-              {troops ? <strong style={{ fontSize: 16 }}>{troops[marker.id] ?? 0}</strong> : marker.icon}
+              {troops ? <strong>{troops[marker.id] ?? 0}</strong> : marker.icon}
 
               {/* Fort shield indicator */}
               {isFort && (
                 <div
+                  className={styles.fort}
                   style={{
                     position: "absolute",
                     top: -6,
                     right: -6,
-                    width: 20,
-                    height: 20,
                     borderRadius: "50%",
                     background: "linear-gradient(135deg, #FFD700, #B8860B)",
                     display: "flex",
@@ -255,6 +275,7 @@ export function WorldMap({
 
             {/* Territory name label */}
             <div
+              className={styles.label}
               style={{
                 position: "absolute",
                 top: "100%",

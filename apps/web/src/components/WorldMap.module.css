@@ -1,6 +1,26 @@
 .map {
   isolation: isolate;
 }
+.anchors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.anchors line { stroke: #fff0b3; stroke-width: 2; }
+.anchors circle { fill: #ffe28b; stroke: #111827; stroke-width: 2; }
+.marker {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.badge { width: 36px; height: 36px; font-size: 18px; }
+.badge strong { font-size: 14px; }
+.fort { width: 16px; height: 16px; }
 .marker:focus-visible {
   outline: 3px solid #fff;
   outline-offset: 6px;
@@ -11,10 +31,11 @@
   opacity: 1;
 }
 @media (max-width: 600px) {
-  .marker > div {
-    transform: scale(0.7);
-  }
-  .marker > div:last-child {
+  .marker { width: 28px; height: 28px; }
+  .badge { width: 24px; height: 24px; font-size: 14px; }
+  .badge strong { font-size: 11px; }
+  .fort { width: 12px; height: 12px; }
+  .label {
     display: none;
   }
 }

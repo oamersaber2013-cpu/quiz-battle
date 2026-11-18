@@ -1,7 +1,7 @@
 "use client";
 import { io, Socket } from "socket.io-client";
 import { getApiOrigin } from "./apiOrigin";
-import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer, ChaosVote } from "@quiz-battle/shared";
+import { CONQUEST_TERRITORIES, ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer, ChaosVote } from "@quiz-battle/shared";
 import { useGameStore } from "../store/gameStore";
 import { getMonotonicTime, getServerTime, synchronizeServerClock } from "./gameClock";
 
@@ -454,9 +454,11 @@ function registerHandlers(s: TypedSocket) {
     const isAr = gs.language === "ar";
     const isMe = playerId === gs.userId;
 
+    const country = CONQUEST_TERRITORIES.find(territory => String(territory.id) === String(territoryId));
+    const countryName = (isAr ? country?.nameAr : country?.name) ?? String(territoryId);
     const msg = isMe
-      ? (isAr ? `🏰 احتلت ${territoryId}${isFort ? " (حصن!)" : ""}` : `🏰 You claimed ${territoryId}${isFort ? " (Fort!)" : ""}`)
-      : (isAr ? `🌍 ${playerName} احتل ${territoryId}` : `🌍 ${playerName} claimed ${territoryId}`);
+      ? (isAr ? `🏰 احتلت ${countryName}${isFort ? " (حصن!)" : ""}` : `🏰 You claimed ${countryName}${isFort ? " (Fort!)" : ""}`)
+      : (isAr ? `🌍 ${playerName} احتل ${countryName}` : `🌍 ${playerName} claimed ${countryName}`);
     gs.addToast(isMe ? "success" : "info", msg);
   });
 

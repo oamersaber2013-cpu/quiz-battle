@@ -4,6 +4,7 @@ import ChaosGame from "@/components/ChaosGame";
 import { connectSocket, disconnectSocket } from "@/lib/socket";
 import { useGameStore } from "@/store/gameStore";
 import { io } from "socket.io-client";
+import { resetServerClock } from "@/lib/gameClock";
 
 const { act, create } = require("react-test-renderer");
 jest.mock("socket.io-client", () => ({ io: jest.fn() }));
@@ -96,6 +97,7 @@ beforeAll(() => {
 });
 afterAll(() => { Reflect.deleteProperty(globalThis, "document"); });
 beforeEach(() => {
+  resetServerClock();
   jest.useFakeTimers();
   jest.spyOn(console, "warn").mockImplementation(() => {});
   useGameStore.getState().resetGame();
@@ -105,8 +107,10 @@ beforeEach(() => {
   socket.emitWithAck.mockResolvedValue({ success: true });
   connectSocket("player-1", "Warrior", "token");
   serverHandlers.get("connect")?.();
+  socket.emit.mockClear();
 });
 afterEach(() => {
+  resetServerClock();
   act(() => view?.unmount());
   view = undefined;
   disconnectSocket();
@@ -130,6 +134,21 @@ function button(label: string) {
 function content() {
   return JSON.stringify(view.toJSON());
 }
+
+it.each([-40000, 40000])("keeps Chaos drama and ballots usable with client clock skew %sms", (skew) => {
+  const serverNow = Date.now();
+  jest.setSystemTime(serverNow + skew);
+  sync(chaos({ serverNow, pendingDrama: { id: "skew-drama", type: "TAB_LEFT", playerId: "target", username: "Target", expiresAt: serverNow + 10000 } }), {
+    serverNow, questionStartedAt: serverNow - 5000,
+  });
+  render();
+  expect(button("Start voting").props.disabled).toBeFalsy();
+  expect(button("Doha").props.disabled).toBe(false);
+  act(() => serverHandlers.get("chaos:state")?.(chaos({ serverNow, votingSession: votingSession({ endsAt: serverNow + 3000, timeRemainingMs: 3000 }) })));
+  expect(button("FORGIVE").props.disabled).toBe(false);
+  act(() => jest.advanceTimersByTime(3000));
+  expect(button("FORGIVE").props.disabled).toBe(true);
+});
 
 it("restores the active ballot, trap and my submitted answer from a room snapshot", () => {
   sync(chaos({

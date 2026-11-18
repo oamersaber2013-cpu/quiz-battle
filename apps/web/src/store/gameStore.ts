@@ -18,6 +18,7 @@ import {
   CustomGameSettings,
 } from "@quiz-battle/shared";
 import { soundManager } from "@/lib/sounds";
+import { getServerTime, synchronizeServerClock } from "@/lib/gameClock";
 
 export interface Toast {
   id: string;
@@ -47,11 +48,12 @@ function mergeChaosSnapshot(
   snapshot: ChaosClientSnapshot | null
 ): ChaosStoreState | null {
   if (!snapshot) return null;
+  synchronizeServerClock(snapshot.serverNow);
   const existing = previous?.gameId === snapshot.gameId ? previous : null;
   return {
     ...snapshot,
     voteDeadline: snapshot.votingSession
-      ? Date.now() + snapshot.votingSession.timeRemainingMs
+      ? getServerTime() + snapshot.votingSession.timeRemainingMs
       : null,
     lastTrapResult: snapshot.activeTrap ? null : existing?.lastTrapResult ?? null,
     chaosLog: existing?.chaosLog ?? [],
@@ -163,7 +165,7 @@ export interface GameStore {
   addPlayer: (player: PlayerState) => void;
   removePlayer: (userId: string) => void;
   updatePlayer: (userId: string, updates: Partial<PlayerState>) => void;
-  setQuestion: (question: SafeClientQuestion, round: number, totalRounds: number) => void;
+  setQuestion: (question: SafeClientQuestion, round: number, totalRounds: number, startedAt?: number) => void;
   selectAnswer: (answer: SubmittedAnswer) => void;
   setTimeLeft: (t: number) => void;
   applyTimeWarpBonus: (seconds: number) => void;
@@ -326,7 +328,7 @@ export const useGameStore = create<GameStore>()(
           ),
         })),
 
-      setQuestion: (question, round, totalRounds) => {
+      setQuestion: (question, round, totalRounds, startedAt = getServerTime()) => {
         set({
           currentQuestion: question,
           currentRound: round,
@@ -335,8 +337,8 @@ export const useGameStore = create<GameStore>()(
           answeredAt: null,
           lastAnswerResult: null,
           eliminatedOptions: [],
-          timeLeft: question.timeLimit,
-          questionStartedAt: Date.now(),
+          timeLeft: Math.max(0, Math.ceil(question.timeLimit - (getServerTime() - startedAt) / 1000)),
+          questionStartedAt: startedAt,
           timeWarpBonusSeconds: 0,
           status: GameStatus.Question,
           activeEffects: [],
@@ -352,12 +354,12 @@ export const useGameStore = create<GameStore>()(
           if (state.selectedAnswer !== null) return state;
 
           if (state.soundEnabled) {
-            soundManager.play("CORRECT");
+            soundManager.play("CLICK");
           }
 
           return {
             selectedAnswer: Array.isArray(answer) ? [...answer] : answer,
-            answeredAt: Date.now(),
+            answeredAt: getServerTime(),
           };
         }),
 
@@ -369,7 +371,7 @@ export const useGameStore = create<GameStore>()(
           timeLeft: state.currentQuestion && state.questionStartedAt
             ? Math.max(0, Math.ceil(
                 state.currentQuestion.timeLimit + Math.max(state.timeWarpBonusSeconds, seconds)
-                - (Date.now() - state.questionStartedAt) / 1000
+                - (getServerTime() - state.questionStartedAt) / 1000
               ))
             : Math.min(state.timeLeft + seconds, 60),
         })),
@@ -380,6 +382,7 @@ export const useGameStore = create<GameStore>()(
   // Conquest / Invasion actions
 
       setConquestState: (nextState) => set((state) => {
+        synchronizeServerClock(nextState?.serverNow);
         const previousDraft = state.conquestState?.draftPhase;
         const nextDraft = nextState?.draftPhase;
         const sameQuestion = previousDraft && nextDraft
@@ -436,10 +439,11 @@ export const useGameStore = create<GameStore>()(
 
       syncRoom: (room) =>
         set((state) => {
+          synchronizeServerClock(room.serverNow);
           const userId = state.userId;
           const previous = state.gameId === room.gameId ? state : initialGameState;
           const effects = (room.activeEffects || []).filter(
-            (effect) => !effect.expiresAt || effect.expiresAt > Date.now()
+            (effect) => !effect.expiresAt || effect.expiresAt > getServerTime()
           );
           const question = room.currentQuestion === undefined
             ? previous.currentQuestion
@@ -469,7 +473,7 @@ export const useGameStore = create<GameStore>()(
             questionStartedAt,
             timeWarpBonusSeconds,
             timeLeft: question && questionStartedAt
-              ? Math.max(0, Math.ceil(question.timeLimit + timeWarpBonusSeconds - (Date.now() - questionStartedAt) / 1000))
+              ? Math.max(0, Math.ceil(question.timeLimit + timeWarpBonusSeconds - (getServerTime() - questionStartedAt) / 1000))
               : previous.timeLeft,
             selectedAnswer: room.selectedAnswer === undefined ? (isNewQuestion ? null : previous.selectedAnswer) : room.selectedAnswer,
             answeredAt: room.answeredAt === undefined ? (isNewQuestion ? null : previous.answeredAt) : room.answeredAt,
@@ -509,7 +513,13 @@ export const useGameStore = create<GameStore>()(
       setGameId: (gameId) => set({ gameId }),
       setPowerUpSelection: (data) => set({ powerUpSelection: { ...get().powerUpSelection, ...data } }),
       setAllPowerUpSelections: (selections) => set({ allPowerUpSelections: selections }),
-      setLastAnswerResult: (result) => set({ lastAnswerResult: result }),
+      setLastAnswerResult: (result) => {
+        const state = get();
+        if (result && !state.lastAnswerResult && state.selectedAnswer !== null && state.soundEnabled) {
+          soundManager.play(result.correct ? "CORRECT" : "WRONG");
+        }
+        set({ lastAnswerResult: result });
+      },
       addEffect: (effect) => set((state) => ({ activeEffects: [...state.activeEffects, effect] })),
       removeEffect: (effectId) => set((state) => ({ activeEffects: state.activeEffects.filter((e: any) => e.id !== effectId) })),
       setEliminatedOptions: (options) => set({ eliminatedOptions: options }),

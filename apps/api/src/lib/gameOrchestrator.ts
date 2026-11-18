@@ -268,6 +268,8 @@ async function runRounds(
 
 
     io.to(game.gameId).emit("game:question", {
+      serverNow: Date.now(),
+      questionStartedAt: game.questionStartTime,
       question: clientQuestion,
       round: game.currentRound,
       totalRounds: game.totalRounds,

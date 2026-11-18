@@ -89,6 +89,15 @@ describe("Socket.IO transport", () => {
     await new Promise<void>(resolve => io.close(() => resolve()));
   });
 
+  it("returns a fresh authenticated server-time sample before joining a room", async () => {
+    const earliest = Date.now();
+    const client = await connect("player");
+    const sample = await new Promise<{ serverNow: number }>(resolve => client.emit("clock:sync", resolve));
+    expect(sample.serverNow).toBeGreaterThanOrEqual(earliest);
+    expect(sample.serverNow).toBeLessThanOrEqual(Date.now());
+    expect(typeof (await join(client)).serverNow).toBe("number");
+  });
+
   it("rejoins a signed guest on a new connection and restores only their answer", async () => {
     const first = await connect("player");
     const initial = await join(first);

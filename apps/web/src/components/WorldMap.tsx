@@ -1,6 +1,8 @@
 "use client";
 
 import { CONQUEST_TERRITORIES } from "@quiz-battle/shared";
+import { playCue } from "@/lib/sounds";
+import { useGameStore } from "@/store/gameStore";
 import { motion } from "framer-motion";
 import { useEffect, useRef } from "react";
 import styles from "./WorldMap.module.css";
@@ -25,6 +27,7 @@ interface WorldMapProps {
   currentPlayerId: string;
   language?: "en" | "ar";
   availableTerritories?: string[];
+  troops?: Record<string, number>;
 }
 
 // Use the same country IDs and names as the server territory ownership state.
@@ -56,68 +59,6 @@ const DEFEAT_STATEMENTS = [
 ];
 
 // Sound effects using Web Audio API
-class SoundEffects {
-  private ctx: AudioContext | null = null;
-
-  constructor() {
-    if (typeof window !== "undefined") {
-      try {
-        this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      } catch { /* Audio not supported */ }
-    }
-  }
-
-  playCapture() {
-    if (!this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.1);
-      gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
-      osc.start(this.ctx.currentTime);
-      osc.stop(this.ctx.currentTime + 0.3);
-    } catch { /* ignore */ }
-  }
-
-  playVictory() {
-    if (!this.ctx) return;
-    try {
-      const notes = [523.25, 659.25, 783.99, 1046.5];
-      notes.forEach((freq, i) => {
-        const osc = this.ctx!.createOscillator();
-        const gain = this.ctx!.createGain();
-        osc.connect(gain);
-        gain.connect(this.ctx!.destination);
-        osc.frequency.setValueAtTime(freq, this.ctx!.currentTime + i * 0.15);
-        gain.gain.setValueAtTime(0.2, this.ctx!.currentTime + i * 0.15);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx!.currentTime + i * 0.15 + 0.4);
-        osc.start(this.ctx!.currentTime + i * 0.15);
-        osc.stop(this.ctx!.currentTime + i * 0.15 + 0.4);
-      });
-    } catch { /* ignore */ }
-  }
-
-  playDefeat() {
-    if (!this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.5);
-      gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
-      osc.start(this.ctx.currentTime);
-      osc.stop(this.ctx.currentTime + 0.5);
-    } catch { /* ignore */ }
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORLD MAP COMPONENT
 // Uses a real world map image with interactive territory marker overlays
@@ -135,13 +76,10 @@ export function WorldMap({
   currentPlayerId,
   language = "ar",
   availableTerritories,
+  troops,
 }: WorldMapProps) {
-  const soundRef = useRef<SoundEffects | null>(null);
   const prevTerritories = useRef(territories);
 
-  useEffect(() => {
-    soundRef.current = new SoundEffects();
-  }, []);
 
   // Detect territory changes and play capture sound
   useEffect(() => {
@@ -152,7 +90,7 @@ export function WorldMap({
     Object.entries(territories).forEach(([tid, ownerId]) => {
       const prevOwner = prevTerritories.current[tid];
       if (ownerId && ownerId !== prevOwner) {
-        soundRef.current?.playCapture();
+        if (useGameStore.getState().soundEnabled) playCue("conquest");
         onTerritoryCaptured?.(tid, prevOwner !== null);
       }
     });
@@ -162,6 +100,7 @@ export function WorldMap({
   const isClickable = (tid: string) => {
     if (!isMyTurn) return false;
     if (availableTerritories && !availableTerritories.includes(tid)) return false;
+    if (phase === "invasion_selection") return availableTerritories?.includes(tid) ?? false;
     if (phase === "draft_selection") return !territories[tid]; // Can pick unclaimed
     if (phase === "select_target") {
       const owner = territories[tid];
@@ -213,6 +152,7 @@ export function WorldMap({
             className={styles.marker}
             disabled={!clickable}
             aria-label={`${language === "ar" ? marker.nameAr : marker.name}${isFort ? (language === "ar" ? " · حصن" : " · fort") : ""}`}
+            aria-description={troops ? `${troops[marker.id] ?? 0} ${language === "ar" ? "جندي" : "troops"}` : undefined}
             aria-pressed={isSelected}
             onClick={() => clickable && onTerritoryClick?.(marker.id)}
             style={{
@@ -287,7 +227,7 @@ export function WorldMap({
                 position: "relative",
               }}
             >
-              {marker.icon}
+              {troops ? <strong style={{ fontSize: 16 }}>{troops[marker.id] ?? 0}</strong> : marker.icon}
 
               {/* Fort shield indicator */}
               {isFort && (
@@ -365,4 +305,4 @@ export function WorldMap({
   );
 }
 
-export { SoundEffects, VICTORY_STATEMENTS, DEFEAT_STATEMENTS };
+export { VICTORY_STATEMENTS, DEFEAT_STATEMENTS };

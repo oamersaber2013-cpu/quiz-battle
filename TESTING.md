@@ -62,7 +62,12 @@ npm run test:e2e -w web -- chaos-reconnect.spec.ts --project=chromium --workers=
 
 The Custom creation browser regression checks the visible settings and the exact
 room request. Custom API tests cover server validation, configured player limits,
-question deadlines and the permitted power inventory. Conquest startup tests
+question deadlines and the permitted power inventory. The category regression
+plays every advertised local category/grade combination, rejects wrong-category
+cached entries and covers exhaustion within an exact verified pool. The wizard
+offers available grades and mixed trivia when a category combination has no
+shared grade; room creation rejects unsupported combinations before mutation.
+Conquest startup tests
 ensure the real draft begins directly without the standard power forge.
 
 For an authorized hosted Conquest browser regression, point the runner at the

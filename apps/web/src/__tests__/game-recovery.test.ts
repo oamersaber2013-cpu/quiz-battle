@@ -2,6 +2,7 @@ import { io } from "socket.io-client";
 import { Difficulty, GameMode, GameStatus, PowerUpType, SyncedGameRoom } from "@quiz-battle/shared";
 import { connectSocket, disconnectSocket, getSocket, subscribeGameRoom, emitAnswer } from "@/lib/socket";
 import { useGameStore } from "@/store/gameStore";
+import { getServerTime, resetServerClock } from "@/lib/gameClock";
 
 jest.mock("socket.io-client", () => ({ io: jest.fn() }));
 jest.mock("@/lib/sounds", () => ({ soundManager: { play: jest.fn() } }));
@@ -56,6 +57,7 @@ function room(overrides: Partial<SyncedGameRoom> = {}): SyncedGameRoom {
 }
 
 beforeEach(() => {
+  resetServerClock();
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-04T09:00:00Z"));
   jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -70,6 +72,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetServerClock();
   disconnectSocket();
   jest.clearAllTimers();
   jest.useRealTimers();
@@ -80,6 +83,27 @@ afterEach(() => {
 describe("room membership recovery", () => {
   const callbacks = () => ({ onJoining: jest.fn(), onJoined: jest.fn(), onError: jest.fn() });
   const typed = (socket: FakeSocket) => socket as unknown as ReturnType<typeof getSocket>;
+
+  it("samples server time on connection and reconnect and ignores stale acknowledgments", () => {
+    const serverNow = Date.now();
+    jest.setSystemTime(serverNow + 40000);
+    const socket = connectSocket("player-1", "Warrior", "test-token", true) as unknown as FakeSocket;
+    socket.connected = true;
+    socket.dispatch("connect");
+    const firstSample = socket.emit.mock.calls[0][1];
+    jest.advanceTimersByTime(200);
+    firstSample({ serverNow: serverNow + 100 });
+    expect(getServerTime()).toBe(serverNow + 200);
+    socket.dispatch("disconnect");
+    socket.dispatch("connect");
+    firstSample({ serverNow: serverNow + 99999 });
+    expect(getServerTime()).toBe(serverNow + 200);
+    const secondSample = socket.emit.mock.calls[1][1];
+    jest.advanceTimersByTime(200);
+    secondSample({ serverNow: serverNow + 300 });
+    expect(getServerTime()).toBe(serverNow + 400);
+    expect(socket.emit.mock.calls.map(([event]) => event)).toEqual(["clock:sync", "clock:sync"]);
+  });
 
   it("joins when opening a game URL and rejoins after every transport reconnect", () => {
     const socket = new FakeSocket();
@@ -190,6 +214,29 @@ describe("room membership recovery", () => {
 });
 
 describe("restoring an active question", () => {
+  it.each([-40000, 40000])("restores Classic deadlines and answer timestamps with client skew %sms", (skew) => {
+    const serverNow = Date.now();
+    jest.setSystemTime(serverNow + skew);
+    useGameStore.getState().syncRoom(room({ serverNow, currentQuestion: question, questionStartedAt: serverNow - 10000 }));
+    expect(useGameStore.getState().timeLeft).toBe(20);
+    const socket = connectSocket("player-1", "محارب", "test-token", true) as unknown as FakeSocket;
+    emitAnswer("battle-1", question.id, 0);
+    expect(socket.emit).toHaveBeenCalledWith("player:answer", expect.objectContaining({ timestamp: serverNow }));
+    expect(getServerTime()).toBe(serverNow);
+  });
+
+  it.each([-40000, 40000])("restores Invasion deadlines from a clock-skewed reconnect (%sms)", (skew) => {
+    const serverNow = Date.now();
+    jest.setSystemTime(serverNow + skew);
+    const socket = connectSocket("player-1", "محارب", "test-token", true) as unknown as FakeSocket;
+    socket.dispatch("invasion:state", {
+      serverNow, territories: [], currentRound: 1, totalRounds: 5, phase: "question", currentQuestion: question,
+      questionStartedAt: serverNow - 12000, selectedAnswer: 1, answeredAt: serverNow - 5000,
+      lastRanking: [], selectionPhase: { isActive: false, pickingPlayerId: null, picksRemaining: 0, turnIndex: 0 },
+    });
+    expect(useGameStore.getState().timeLeft).toBe(18);
+    expect(useGameStore.getState().selectedAnswer).toBe(1);
+  });
   it("restores final results when an ended room is still retained by the server", () => {
     const finalResults = [{ userId: "player-1", username: "محارب", score: 100, rank: 1, correctAnswers: 3, totalAnswers: 4, avgAnswerTime: 900, xpEarned: 20 }];
     useGameStore.getState().syncRoom(room({ status: GameStatus.Ended, currentQuestion: null, finalResults }));

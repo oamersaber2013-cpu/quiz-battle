@@ -1,4 +1,5 @@
 "use client";
+import { getServerTime } from "@/lib/gameClock";
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useGameStore } from "@/store/gameStore";
@@ -38,7 +39,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   const isAr = language === "ar";
   const [showReview, setShowReview] = useState(false);
   const [showChaosLog, setShowChaosLog] = useState(false);
-  const [now, setNow] = useState(Date.now);
+  const [now, setNow] = useState(getServerTime);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmedVote, setConfirmedVote] = useState<string | null>(null);
@@ -57,8 +58,8 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   const canAnswer = canParticipate && !isFrozen && status === GameStatus.Question && timeLeft > 0 && selectedAnswer === null;
 
   useEffect(() => {
-    setNow(Date.now());
-    const clock = setInterval(() => setNow(Date.now()), 250);
+    setNow(getServerTime());
+    const clock = setInterval(() => setNow(getServerTime()), 250);
     return () => clearInterval(clock);
   }, []);
 
@@ -114,12 +115,12 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   }
 
   function handleStartVoting() {
-    if (!gameId || !drama || !canStartVote || Date.now() >= drama.expiresAt) return;
+    if (!gameId || !drama || !canStartVote || getServerTime() >= drama.expiresAt) return;
     void submitVoteAction(drama.id, () => emitChaosStartVoting(gameId, drama.id), false);
   }
 
   function handleVote(vote: ChaosVote) {
-    if (!gameId || !voting?.canVote || voted || !canParticipate || !deadline || Date.now() >= deadline) return;
+    if (!gameId || !voting?.canVote || voted || !canParticipate || !deadline || getServerTime() >= deadline) return;
     if (!voting.options.includes(vote)) return;
     void submitVoteAction(voting.dramaEventId, () => emitChaosVote(gameId, voting.dramaEventId, vote), true);
   }

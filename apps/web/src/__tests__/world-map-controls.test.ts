@@ -25,3 +25,22 @@ it("offers localized native territory buttons only for server-selectable territo
   expect(onTerritoryClick).toHaveBeenCalledWith("1");
   act(() => rendered.unmount());
 });
+
+it("shows troop counts and lets the current Invasion player reinforce an owned country", () => {
+  const pick = jest.fn();
+  let rendered: any;
+  act(() => {
+    rendered = create(createElement(WorldMap, {
+      territories: { "0": "me", "1": "other" }, fortTerritoryId: {}, playerColors: { me: "#fff", other: "#eee" },
+      currentPlayerId: "me", isMyTurn: true, phase: "invasion_selection", troops: { "0": 100, "1": 50 },
+      language: "ar", availableTerritories: ["0"], onTerritoryClick: pick,
+    }));
+  });
+  const own = rendered.root.findByProps({ "aria-label": "كندا" });
+  expect(own.props["aria-description"]).toContain("100");
+  expect(own.props.disabled).toBe(false);
+  expect(rendered.root.findByProps({ "aria-label": "الولايات المتحدة" }).props.disabled).toBe(true);
+  act(() => own.props.onClick());
+  expect(pick).toHaveBeenCalledWith("0");
+  act(() => rendered.unmount());
+});

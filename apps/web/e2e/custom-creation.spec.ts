@@ -22,9 +22,12 @@ test("creates Custom from the visible settings without a blocking dialog", async
   await page.getByRole("textbox", { name: "Battle name" }).fill("Quick private quiz");
   await page.getByRole("spinbutton", { name: "Number of rounds" }).fill("2");
   await page.getByRole("combobox", { name: "Seconds per question" }).selectOption("5");
+  await page.getByRole("combobox", { name: "Question category" }).selectOption("sports");
+  await expect(page.getByRole("combobox", { name: "Difficulty" })).toHaveValue("novice");
+  await expect(page.getByRole("combobox", { name: "Difficulty" }).locator("option")).toHaveCount(1);
+  await page.getByRole("combobox", { name: "Question category" }).selectOption("science");
   await page.getByRole("combobox", { name: "Difficulty" }).selectOption("master");
   await page.getByRole("spinbutton", { name: "Player limit" }).fill("4");
-  await page.getByRole("combobox", { name: "Question category" }).selectOption("science");
   await page.getByRole("button", { name: "Disable all powers" }).click();
   await page.getByRole("button", { name: /Create Battle Room/ }).click();
   await expect(page).toHaveURL(/\/lobby\/custom-browser-room$/);

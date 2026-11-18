@@ -1,13 +1,15 @@
 "use client";
 import { io, Socket } from "socket.io-client";
+import { getApiOrigin } from "./apiOrigin";
 import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer, ChaosVote } from "@quiz-battle/shared";
 import { useGameStore } from "../store/gameStore";
+import { getMonotonicTime, getServerTime, synchronizeServerClock } from "./gameClock";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 let socket: TypedSocket | null = null;
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+const API_URL = getApiOrigin();
 
 export function getSocket(): TypedSocket {
   if (!socket) {
@@ -130,12 +132,19 @@ export function subscribeGameRoom(
 }
 
 function registerHandlers(s: TypedSocket) {
+  let clockRequestId = 0;
   s.on("connect", () => {
     console.log("✅ Socket connected:", s.id);
     useGameStore.getState().setConnected(true);
+    const requestId = ++clockRequestId;
+    const startedAt = getMonotonicTime();
+    s.emit("clock:sync", (sample) => {
+      if (requestId === clockRequestId && s.connected) synchronizeServerClock(sample?.serverNow, startedAt);
+    });
   });
 
   s.on("disconnect", () => {
+    clockRequestId++;
     console.log("❌ Socket disconnected");
     useGameStore.getState().setConnected(false);
   });
@@ -201,8 +210,9 @@ function registerHandlers(s: TypedSocket) {
     gs.addToast("success", msg);
   });
 
-  s.on("game:question", ({ question, round, totalRounds }) => {
-    useGameStore.getState().setQuestion(question, round, totalRounds);
+  s.on("game:question", ({ question, round, totalRounds, serverNow, questionStartedAt }) => {
+    synchronizeServerClock(serverNow);
+    useGameStore.getState().setQuestion(question, round, totalRounds, questionStartedAt);
   });
 
   s.on("game:answerResult", ({ userId, correct, scoreDelta, newScore, correctIndex, correctIndices, correctOrder, correctAnswer }) => {
@@ -459,6 +469,7 @@ function registerHandlers(s: TypedSocket) {
   });
 
   s.on("invasion:state", (invasionState) => {
+    synchronizeServerClock(invasionState.serverNow);
     const store = useGameStore.getState();
     store.setInvasionState({
       ...invasionState,
@@ -471,7 +482,7 @@ function registerHandlers(s: TypedSocket) {
       const question = invasionState.currentQuestion;
       const previous = useGameStore.getState();
       const isSameQuestion = previous.currentQuestion?.id === question.id;
-      const startedAt = invasionState.questionStartedAt ?? (isSameQuestion ? previous.questionStartedAt : null) ?? Date.now();
+      const startedAt = invasionState.questionStartedAt ?? (isSameQuestion ? previous.questionStartedAt : null) ?? getServerTime();
       useGameStore.setState({
         currentQuestion: { ...question, category: "general", difficulty: Difficulty.Scholar },
         questionStartedAt: startedAt,
@@ -484,13 +495,14 @@ function registerHandlers(s: TypedSocket) {
           ? (isSameQuestion ? previous.answeredAt : null)
           : invasionState.answeredAt,
         timeWarpBonusSeconds: 0,
-        timeLeft: Math.max(0, Math.ceil(question.timeLimit - (Date.now() - startedAt) / 1000)),
+        timeLeft: Math.max(0, Math.ceil(question.timeLimit - (getServerTime() - startedAt) / 1000)),
         status: invasionState.phase === "question" ? GameStatus.Question : GameStatus.AnswerReveal,
       });
     }
   });
 
-  s.on("invasion:roundStart", ({ round, totalRounds, question }) => {
+  s.on("invasion:roundStart", ({ round, totalRounds, question, serverNow, questionStartedAt }) => {
+    synchronizeServerClock(serverNow);
     const gs = useGameStore.getState();
     gs.setInvasionQuestion(question);
     // Also populate standard game state so the existing question UI renders
@@ -505,7 +517,8 @@ function registerHandlers(s: TypedSocket) {
           difficulty: Difficulty.Scholar,
         },
         round,
-        totalRounds
+        totalRounds,
+        questionStartedAt
       );
     }
     console.log(`[Socket] invasion:roundStart round=${round}/${totalRounds}`);
@@ -749,7 +762,7 @@ export function emitAnswer(gameId: string, questionId: string, answer: Submitted
   s.emit("player:answer", {
     gameId, questionId, answer,
     ...(typeof answer === "number" ? { answerIndex: answer } : {}),
-    timestamp: Date.now(),
+    timestamp: getServerTime(),
   });
 }
 

@@ -1,4 +1,5 @@
 "use client";
+import { getServerTime } from "@/lib/gameClock";
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -145,7 +146,7 @@ const T = {
 
 const OPTION_LETTERS = ["A", "B", "C", "D"];
 
-function getEffectSecondsLeft(expiresAt?: number, now = Date.now()): number | null {
+function getEffectSecondsLeft(expiresAt?: number, now = getServerTime()): number | null {
   if (!expiresAt) return null;
   return Math.max(1, Math.ceil((expiresAt - now) / 1000));
 }
@@ -194,7 +195,7 @@ function GamePageContent() {
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [feedbackQuote, setFeedbackQuote] = useState<{ en: string; ar: string } | null>(null);
   const [pendingPowerUp, setPendingPowerUp] = useState<PowerUpType | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(getServerTime());
   const [showTransition, setShowTransition] = useState(false);
   const [transitionRound, setTransitionRound] = useState(0);
 
@@ -202,7 +203,7 @@ function GamePageContent() {
   useDocumentLocale(language);
 
   useEffect(() => {
-    const clock = setInterval(() => setNow(Date.now()), 1000);
+    const clock = setInterval(() => setNow(getServerTime()), 1000);
     return () => clearInterval(clock);
   }, []);
 
@@ -220,7 +221,7 @@ function GamePageContent() {
 
     const syncTimer = () => {
       const totalSeconds = currentQuestion.timeLimit + timeWarpBonusSeconds;
-      const elapsedSeconds = (Date.now() - questionStartedAt) / 1000;
+      const elapsedSeconds = (getServerTime() - questionStartedAt) / 1000;
       const remaining = Math.max(0, Math.ceil(totalSeconds - elapsedSeconds));
       setTimeLeft(remaining);
     };
@@ -237,7 +238,7 @@ function GamePageContent() {
   }, [currentQuestion?.id, questionStartedAt, setTimeLeft, status, timeWarpBonusSeconds, currentRound, transitionRound, mode]);
 
   useEffect(() => {
-    if (status === GameStatus.Question && currentQuestion && mode) {
+    if (status === GameStatus.Question && currentQuestion && mode && useGameStore.getState().soundEnabled) {
       soundManager.playModeSound(mode);
     }
   }, [currentQuestion?.id, mode, status]);
@@ -291,14 +292,14 @@ function GamePageContent() {
 
   function handleAnswer(answer: SubmittedAnswer) {
     const state = useGameStore.getState();
-    const frozen = state.activeEffects.some((effect) => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > Date.now()));
+    const frozen = state.activeEffects.some((effect) => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > getServerTime()));
     if (frozen || isSpectating) return;
     if (state.selectedAnswer !== null || !state.currentQuestion || state.status !== GameStatus.Question || state.timeLeft <= 0 || state.currentPlayer?.isEliminated) return;
     if (typeof answer === "number" && state.eliminatedOptions.includes(answer)) return;
     if (state.invasionState) {
       if (typeof answer !== "number") return;
       selectAnswer(answer);
-      emitInvasionAnswer(gameId, answer, Date.now() - (state.questionStartedAt || Date.now()));
+      emitInvasionAnswer(gameId, answer, getServerTime() - (state.questionStartedAt || getServerTime()));
     } else {
       selectAnswer(answer);
       emitAnswer(gameId, state.currentQuestion.id, answer);

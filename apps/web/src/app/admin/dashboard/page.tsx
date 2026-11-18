@@ -1,4 +1,5 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 
 import { useState, useEffect } from "react";
 import { useGameStore } from "@/store/gameStore";
@@ -31,7 +32,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (role !== "admin") return;
 
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/admin/stats`, {
+    fetch(`${getApiOrigin()}/api/admin/stats`, {
       headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
     })
       .then(res => res.json())

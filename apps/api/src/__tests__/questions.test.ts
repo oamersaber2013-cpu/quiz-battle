@@ -2,9 +2,9 @@ jest.mock("@quiz-battle/db", () => ({ prisma: { question: { findMany: jest.fn() 
 jest.mock("../lib/cache", () => ({ getCachedQuestions: jest.fn(async () => null), cacheQuestions: jest.fn() }));
 
 import { prisma } from "@quiz-battle/db";
-import { Difficulty, QuestionType } from "@quiz-battle/shared";
+import { Difficulty, QuestionType, OFFLINE_CATEGORY_DIFFICULTIES, normalizeQuestionCategory } from "@quiz-battle/shared";
 import { cacheQuestions, getCachedQuestions } from "../lib/cache";
-import { clearUsedQuestions, fetchQuestions } from "../lib/questions";
+import { clearUsedQuestions, fetchQuestions, hasCuratedQuestions } from "../lib/questions";
 import { QUESTION_BANK } from "../lib/questionBank";
 
 describe("database question delivery", () => {
@@ -56,6 +56,108 @@ describe("database question delivery", () => {
     clearUsedQuestions(room);
   });
 
+  it.each(Object.entries(OFFLINE_CATEGORY_DIFFICULTIES).flatMap(([category, grades]) =>
+    grades.map(grade => [category, grade] as const)))
+  ("delivers only real %s questions at %s without a paid provider", async (category, grade) => {
+    (prisma.question.findMany as jest.Mock).mockResolvedValue([]);
+    const room = `category-${category}-${grade}`;
+    clearUsedQuestions(room);
+    const questions = await fetchQuestions(grade, 4, category, undefined, "ar", room);
+    expect(questions).toHaveLength(4);
+    expect(new Set(questions.map(question => question.id)).size).toBe(4);
+    for (const question of questions) {
+      expect(question.difficulty).toBe(grade);
+      if (category !== "general") expect(normalizeQuestionCategory(question.category)).toBe(category);
+      expect(question.text).toMatch(/[\u0600-\u06ff]/);
+      expect(question.options[question.correctIndex]).toBeTruthy();
+    }
+    clearUsedQuestions(room);
+  });
+
+  it("rejects wrong-category cache entries instead of relabelling them", async () => {
+    (getCachedQuestions as jest.Mock).mockResolvedValue([{ id: "wrong", text: "Wrong subject", options: ["A", "B"],
+      category: "history", difficulty: Difficulty.Scholar, correctIndex: 0 }]);
+    (prisma.question.findMany as jest.Mock).mockResolvedValue([]);
+    const questions = await fetchQuestions(Difficulty.Scholar, 2, "Science", undefined, "ar");
+    expect(questions.every(question => normalizeQuestionCategory(question.category) === "science")).toBe(true);
+    expect(questions.some(question => question.id === "wrong")).toBe(false);
+  });
+
+  it("cycles only the exhausted exact verified pool with fresh delivery identities", async () => {
+    (prisma.question.findMany as jest.Mock).mockResolvedValue([]);
+    const room = "islamic-sage-exhaustion";
+    clearUsedQuestions(room);
+    const delivered = [];
+    for (let round = 0; round < 5; round++) {
+      const [question] = await fetchQuestions(Difficulty.Sage, 1, "islamic", undefined, "ar", room);
+      delivered.push(question);
+    }
+    expect(new Set(delivered.slice(0, 2).map(question => question.text)).size).toBe(2);
+    expect(new Set(delivered.map(question => question.id)).size).toBe(5);
+    expect(delivered.every(question => question.category === "islamic" && question.difficulty === Difficulty.Sage)).toBe(true);
+    clearUsedQuestions(room);
+  });
+
+  it("does not fill an unavailable category and grade with unrelated content", async () => {
+    (prisma.question.findMany as jest.Mock).mockResolvedValue([]);
+    expect(await fetchQuestions(Difficulty.Legend, 2, "sports", undefined, "ar")).toEqual([]);
+  });
+
+  it.each([false, true])("replays an exhausted curated DB-only pool with a fresh identity (cache first: %s)", async cachedFirst => {
+    (prisma.question.findMany as jest.Mock).mockResolvedValue([{
+      id: "curated-fill-source", textEn: "Capital?", textAr: "ما هي العاصمة؟", type: QuestionType.FillBlank,
+      category: "integration_fill_blank", difficulty: Difficulty.Sage,
+      optionsEnJson: null, optionsArJson: null, correctAnswer: JSON.stringify({ en: ["Paris"], ar: ["باريس"] }),
+    }]);
+    const room = "curated-only-exhaustion";
+    clearUsedQuestions(room);
+    expect(await hasCuratedQuestions("integration_fill_blank", Difficulty.Sage, "ar")).toBe(true);
+    expect(await hasCuratedQuestions("integration_fill_blank", Difficulty.Sage, "ar", true)).toBe(false);
+    if (cachedFirst) (getCachedQuestions as jest.Mock).mockResolvedValue([{
+      id: "curated-fill-source", text: "ما هي العاصمة؟", options: [], type: QuestionType.FillBlank,
+      category: "integration_fill_blank", difficulty: Difficulty.Sage, timeLimit: 20,
+      correctIndex: -1, correctAnswer: "باريس", acceptedAnswers: ["باريس"],
+    }]);
+    const [first] = await fetchQuestions(Difficulty.Sage, 1, "integration_fill_blank", undefined, "ar", room);
+    const [second] = await fetchQuestions(Difficulty.Sage, 1, "integration_fill_blank", undefined, "ar", room);
+    expect(first.id).toBe("curated-fill-source");
+    expect(second.id).not.toBe(first.id);
+    expect(second).toMatchObject({ category: "integration_fill_blank", difficulty: Difficulty.Sage,
+      type: QuestionType.FillBlank, correctAnswer: "باريس", acceptedAnswers: ["باريس"] });
+    clearUsedQuestions(room);
+  });
+
+  it("keeps replay IDs unique for a curated batch larger than its source pool without a room", async () => {
+    (prisma.question.findMany as jest.Mock).mockResolvedValue([{
+      id: "db-question-1", category: "curated-only", difficulty: Difficulty.Sage,
+      textEn: "Question", textAr: "سؤال بالعربية", type: "multiple_choice", correctAnswer: "0",
+      optionsEnJson: '["A","B"]', optionsArJson: '["ألف","باء"]',
+    }]);
+    const clock = jest.spyOn(Date, "now").mockReturnValue(100000);
+    const random = jest.spyOn(Math, "random").mockReturnValue(0.5);
+    const replayIds = new Set<string>();
+    try {
+      for (let batch = 0; batch < 10; batch++) {
+        const questions = await fetchQuestions(Difficulty.Sage, 3, "curated-only", undefined, "ar");
+        expect(questions).toHaveLength(3);
+        expect(new Set(questions.map(question => question.id)).size).toBe(3);
+        expect(questions[0].id).toBe("db-question-1");
+        for (const question of questions.slice(1)) {
+          expect(replayIds.has(question.id)).toBe(false);
+          replayIds.add(question.id);
+        }
+      }
+      expect(replayIds.size).toBe(20);
+    } finally { clock.mockRestore(); random.mockRestore(); }
+  });
+
+  it("uses fresh exact offline questions before replaying a small curated pool", async () => {
+    const questions = await fetchQuestions(Difficulty.Sage, 3, "general", undefined, "ar", "curated-plus-offline");
+    expect(questions[0].id).toBe("db-question-1");
+    expect(new Set(questions.map(question => question.text)).size).toBe(3);
+    clearUsedQuestions("curated-plus-offline");
+  });
+
   it("uses the default question pool for an empty category selection", async () => {
     const questions = await fetchQuestions(Difficulty.Sage, 1, [], undefined, "ar");
     expect(questions).toHaveLength(1);
@@ -90,8 +192,8 @@ describe("database question delivery", () => {
 
   it("filters advanced cached questions for the single-choice Conquest/Invasion protocol", async () => {
     (getCachedQuestions as jest.Mock).mockResolvedValue([
-      { id: "advanced", text: "Question", options: ["A", "B"], type: QuestionType.MultiSelect, correctIndices: [0, 1] },
-      { id: "single", text: "Question", options: ["A", "B"], type: QuestionType.MultipleChoice, correctIndex: 1 },
+      { id: "advanced", category: "general", difficulty: Difficulty.Sage, text: "Question", options: ["A", "B"], type: QuestionType.MultiSelect, correctIndices: [0, 1] },
+      { id: "single", category: "general", difficulty: Difficulty.Sage, text: "Question", options: ["A", "B"], type: QuestionType.MultipleChoice, correctIndex: 1 },
     ]);
     const [question] = await fetchQuestions(Difficulty.Sage, 1, "general", undefined, "en", undefined, { singleChoiceOnly: true });
     expect(question.id).toBe("single");

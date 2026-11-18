@@ -1,6 +1,7 @@
 "use client";
 
-import { Difficulty, PowerUpType, type CustomGameSettings } from "@quiz-battle/shared";
+import { useEffect } from "react";
+import { Difficulty, PowerUpType, getPlayableDifficulties, type CustomGameSettings } from "@quiz-battle/shared";
 
 const difficulties = [
   [Difficulty.Novice, "Novice", "مبتدئ"], [Difficulty.Scholar, "Scholar", "باحث"],
@@ -21,12 +22,17 @@ const categories = [
   ["sports", "Sports", "الرياضة"], ["anime", "Anime", "الأنمي"],
 ] as const;
 
-export function CustomModeBuilder({ value, onChange, language = "en" }: {
+export function CustomModeBuilder({ value, onChange, language = "en", selectedCategories = ["general"] }: {
   value: CustomGameSettings;
   onChange: (value: CustomGameSettings) => void;
   language?: "en" | "ar";
+  selectedCategories?: string[];
 }) {
   const isAr = language === "ar";
+  const playable = getPlayableDifficulties(value.categoryFilter ? [value.categoryFilter] : selectedCategories);
+  useEffect(() => {
+    if (playable.length && !playable.includes(value.difficulty)) onChange({ ...value, difficulty: playable[0] });
+  }, [value, onChange, playable.join(",")]);
   const update = <K extends keyof CustomGameSettings>(key: K, next: CustomGameSettings[K]) =>
     onChange({ ...value, [key]: next });
 
@@ -57,7 +63,7 @@ export function CustomModeBuilder({ value, onChange, language = "en" }: {
           {isAr ? "الصعوبة" : "Difficulty"}
           <select id="custom-difficulty" className="input mt-2" value={value.difficulty}
             onChange={event => update("difficulty", event.target.value as Difficulty)}>
-            {difficulties.map(([difficulty, en, ar]) => <option key={difficulty} value={difficulty}>{isAr ? ar : en}</option>)}
+            {difficulties.filter(([difficulty]) => playable.includes(difficulty)).map(([difficulty, en, ar]) => <option key={difficulty} value={difficulty}>{isAr ? ar : en}</option>)}
           </select>
         </label>
         <label htmlFor="custom-player-limit">
@@ -74,6 +80,11 @@ export function CustomModeBuilder({ value, onChange, language = "en" }: {
           </select>
         </label>
       </div>
+      <p className="text-muted text-sm mt-3">{isAr ? "تظهر مستويات الصعوبة التي تتوفر لها أسئلة محلية في الأقسام المحددة." : "Difficulty choices match local questions in the selected categories."}</p>
+      {!playable.length && <p role="alert">{isAr ? "لا يوجد مستوى مشترك لهذه الأقسام. اختر معلومات متنوعة أو قسماً آخر." : "These categories have no shared difficulty. Choose mixed trivia or another category."}</p>}
+      <button type="button" className="btn btn-ghost btn-sm mt-2" onClick={() => update("categoryFilter", "general")}>
+        {isAr ? "استخدام معلومات متنوعة" : "Use mixed trivia"}
+      </button>
       <fieldset className="mt-6">
         <legend className="font-bold mb-3">{isAr ? "القوى المتاحة" : "Available powers"}</legend>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 12 }}>

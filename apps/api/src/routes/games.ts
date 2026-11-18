@@ -6,10 +6,12 @@ import {
   GameStatus,
   Difficulty,
   GAME_MODE_CONFIG,
+  getPlayableDifficulties, normalizeQuestionCategory,
 } from "@quiz-battle/shared";
 import { prisma } from "@quiz-battle/db";
 import { DEFAULT_CUSTOM_SETTINGS, PowerUpType, type CustomGameSettings } from "@quiz-battle/shared";
 import { KEYS } from "../lib/redis";
+import { hasCuratedQuestions } from "../lib/questions";
 import { setActiveGame } from "../lib/gameOrchestrator";
 import type { JWTPayload } from "./auth";
 import { hasRoomAccess, protectRoom, validRoomPassword } from "../lib/roomAccess";
@@ -78,7 +80,14 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       ...DEFAULT_CUSTOM_SETTINGS, difficulty: body.difficulty, ...(rounds === undefined ? {} : { rounds }),
     }) as CustomGameSettings : undefined;
     const difficulty = customSettings?.difficulty || body.difficulty;
-    const categories = customSettings?.categoryFilter ? [customSettings.categoryFilter] : body.categories;
+    const categories = (customSettings?.categoryFilter ? [customSettings.categoryFilter]
+      : body.categories?.length ? body.categories : ["general"]).map(normalizeQuestionCategory);
+    const compatibleCategories = await Promise.all(categories.map(category =>
+      getPlayableDifficulties([category]).includes(difficulty) || hasCuratedQuestions(category, difficulty,
+        body.language || "en", mode === GameMode.Conquest || mode === GameMode.Chaos)));
+    if (compatibleCategories.some(available => !available)) {
+      return reply.status(400).send({ error: "No compatible questions for this category and difficulty. Choose another difficulty or mixed trivia." });
+    }
     const privateRoom = !!isPrivate || !!password;
     if (privateRoom && !validRoomPassword(password)) {
       return reply.status(400).send({ error: "A private room requires a password of 1 to 72 UTF-8 bytes" });

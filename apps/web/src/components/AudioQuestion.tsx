@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
+import { safeMediaUrl } from "@/lib/apiOrigin";
 
 interface AudioQuestionProps {
   question: any;
@@ -24,6 +25,7 @@ export function AudioQuestion({
 }: AudioQuestionProps) {
   const isAr = language === "ar";
   const hasAnswered = selectedAnswer !== null;
+  const audioUrl = safeMediaUrl(question.audioUrl);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -57,7 +59,7 @@ export function AudioQuestion({
       </div>
 
       {/* Audio Player */}
-      {question.audioUrl && (
+      {audioUrl && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -65,7 +67,7 @@ export function AudioQuestion({
         >
           <audio
             ref={audioRef}
-            src={question.audioUrl}
+            src={audioUrl}
             onEnded={handleAudioEnded}
             className="hidden"
           />
@@ -108,6 +110,8 @@ export function AudioQuestion({
           </button>
         </motion.div>
       )}
+
+      {question.audioUrl && !audioUrl && <p role="status">{isAr ? "الصوت غير متاح." : "Question audio is unavailable."}</p>}
 
       {/* Options Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

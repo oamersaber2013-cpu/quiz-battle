@@ -1,4 +1,5 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -6,7 +7,7 @@ import Link from "next/link";
 import { useGameStore } from "@/store/gameStore";
 import { connectSocket } from "@/lib/socket";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+const API = getApiOrigin();
 
 export default function RegisterPage() {
   const router = useRouter();

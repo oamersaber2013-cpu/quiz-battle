@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { ConquestClientState } from "@quiz-battle/shared";
 import { ConquestGame } from "@/components/ConquestGame";
 import { useGameStore } from "@/store/gameStore";
+import { resetServerClock } from "@/lib/gameClock";
 
 const { act, create } = require("react-test-renderer") as {
   act: (callback: () => void) => void;
@@ -42,6 +43,7 @@ function draftState(overrides: Partial<NonNullable<ConquestClientState["draftPha
 describe("Conquest draft controls", () => {
   let rendered: any;
   beforeEach(() => {
+    resetServerClock();
     jest.spyOn(console, "warn").mockImplementation(() => {});
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-11-18T08:00:00Z"));
@@ -59,6 +61,7 @@ describe("Conquest draft controls", () => {
     jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
+    resetServerClock();
   });
 
   it("allows my answer after another player answers and locks every option during submission", () => {
@@ -87,6 +90,22 @@ describe("Conquest draft controls", () => {
     expect(selected.props.disabled).toBe(true);
     act(() => jest.advanceTimersByTime(3000));
     expect(rendered.root.findByProps({ "data-testid": "conquest-countdown" }).children.join("")).toContain("17");
+  });
+
+  it.each([-40000, 40000])("keeps a new draft usable with a device clock skew of %sms", (skew) => {
+    const serverNow = Date.now();
+    jest.setSystemTime(serverNow + skew);
+    useGameStore.getState().setConquestState({
+      ...draftState({ questionStartedAt: serverNow - 10000, questionEndsAt: serverNow + 20000 }),
+      serverNow,
+    });
+    act(() => { rendered = create(createElement(ConquestGame)); });
+    expect(rendered.root.findByProps({ "data-testid": "conquest-countdown" }).children.join("")).toBe("20");
+    expect(rendered.root.findByProps({ "data-answer-index": 0 }).props.disabled).toBe(false);
+    act(() => rendered.root.findByProps({ "data-answer-index": 0 }).props.onClick());
+    expect(mockSocket.emit.mock.calls[0][1].responseTimeMs).toBe(10000);
+    act(() => jest.advanceTimersByTime(3000));
+    expect(rendered.root.findByProps({ "data-testid": "conquest-countdown" }).children.join("")).toBe("17");
   });
 
   it("preserves my answer on broad snapshots and clears it for the next draft round", () => {

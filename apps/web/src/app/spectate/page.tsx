@@ -1,4 +1,5 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -62,7 +63,7 @@ export default function SpectatePage() {
   const joiningRef = useRef(false);
 
   const fetchGames = useCallback(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000"}/api/games/active`)
+    fetch(`${getApiOrigin()}/api/games/active`)
       .then((r) => {
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
@@ -96,7 +97,7 @@ export default function SpectatePage() {
     try {
       const store = useGameStore.getState();
       if (!store.userId || !store.token) {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000"}/api/auth/guest`, {
+        const response = await fetch(`${getApiOrigin()}/api/auth/guest`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
         });
         if (!response.ok) throw new Error("Guest sign-in failed");

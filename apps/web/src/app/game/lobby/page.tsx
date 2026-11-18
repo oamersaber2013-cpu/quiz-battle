@@ -1,21 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
 import { useGameStore } from "@/store/gameStore";
 import { InviteLink } from "@/components/InviteLink";
-import { useSound } from "@/hooks/useSound";
 import { motion } from "framer-motion";
 
 export default function LobbyPage() {
   const { gameId, joinCode, players, hostId, userId, mode, difficulty, totalRounds, language } = useGameStore();
-  const { preload } = useSound();
   const isAr = language === "ar";
   const isHost = userId === hostId;
-
-  // Preload sounds on mount
-  useEffect(() => {
-    preload();
-  }, [preload]);
 
   if (!gameId) {
     return (

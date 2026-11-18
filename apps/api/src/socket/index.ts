@@ -54,6 +54,7 @@ function roomSnapshot(game: NonNullable<ReturnType<typeof getActiveGame>>, viewe
     ? game.questions[game.currentRound - 1] : null;
   const answer = viewerId ? game.answersThisRound[viewerId] : undefined;
   return {
+    serverNow: Date.now(),
     gameId: game.gameId, joinCode: game.joinCode, hostId: game.hostId,
     mode: game.mode, difficulty: game.difficulty, status: game.status,
     isPrivate: !!game.isPrivate,
@@ -140,6 +141,10 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     };
 
     console.log(`🔌 Connected: ${username} (${userId})`);
+
+    socket.on("clock:sync", (acknowledge) => {
+      if (typeof acknowledge === "function") acknowledge({ serverNow: Date.now() });
+    });
 
     // ─── Join Game ─────────────────────────────────────────
     socket.on("game:join", async ({ gameId, password }, cb) => {

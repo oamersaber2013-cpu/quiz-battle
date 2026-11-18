@@ -1,4 +1,5 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
@@ -101,7 +102,7 @@ export default function ResultsPage() {
     }
     const controller = new AbortController();
     setResource(null);
-    const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+    const API = getApiOrigin();
     async function loadResults() {
       try {
         const response = await fetch(`${API}/api/results/${encodeURIComponent(gameId)}`, {

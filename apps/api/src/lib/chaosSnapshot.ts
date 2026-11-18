@@ -15,6 +15,7 @@ export function getChaosClientSnapshot(gameId: string, viewerId?: string): Chaos
   const activeTrap = trap?.status === "ACTIVE" || trap?.status === "EVALUATING" ? trap : null;
 
   return {
+    serverNow: now,
     gameId,
     level: state.chaosLevel,
     state: state.chaosState,

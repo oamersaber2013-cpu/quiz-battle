@@ -1,9 +1,10 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { GameMode, Difficulty, GAME_MODE_CONFIG, DEFAULT_CUSTOM_SETTINGS, type CustomGameSettings } from "@quiz-battle/shared";
+import { GameMode, Difficulty, GAME_MODE_CONFIG, DEFAULT_CUSTOM_SETTINGS, getPlayableDifficulties, type CustomGameSettings } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { connectSocket } from "@/lib/socket";
 import { ModeVisualSelector } from "@/components/ModeVisualSelector";
@@ -403,6 +404,15 @@ export default function HomePage() {
   const [isCreating, setIsCreating] = useState(false);
   const [privateRoom, setPrivateRoom] = useState(false);
   const [roomPassword, setRoomPassword] = useState("");
+  const playableDifficulties = getPlayableDifficulties(selectedCats);
+  const effectiveCategories = selectedMode === GameMode.Custom && customConfig.categoryFilter
+    ? [customConfig.categoryFilter] : selectedCats;
+  const canCreateWithQuestions = getPlayableDifficulties(effectiveCategories)
+    .includes(selectedMode === GameMode.Custom ? customConfig.difficulty : selectedDiff);
+  useEffect(() => {
+    if (playableDifficulties.length && !playableDifficulties.includes(selectedDiff)) setSelectedDiff(playableDifficulties[0]);
+  }, [selectedDiff, playableDifficulties.join(",")]);
+
 
   useEffect(() => { if (view !== "create") setRoomPassword(""); }, [view]);
 
@@ -414,12 +424,16 @@ export default function HomePage() {
     }
   }, [view]);
 
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+  const API = getApiOrigin();
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
 
   async function handleCreateGame() {
+    if (!canCreateWithQuestions) {
+      addToast("error", isRTL ? "اختر صعوبة متاحة أو معلومات متنوعة." : "Choose an available difficulty or mixed trivia.");
+      return;
+    }
     if (selectedMode === GameMode.Custom && !customConfig.name.trim()) {
       addToast("error", isRTL ? "أدخل اسماً للمعركة." : "Enter a battle name.");
       return;
@@ -759,7 +773,7 @@ export default function HomePage() {
                     {isRTL ? "الفئات المتاحة" : "Available Categories"} ({Object.keys(CATEGORIES).length})
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
-                    {Object.entries(CATEGORIES).map(([id, cat]) => {
+                    {Object.entries(CATEGORIES).filter(([id]) => getPlayableDifficulties([id]).length > 0).map(([id, cat]) => {
                       const isSelected = selectedCats.includes(id);
                       return (
                         <div
@@ -923,7 +937,7 @@ export default function HomePage() {
                 
                 {selectedMode !== GameMode.Custom && <div className="glass-card p-6 mb-6">
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
-                    {DIFFICULTIES.map(({ value, label, color, icon }) => (
+                    {DIFFICULTIES.filter(({ value }) => playableDifficulties.includes(value)).map(({ value, label, color, icon }) => (
                       <button
                         key={value}
                         onClick={() => setSelectedDiff(value)}
@@ -950,6 +964,13 @@ export default function HomePage() {
                       </button>
                     ))}
                   </div>
+                </div>}
+                {selectedMode !== GameMode.Custom && <div className="mb-4 text-sm">
+                  <p>{isRTL ? "مستويات الصعوبة المعروضة تتوفر لها أسئلة محلية في الأقسام المحددة." : "Shown difficulties have local questions in every selected category."}</p>
+                  {!playableDifficulties.length && <p role="alert">{isRTL ? "لا يوجد مستوى مشترك. غيّر الأقسام أو استخدم معلومات متنوعة." : "No shared difficulty. Change categories or use mixed trivia."}</p>}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSelectedCats(["general"]); setSelectedTopics(["trivia"]); }}>
+                    {isRTL ? "استخدام معلومات متنوعة" : "Use mixed trivia"}
+                  </button>
                 </div>}
 
                 <div className="glass-card p-5 mb-6">
@@ -995,6 +1016,7 @@ export default function HomePage() {
                     <CustomModeBuilder
                       value={customConfig}
                       onChange={setCustomConfig}
+                      selectedCategories={selectedCats}
                       language={language}
                     />
                   </div>
@@ -1011,7 +1033,7 @@ export default function HomePage() {
                   <button
                     className="btn btn-primary btn-lg"
                     onClick={handleCreateGame}
-                    disabled={loading || isCreating || (privateRoom && !isValidRoomPassword(roomPassword))}
+                    disabled={loading || isCreating || !canCreateWithQuestions || (privateRoom && !isValidRoomPassword(roomPassword))}
                     style={{ height: 60, fontSize: "1.2rem", fontWeight: 900, flex: 2, boxShadow: "0 12px 40px rgba(108,99,255,0.5)" }}
                   >
                     {isCreating ? (

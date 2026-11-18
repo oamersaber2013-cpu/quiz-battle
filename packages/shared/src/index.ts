@@ -269,6 +269,7 @@ export interface ChaosDramaSnapshot {
 }
 
 export interface ChaosClientSnapshot {
+  serverNow?: number;
   gameId: string;
   level: number;
   state: "CALM" | "UNSTABLE" | "CHAOTIC" | "INSANITY" | "ANARCHY";
@@ -296,6 +297,7 @@ export interface ChaosClientSnapshot {
 }
 
 export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
+  serverNow?: number;
   players: PlayerState[];
   chaos?: ChaosClientSnapshot | null;
   activeEffects?: ActivePowerUpEffect[];
@@ -338,6 +340,7 @@ export interface ConquestDuelQuestion {
 }
 
 export interface ConquestClientState {
+  serverNow?: number;
   territories: Record<string, string | null>;      // territoryId -> ownerId
   fortHealth: Record<string, number>;              // playerId -> 1-3
   fortTerritoryId: Record<string, string>;         // playerId -> their fort's territory id
@@ -380,6 +383,7 @@ export interface ConquestClientState {
 
 // Invasion Mode State (Phase 2 of conquest)
 export interface InvasionClientState {
+  serverNow?: number;
   territories: {
     id: string | number;
     ownerId: string | null;
@@ -417,6 +421,8 @@ export interface ServerToClientEvents {
   "game:error": (data: { message: string }) => void;
   "game:countdown": (data: { seconds: number }) => void;
   "game:question": (data: {
+    serverNow?: number;
+    questionStartedAt?: number;
     question: SafeClientQuestion;
     round: number;
     totalRounds: number;
@@ -559,6 +565,8 @@ export interface ServerToClientEvents {
   "invasion:init": (data: { gameId: string; playerIds: string[]; totalRounds?: number }) => void;
   "invasion:state": (data: InvasionClientState) => void;
   "invasion:roundStart": (data: {
+    serverNow?: number;
+    questionStartedAt?: number;
     round: number;
     totalRounds: number;
     question: { id: string; text: string; options: string[]; timeLimit: number; };
@@ -652,6 +660,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  "clock:sync": (acknowledge: (sample: { serverNow: number }) => void) => void;
   "game:join": (
     data: { joinCode?: string; gameId?: string; userId?: string; username?: string; password?: string },
     cb?: (response: JoinResponse) => void
@@ -871,3 +880,5 @@ export const GAME_MODE_CONFIG: Record<
 
 export * from "./quotes";
 export * from "./characters";
+
+export * from "./questionAvailability";

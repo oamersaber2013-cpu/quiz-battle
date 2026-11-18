@@ -1,4 +1,5 @@
 "use client";
+import { getServerTime } from "@/lib/gameClock";
 
 import { useEffect, useRef, useState } from "react";
 import { useGameStore } from "@/store/gameStore";
@@ -72,8 +73,8 @@ function ConquestBoard() {
     pending: boolean;
   } | null>(null);
   const [actionPending, setActionPending] = useState(false);
-  const [now, setNow] = useState(Date.now);
-  const mountedAt = useRef(Date.now());
+  const [now, setNow] = useState(getServerTime);
+  const mountedAt = useRef(getServerTime());
   const answerLocked = useRef(false);
   const actionLocked = useRef(false);
   const active = useRef(true);
@@ -129,7 +130,7 @@ function ConquestBoard() {
 
   useEffect(() => {
     active.current = true;
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    const timer = setInterval(() => setNow(getServerTime()), 250);
     return () => {
       active.current = false;
       clearInterval(timer);
@@ -175,7 +176,7 @@ function ConquestBoard() {
             draftPhase: {
               ...draft,
               selectedAnswer: index,
-              answeredAt: Date.now(),
+              answeredAt: getServerTime(),
             },
           });
         }
@@ -187,7 +188,7 @@ function ConquestBoard() {
         {
           gameId,
           answerIndex: index,
-          responseTimeMs: Math.max(0, Date.now() - questionStartedAt),
+          responseTimeMs: Math.max(0, getServerTime() - questionStartedAt),
           questionId: question.id,
           round: draftPhase!.currentRound,
         },

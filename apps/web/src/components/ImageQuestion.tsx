@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
+import { safeMediaUrl } from "@/lib/apiOrigin";
 
 interface ImageQuestionProps {
   question: any;
@@ -23,6 +24,7 @@ export function ImageQuestion({
 }: ImageQuestionProps) {
   const isAr = language === "ar";
   const hasAnswered = selectedAnswer !== null;
+  const imageUrl = safeMediaUrl(question.imageUrl);
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
   const options = isAr
@@ -39,14 +41,14 @@ export function ImageQuestion({
       </div>
 
       {/* Image Display */}
-      {question.imageUrl && (
+      {imageUrl && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="mb-6 rounded-2xl overflow-hidden border-2 border-gray-800"
         >
           <img
-            src={question.imageUrl}
+            src={imageUrl}
             alt="Question"
             className="w-full max-h-64 object-contain bg-gray-950"
             onError={(e) => {
@@ -55,6 +57,7 @@ export function ImageQuestion({
           />
         </motion.div>
       )}
+      {question.imageUrl && !imageUrl && <p role="status">{isAr ? "صورة السؤال غير متاحة." : "Question image is unavailable."}</p>}
 
       {/* Options Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

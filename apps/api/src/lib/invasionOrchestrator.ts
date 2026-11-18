@@ -372,6 +372,8 @@ export async function startInvasionRound(
   
   // Broadcast question to all players
   io.to(gameId).emit("invasion:roundStart", {
+    serverNow: Date.now(),
+    questionStartedAt: state.currentQuestion.startTime,
     round: state.currentRound,
     totalRounds: state.totalRounds,
     question: {
@@ -766,6 +768,7 @@ export function buildInvasionClientState(gameId: string, viewerId?: string): imp
   }
 
   return {
+    serverNow: Date.now(),
     territories: state.territories.map(t => ({
       ...t,
       id: t.id.toString(),

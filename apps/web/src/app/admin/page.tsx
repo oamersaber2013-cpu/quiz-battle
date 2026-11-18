@@ -1,4 +1,5 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -34,7 +35,7 @@ export default function AdminPage() {
   
   const [editForm, setEditForm] = useState<Partial<QuestionData>>({});
 
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+  const API = getApiOrigin();
 
   useEffect(() => {
     if (role !== "ADMIN") {

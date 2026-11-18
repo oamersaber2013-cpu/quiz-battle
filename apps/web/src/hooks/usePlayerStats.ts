@@ -1,4 +1,5 @@
 "use client";
+import { getApiOrigin } from "@/lib/apiOrigin";
 
 import { useEffect, useState } from "react";
 import { useGameStore } from "@/store/gameStore";
@@ -24,7 +25,7 @@ export function usePlayerStats() {
   useEffect(() => {
     if (!ready || !token) return;
     const controller = new AbortController();
-    const url = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+    const url = getApiOrigin();
     fetch(`${url}/api/user/stats`, {
       headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal: controller.signal,
     }).then(async response => {

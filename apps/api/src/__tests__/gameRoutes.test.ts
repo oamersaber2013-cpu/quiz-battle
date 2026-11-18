@@ -1,5 +1,5 @@
 jest.mock("nanoid", () => ({ nanoid: () => "test-room" }));
-jest.mock("@quiz-battle/db", () => ({ prisma: { $transaction: jest.fn() } }));
+jest.mock("@quiz-battle/db", () => ({ prisma: { $transaction: jest.fn(), question: { findMany: jest.fn() } } }));
 jest.mock("../lib/gameOrchestrator", () => ({ getActiveGame: jest.fn(), setActiveGame: jest.fn(), getAllActiveGames: jest.fn() }));
 
 import Fastify from "fastify";
@@ -19,6 +19,7 @@ const auth = (userId: string) => ({ authorization: `Bearer ${jwt.sign({ userId, 
 beforeEach(() => {
   jest.clearAllMocks();
   rooms.clear();
+  (prisma.question.findMany as jest.Mock).mockResolvedValue([]);
   (getActiveGame as jest.Mock).mockImplementation(id => rooms.get(id));
   (setActiveGame as jest.Mock).mockImplementation((id, state) => rooms.set(id, state));
   (getAllActiveGames as jest.Mock).mockImplementation(() => [...rooms.values()]);
@@ -75,6 +76,37 @@ it.each([
     } });
     expect(response.statusCode).toBe(400);
     expect(setActiveGame).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+});
+
+it.each([
+  { mode: GameMode.Custom, difficulty: Difficulty.Scholar, customSettings: { difficulty: Difficulty.Legend, categoryFilter: "sports" } },
+  { mode: GameMode.Classic, difficulty: Difficulty.Legend, categories: ["sports"] },
+  { mode: GameMode.Classic, difficulty: Difficulty.Sage, categories: ["mythology"] },
+  { mode: GameMode.Classic, difficulty: Difficulty.Sage, categories: ["technology", "sports"] },
+])("rejects unplayable category and grade combinations before creating a room", async payload => {
+  const app = await createApp();
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/games", headers: auth("host"), payload });
+    expect(response.statusCode).toBe(400);
+    expect(setActiveGame).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+});
+
+it("accepts a real curated DB-only category while requiring single-choice compatibility in Conquest", async () => {
+  (prisma.question.findMany as jest.Mock).mockResolvedValue([{
+    id: "curated-fill", category: "integration_fill_blank", difficulty: Difficulty.Sage,
+    textEn: "Capital?", textAr: "ما هي العاصمة؟", type: "fill_blank",
+    optionsEnJson: null, optionsArJson: null, correctAnswer: "Paris",
+  }]);
+  const app = await createApp();
+  try {
+    const payload = { mode: GameMode.Classic, difficulty: Difficulty.Sage, categories: ["integration_fill_blank"] };
+    const classic = await app.inject({ method: "POST", url: "/api/games", headers: auth("host"), payload });
+    expect(classic.statusCode).toBe(201);
+    expect(rooms.get("test-room").categories).toEqual(["integration_fill_blank"]);
+    const conquest = await app.inject({ method: "POST", url: "/api/games", headers: auth("host"), payload: { ...payload, mode: GameMode.Conquest } });
+    expect(conquest.statusCode).toBe(400);
   } finally { await app.close(); }
 });
 

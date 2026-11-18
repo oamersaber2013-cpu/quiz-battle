@@ -92,6 +92,7 @@ function currentPlayer(s: ConquestInternalState): string {
 export function safeConquestState(s: ConquestInternalState, viewerId?: string): ConquestClientState {
   const ownAnswer = viewerId ? s.draftPhase?.answers.get(viewerId) : undefined;
   return {
+    serverNow: Date.now(),
     territories: s.territories,
     fortHealth: s.fortHealth,
     fortTerritoryId: s.fortTerritoryId,

@@ -131,7 +131,30 @@ test("restores an Arabic Chaos answer and ballot after a browser reload", async 
     const other = page.getByRole("button", { name: /مسقط/ });
     const vote = page.getByRole("button", { name: /خفض النقاط/ });
     await expect(selected).toBeEnabled();
-    await selected.click();
+    // Position a real answer underneath the visible notification, as on a short phone.
+    await page.setViewportSize({ width: 320, height: 480 });
+    io.emit("game:error", { message: "إشعار أثناء الإجابة" });
+    const notice = page.getByRole("alert").filter({ hasText: "إشعار أثناء الإجابة" });
+    const dismiss = notice.getByRole("button", { name: "إغلاق" });
+    await expect(notice).toBeVisible();
+    const point = await notice.locator("span").evaluate((message) => {
+      const text = message.getBoundingClientRect();
+      const answer = document.querySelector<HTMLButtonElement>('[data-chaos-answer="0"]')!;
+      const bounds = answer.getBoundingClientRect();
+      const y = text.top + text.height / 2;
+      const x = (Math.max(text.left, bounds.left) + Math.min(text.right, bounds.right)) / 2;
+      window.scrollBy({ top: bounds.top + bounds.height / 2 - y, behavior: "instant" });
+      return { x, y };
+    });
+    const underneath = await page.evaluate(({ x, y }) =>
+      document.elementFromPoint(x, y)?.closest("button")?.dataset.chaosAnswer, point);
+    expect(underneath, "The toast text must pass pointer input to the answer beneath it").toBe("0");
+    if (testInfo.project.use.hasTouch) await page.touchscreen.tap(point.x, point.y);
+    else await page.mouse.click(point.x, point.y);
+    await expect(dismiss).toBeVisible();
+    await dismiss.click();
+    await expect(notice).toHaveCount(0, { timeout: 1000 });
+    await page.setViewportSize({ width: 320, height: 844 });
     await expect.poll(() => answers).toEqual([
       { gameId, questionId, answer: 0, answerIndex: 0, timestamp: expect.any(Number) },
     ]);

@@ -948,7 +948,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 0.9rem;
   font-weight: 600;
   animation: fadeIn 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
-  pointer-events: auto;
+  pointer-events: none;
   max-width: min(340px, calc(100vw - 24px));
   overflow-wrap: anywhere;
 }
@@ -960,7 +960,7 @@ a { color: inherit; text-decoration: none; }
 .toast-success { background: #10392b; border: 1px solid #53d9a1; color: #c4ffdf; }
 .toast-error { background: #422028; border: 1px solid #ff7180; color: #ffe0e4; }
 .toast-info { background: #1d3643; border: 1px solid #82babc; color: #eef6f4; }
-.toast button { background: transparent; border: 0; color: inherit; font: inherit; min-width: 40px; min-height: 40px; cursor: pointer; }
+.toast button { pointer-events: auto; background: transparent; border: 0; color: inherit; font: inherit; min-width: 40px; min-height: 40px; cursor: pointer; }
 @media (max-width: 600px) {
   .toast-container { top: auto; bottom: max(12px, env(safe-area-inset-bottom)); inset-inline-end: 12px; }
 }

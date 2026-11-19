@@ -328,6 +328,9 @@ export const useGameStore = create<GameStore>()(
           players: state.players.map((p) =>
             p.userId === userId ? { ...p, ...updates } : p
           ),
+          currentPlayer: state.currentPlayer?.userId === userId
+            ? { ...state.currentPlayer, ...updates }
+            : state.currentPlayer,
         })),
 
       setQuestion: (question, round, totalRounds, startedAt = getServerTime()) => {
@@ -477,6 +480,7 @@ export const useGameStore = create<GameStore>()(
             timeLeft: question && questionStartedAt
               ? Math.max(0, Math.ceil(question.timeLimit + timeWarpBonusSeconds - (getServerTime() - questionStartedAt) / 1000))
               : previous.timeLeft,
+            eliminatedOptions: room.eliminatedOptions ?? (isNewQuestion ? [] : previous.eliminatedOptions),
             selectedAnswer: room.selectedAnswer === undefined ? (isNewQuestion ? null : previous.selectedAnswer) : room.selectedAnswer,
             answeredAt: room.answeredAt === undefined ? (isNewQuestion ? null : previous.answeredAt) : room.answeredAt,
             lastAnswerResult: room.lastAnswerResult === undefined ? (isNewQuestion ? null : previous.lastAnswerResult) : room.lastAnswerResult,

@@ -1,5 +1,6 @@
 "use client";
 import styles from "./ActiveExperience.module.css";
+import chaosStyles from "./ChaosGame.module.css";
 import { getServerTime } from "@/lib/gameClock";
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -28,6 +29,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   const {
     status,
     currentQuestion: question,
+    currentRound,
     timeLeft,
     players,
     userId,
@@ -53,6 +55,8 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmedVote, setConfirmedVote] = useState<string | null>(null);
   const actionInFlight = useRef(false);
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
+  const reviewContext = useRef<{ questionId: string; round: number } | null>(null);
   const voting = chaosState?.votingSession;
   const drama = chaosState?.pendingDrama;
   const deadline = chaosState?.voteDeadline;
@@ -64,7 +68,11 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   const voted = !!voting && (voting.hasVoted || confirmedVote === voting.dramaEventId);
   const isFrozen = activeEffects.some((effect) => effect.type === PowerUpType.Freeze &&
     effect.targetUserId === userId && (!effect.expiresAt || effect.expiresAt > now));
+  const isSandstormed = activeEffects.some((effect) => effect.type === PowerUpType.Sandstorm &&
+    effect.targetUserId === userId && (!effect.expiresAt || effect.expiresAt > now));
   const canAnswer = canParticipate && !isFrozen && status === GameStatus.Question && timeLeft > 0 && selectedAnswer === null;
+
+  useEffect(() => { setShowReview(false); }, [question?.id, currentRound, status, isSpectating, gameId]);
 
   useEffect(() => {
     setNow(getServerTime());
@@ -73,6 +81,18 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
   }, []);
 
   const dismissTrapResult = useCallback(() => useGameStore.getState().setTrapResult(null), []);
+  const closeReview = useCallback(() => setShowReview(false), []);
+  const shouldRestoreReviewFocus = useCallback(() => {
+    const state = useGameStore.getState();
+    return !isSpectating && state.isConnected && state.status === GameStatus.AnswerReveal &&
+      state.currentQuestion?.id === reviewContext.current?.questionId && state.currentRound === reviewContext.current?.round;
+  }, [isSpectating]);
+  const openReview = useCallback(() => {
+    const state = useGameStore.getState();
+    if (isSpectating || state.status !== GameStatus.AnswerReveal || !state.currentQuestion) return;
+    reviewContext.current = { questionId: state.currentQuestion.id, round: state.currentRound };
+    setShowReview(true);
+  }, [isSpectating]);
 
   // Play sounds on state changes
   useEffect(() => {
@@ -138,7 +158,8 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
     const state = useGameStore.getState();
     if (!gameId || !question || !canAnswer || !getSocket().connected) return;
     if (state.currentQuestion?.id !== question.id || state.selectedAnswer !== null || state.timeLeft <= 0 ||
-      state.status !== GameStatus.Question || state.eliminatedOptions.includes(index)) return;
+      state.status !== GameStatus.Question || state.eliminatedOptions.includes(index) || !state.currentPlayer || state.currentPlayer.isEliminated ||
+      state.activeEffects.some(effect => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > getServerTime()))) return;
     state.selectAnswer(index);
     emitAnswer(gameId, question.id, index);
     play("click");
@@ -362,7 +383,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
           )}
 
           {/* Question Phase */}
-          {question && status === GameStatus.Question && (
+          {question && (status === GameStatus.Question || (isSpectating && status === GameStatus.AnswerReveal)) && (
             <motion.div
               key="question"
               initial={{ opacity: 0, y: 20 }}
@@ -370,12 +391,12 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
               exit={{ opacity: 0, y: -20 }}
             >
               {/* Timer */}
-              <div className="mb-6">
+              {status === GameStatus.Question && <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-gray-400">
                     {isAr ? "الوقت المتبقي" : "Time Remaining"}
                   </span>
-                  <span className={`text-2xl font-bold ${timeLeft <= 5 ? "text-red-500" : "text-amber-400"}`}>
+                  <span role="timer" aria-label={isAr ? "الوقت المتبقي للإجابة" : "Time remaining to answer"} className={`text-2xl font-bold ${timeLeft <= 5 ? "text-red-500" : "text-amber-400"}`}>
                     {timeLeft}{isAr ? "ث" : "s"}
                   </span>
                 </div>
@@ -389,11 +410,24 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
                     }`}
                   />
                 </div>
-              </div>
+              </div>}
+
+              {(isSpectating || isFrozen || isSandstormed || selectedAnswer !== null || timeLeft <= 0) && <p role="status" className={chaosStyles.answerStatus}>
+                {isSpectating
+                  ? (isAr ? "أنت تشاهد المعركة. تظهر النتائج في ترتيب اللاعبين." : "You are watching. Follow the results in the standings.")
+                  : selectedAnswer !== null
+                    ? (isAr ? "تم اختيار إجابتك. في انتظار نتيجة الجولة." : "Answer selected. Waiting for the round result.")
+                    : isFrozen
+                      ? (isAr ? "أنت مجمد مؤقتاً. ستتمكن من الإجابة بعد انتهاء التجميد." : "You are temporarily frozen. Answering resumes when the freeze ends.")
+                      : isSandstormed
+                        ? (isAr ? "عاصفة رملية: السؤال والخيارات مشوشة مؤقتاً." : "Sandstorm: the question and choices are temporarily blurred.")
+                        : (isAr ? "انتهى وقتك. في انتظار نتيجة الجولة." : "Your time is up. Waiting for the round result.")}
+              </p>}
 
               {/* Question */}
               <div 
-                className="rounded-3xl p-6 mb-6 border-2"
+                className={`rounded-3xl p-6 mb-6 border-2 ${isSandstormed ? chaosStyles.sandstormed : ""}`}
+                data-chaos-sandstorm={isSandstormed || undefined}
                 style={{
                   background: chaosState?.activeTrap 
                     ? "linear-gradient(135deg, #2d1818 0%, #1a0f1a 100%)"
@@ -407,18 +441,16 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
               </div>
 
               {/* Options */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12 }}>
+              <div className={isSandstormed ? chaosStyles.sandstormed : undefined} data-chaos-sandstorm={isSandstormed || undefined} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12 }}>
                 {((isAr ? (question.optionsAr || question.options) : (question.optionsEn || question.options)) || []).map((option: string, index: number) => {
                   const eliminated = isEliminated(index);
                   const selected = selectedAnswer === index;
 
                   return (
-                    <motion.button
+                    <button
                       key={index}
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: eliminated ? 0.3 : 1, scale: 1 }}
-                      whileHover={!eliminated && canAnswer ? { scale: 1.02 } : {}}
-                      whileTap={!eliminated && canAnswer ? { scale: 0.98 } : {}}
+                      type="button"
+                      data-chaos-answer={index}
                       disabled={eliminated || !canAnswer}
                       onClick={() => handleAnswer(index)}
                       className="btn btn-secondary rounded-2xl"
@@ -428,14 +460,14 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
                         whiteSpace: "normal",
                         textAlign: "start",
                         borderColor: selected ? "var(--clr-primary)" : undefined,
-                        opacity: selected ? 1 : undefined,
+                        opacity: eliminated ? 0.35 : 1,
                       }}
                     >
                       <span className="inline-block w-8 h-8 rounded-full bg-gray-700 text-center leading-8 mr-3 text-sm">
                         {String.fromCharCode(65 + index)}
                       </span>
                       {option}
-                    </motion.button>
+                    </button>
                   );
                 })}
               </div>
@@ -444,7 +476,7 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
           )}
 
           {/* Answer Reveal Phase */}
-          {status === GameStatus.AnswerReveal && lastAnswerResult && (
+          {status === GameStatus.AnswerReveal && lastAnswerResult && !isSpectating && (
             <motion.div
               key="reveal"
               initial={{ opacity: 0, scale: 0.9 }}
@@ -472,7 +504,8 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
               </h2>
 
               <button
-                onClick={() => setShowReview(true)}
+                ref={reviewTrigger}
+                onClick={openReview}
                 className="px-6 py-3 bg-gray-800 text-white rounded-xl hover:bg-gray-700 transition-colors"
               >
                 {isAr ? "مراجعة السؤال" : "Review Question"}
@@ -533,6 +566,17 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
             </motion.div>
           )}
         </AnimatePresence>
+
+        <section className={chaosStyles.standings} aria-label={isAr ? "الترتيب الحالي" : "Current standings"}>
+          <h2>{isAr ? "الترتيب الحالي" : "Current standings"}</h2>
+          <ol>
+            {[...players].sort((a, b) => b.score - a.score).map((player, index) => <li key={player.userId}>
+              <span className={chaosStyles.rank}>{index + 1}</span>
+              <span className={chaosStyles.playerName}><bdi>{player.username}</bdi>{player.userId === userId && <small> {isAr ? "(أنت)" : "(you)"}</small>}</span>
+              <strong data-player-score={player.userId}>{player.score.toLocaleString(language)}</strong>
+            </li>)}
+          </ol>
+        </section>
       </div>
 
       {/* Question Review Modal */}
@@ -544,9 +588,11 @@ export default function ChaosGame({ isSpectating = false }: { isSpectating?: boo
             en: question.explanationEn,
             ar: question.explanationAr,
           }}
-          playerAnswers={{}}
+          playerAnswers={!isSpectating && userId && typeof selectedAnswer === "number" ? { [userId]: selectedAnswer } : {}}
           isOpen={showReview}
-          onClose={() => setShowReview(false)}
+          onClose={closeReview}
+          returnFocusRef={reviewTrigger}
+          shouldRestoreFocus={shouldRestoreReviewFocus}
         />
       )}
 

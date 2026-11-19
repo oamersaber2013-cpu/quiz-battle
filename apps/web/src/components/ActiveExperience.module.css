@@ -85,6 +85,16 @@
 .page :global(.option-letter) { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 5px; background: #101923; color: #e6b65c; }
 .toolStrip { padding: 18px 0; border-block: 1px solid #3b4b55; }
 .toolGrid { display: flex; flex-wrap: wrap; gap: 8px; }
+.powerControl { text-align: start; align-items: flex-start; }
+.powerControlIcon { font-size: 1.6rem; flex-shrink: 0; }
+.powerControlBody { display: grid; gap: 5px; }
+.powerControlBody > span { font-size: .8rem; color: #c2beb2; line-height: 1.5; }
+.powerControlBody small { color: #e6b65c; font-size: .72rem; }
+.powerTargetPicker { margin-top: 16px; padding: 18px; background: #17242f; border: 1px solid #9b7e49; border-radius: 10px; }
+.powerTargetPicker h3 { margin: 0; font-size: 1rem; }
+.powerTargetPicker p { color: #c2beb2; line-height: 1.6; font-size: .85rem; }
+.powerTargetPicker:focus { outline: 2px solid #e6b65c; outline-offset: 3px; }
+.powerTargetGrid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .page :global(.powerup-card) { width: auto !important; height: auto !important; min-height: 54px; flex: 1 1 110px; display: flex; flex-direction: row; gap: 8px; padding: 10px 12px; border: 1px solid #64717a; border-radius: 7px; background: #1b2a35; color: #f1e9d8; box-shadow: none; }
 .page :global(.powerup-card):hover:not(:disabled) { border-color: #e6b65c; transform: none; }
 .page :global(.powerup-card):disabled { opacity: .55; }
@@ -186,8 +196,6 @@
 
 .masthead { max-width: 1200px; margin-inline: auto; }
 .chaos > div[aria-hidden="true"] { display: none; }
-.transition { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; text-align: center; background: #101923; color: #f1e9d8; padding: 24px; }
-.transitionCount { margin: 20px 0; color: #e6b65c; font-size: clamp(4rem, 15vw, 8rem); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .roomControls { border: 0; padding: 0; margin: 0; min-width: 0; width: 100%; }
 .roomControls[disabled] { pointer-events: none; }
 .connectionBanner { position: sticky; top: 8px; z-index: 10000; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; max-width: 1200px; margin: 12px auto; padding: 16px 20px; border: 1px solid #9b7e49; border-radius: 10px; background: #253039; color: #f1e9d8; box-shadow: 0 6px 18px #10192366; }
@@ -196,3 +204,9 @@
 .connectionActions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .connectionActions a { color: #f1e9d8; text-underline-offset: 4px; }
 .connectionActions button:focus-visible, .connectionActions a:focus-visible { outline: 3px solid #e6b65c; outline-offset: 4px; }
+.survivalStatus { padding: 15px 18px; margin-bottom: 18px; border: 1px solid #697052; border-radius: 10px; background: #202d32; }
+.survivalHeading { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #e6b65c; }
+.survivalHeading span { font-size: .85rem; color: #c8d4cd; }
+.survivalStatus p { margin: 8px 0 0; color: #dfd9cb; font-size: .88rem; line-height: 1.65; }
+.survivalStatus[data-eliminated="true"] { border-color: #a97662; background: #302c2c; }
+.survivalPlayerState { display: block; font-size: .73rem; color: #b7b4a9; margin-top: 3px; }

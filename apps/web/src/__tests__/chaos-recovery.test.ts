@@ -1,6 +1,7 @@
 import { createElement } from "react";
-import { Difficulty, GameMode, GameStatus, type ChaosClientSnapshot, type SyncedGameRoom } from "@quiz-battle/shared";
+import { Difficulty, GameMode, GameStatus, PowerUpType, type ChaosClientSnapshot, type SyncedGameRoom } from "@quiz-battle/shared";
 import ChaosGame from "@/components/ChaosGame";
+import { QuestionReview } from "@/components/QuestionReview";
 import { connectSocket, disconnectSocket } from "@/lib/socket";
 import { useGameStore } from "@/store/gameStore";
 import { io } from "socket.io-client";
@@ -11,7 +12,6 @@ jest.mock("socket.io-client", () => ({ io: jest.fn() }));
 jest.mock("@/lib/sounds", () => ({ soundManager: { play: jest.fn() } }));
 jest.mock("@/components/EmoteSystem", () => ({ EmoteSystem: () => null }));
 jest.mock("@/components/RoundProgress", () => ({ RoundProgress: () => null }));
-jest.mock("@/components/QuestionReview", () => ({ QuestionReview: () => null }));
 jest.mock("framer-motion", () => ({
   motion: { div: "div", button: "button", span: "span" }, AnimatePresence: "div",
 }));
@@ -238,4 +238,72 @@ it("shows a live ballot during a reconnect even when no current question is avai
   render();
   expect(content()).toContain("VOTE ON PUNISHMENT");
   expect(button("FORGIVE").props.disabled).toBe(false);
+});
+
+it.each(["en", "ar"] as const)("reviews the real safe question and the viewer's submitted answer in %s", language => {
+  const prompt = language === "ar" ? "ما عاصمة دولة قطر؟" : "What is Qatar's capital?";
+  const option = language === "ar" ? "الدوحة" : "Doha";
+  sync(chaos(), { language, selectedAnswer: 0, status: GameStatus.AnswerReveal, lastAnswerResult: { correct: true, correctIndex: 0 },
+    currentQuestion: { id: "review-question", text: prompt, options: [option, "Muscat"], category: "geography", difficulty: Difficulty.Novice, timeLimit: 30 },
+  });
+  render();
+  act(() => button(language === "ar" ? "مراجعة السؤال" : "Review Question").props.onClick());
+  expect(content()).toContain(prompt);
+  expect(content()).toContain(option);
+  expect(view.root.findByType(QuestionReview).props.playerAnswers).toEqual({ "player-1": 0 });
+  expect(content()).not.toContain("No answer");
+});
+
+it("keeps freeze and sandstorm temporary and preserves only the viewer's eliminated choices", () => {
+  const now = Date.now();
+  sync(chaos(), { activeEffects: [
+    { type: PowerUpType.Freeze, sourceUserId: "other", targetUserId: "player-1", expiresAt: now + 1000 },
+    { type: PowerUpType.Sandstorm, sourceUserId: "other", targetUserId: "player-1", expiresAt: now + 2000 },
+  ] });
+  useGameStore.setState({ eliminatedOptions: [1] });
+  render();
+  expect(button("Doha").props.disabled).toBe(true);
+  expect(view.root.findAllByProps({ "data-chaos-sandstorm": true })).toHaveLength(2);
+  act(() => jest.advanceTimersByTime(1000));
+  expect(button("Doha").props.disabled).toBe(false);
+  expect(button("Muscat").props.disabled).toBe(true);
+  act(() => button("Muscat").props.onClick());
+  expect(socket.emit).not.toHaveBeenCalled();
+  act(() => jest.advanceTimersByTime(1000));
+  expect(view.root.findAllByProps({ "data-chaos-sandstorm": true })).toHaveLength(0);
+  act(() => button("Doha").props.onClick());
+  expect(socket.emit).toHaveBeenCalledTimes(1);
+});
+
+it("closes a question review before the next round and keeps the next reveal unobstructed", () => {
+  sync(chaos(), { selectedAnswer: 0, status: GameStatus.AnswerReveal, lastAnswerResult: { correct: true, correctIndex: 0 } });
+  render();
+  act(() => button("Review Question").props.onClick());
+  expect(view.root.findAllByType(QuestionReview)).toHaveLength(1);
+  act(() => useGameStore.getState().setQuestion({ ...useGameStore.getState().currentQuestion!, id: "question-2" }, 3, 8));
+  act(() => useGameStore.setState({ status: GameStatus.AnswerReveal, lastAnswerResult: { correct: false, correctIndex: 1 } }));
+  expect(view.root.findAllByType(QuestionReview)).toHaveLength(0);
+});
+
+it("restores focus only to the actual review trigger while its connected round remains relevant", () => {
+  sync(chaos(), { selectedAnswer: 0, status: GameStatus.AnswerReveal, lastAnswerResult: { correct: true, correctIndex: 0 } });
+  render();
+  act(() => button("Review Question").props.onClick());
+  const review = view.root.findByType(QuestionReview).props;
+  expect(review.returnFocusRef).toBeDefined();
+  expect(review.shouldRestoreFocus()).toBe(true);
+  act(() => useGameStore.setState({ isConnected: false }));
+  expect(review.shouldRestoreFocus()).toBe(false);
+  act(() => useGameStore.setState({ isConnected: true, currentRound: 3 }));
+  expect(review.shouldRestoreFocus()).toBe(false);
+});
+
+it("keeps a spectator's question and current standings visible during reveal without inventing an own result", () => {
+  sync(chaos(), { status: GameStatus.AnswerReveal, lastAnswerResult: null });
+  render(true);
+  expect(content()).toContain("What is Qatar's capital?");
+  expect(button("Doha").props.disabled).toBe(true);
+  expect(button("Review Question")).toBeUndefined();
+  expect(view.root.findByProps({ "aria-label": "Current standings" })).toBeDefined();
+  expect(content()).not.toContain("Wrong Answer");
 });

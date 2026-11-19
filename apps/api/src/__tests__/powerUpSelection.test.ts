@@ -22,7 +22,7 @@ import { getConquestState } from "../lib/conquestOrchestrator";
 describe("Power-up selection through the first round", () => {
   const gameId = "power-up-room";
   const emit = jest.fn();
-  const io = { to: () => ({ emit }) } as any;
+  const io = { to: () => ({ emit }), sockets: { adapter: { rooms: new Map() }, sockets: new Map() } } as any;
   const redis = new SafeRedis(null);
   const defaults = [PowerUpType.FiftyFifty, PowerUpType.Shield, PowerUpType.Freeze];
 

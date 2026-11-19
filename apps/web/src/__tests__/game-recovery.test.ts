@@ -241,6 +241,71 @@ describe("room membership recovery", () => {
 });
 
 describe("restoring an active question", () => {
+  it.each([["en", "attacker"], ["ar", "attacker"], ["en", "defender"], ["ar", "defender"]] as const)("reports a shield block in %s to its %s and keeps inventories/effects idempotent", (language, viewer) => {
+    const own = { userId: "player-1", username: "Attacker", score: 1000, rank: 1, streak: 0, isConnected: true, isEliminated: false, powerUpInventory: [PowerUpType.Freeze] };
+    const target = { ...own, userId: "target", username: "Defender", powerUpInventory: [] };
+    const shield = { type: PowerUpType.Shield, sourceUserId: "target", expiresAt: Date.now() + 20000 };
+    if (viewer === "defender") useGameStore.setState({ userId: "target" });
+    useGameStore.getState().syncRoom(room({ language, players: [own, target], currentQuestion: question, questionStartedAt: Date.now() - 1000, activeEffects: [shield] }));
+    const socket = connectSocket(viewer === "defender" ? "target" : "player-1", "Participant", "test-token", true) as unknown as FakeSocket;
+    const blocked = { gameId: "battle-1", questionId: question.id, type: PowerUpType.Freeze, sourceUserId: "player-1", targetUserId: "target", shieldExpiresAt: shield.expiresAt };
+    socket.dispatch("game:powerUpBlocked", blocked);
+    expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([]);
+    expect(useGameStore.getState().players.find(player => player.userId === "player-1")?.powerUpInventory).toEqual([]);
+    expect(useGameStore.getState().activeEffects).toEqual([]);
+    expect(useGameStore.getState().toasts.at(-1)?.message).toContain(language === "ar" ? "درع" : "shield");
+    const count = useGameStore.getState().toasts.length;
+    socket.dispatch("game:powerUpBlocked", blocked);
+    expect(useGameStore.getState().toasts).toHaveLength(count);
+    useGameStore.getState().syncRoom(room({ language, players: [{ ...own, powerUpInventory: [] }, target], currentQuestion: question, questionStartedAt: Date.now() - 1000, activeEffects: [] }));
+    socket.dispatch("game:powerUpBlocked", blocked);
+    expect(useGameStore.getState().activeEffects).toEqual([]);
+    expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([]);
+  });
+  it("keeps another player's 50:50 from removing my choices", () => {
+    const own = { userId: "player-1", username: "Own", score: 0, rank: 1, streak: 0, isConnected: true, isEliminated: false, powerUpInventory: [PowerUpType.FiftyFifty] };
+    useGameStore.getState().syncRoom(room({ players: [own, { ...own, userId: "peer" }], currentQuestion: question, questionStartedAt: Date.now() - 1000 }));
+    const socket = connectSocket("player-1", "Own", "test-token", true) as unknown as FakeSocket;
+    socket.dispatch("game:powerUpApplied", { type: PowerUpType.FiftyFifty, sourceUserId: "peer", eliminatedIndices: [0, 2] });
+    expect(useGameStore.getState().eliminatedOptions).toEqual([]);
+    socket.dispatch("game:powerUpApplied", { type: PowerUpType.FiftyFifty, sourceUserId: "player-1", eliminatedIndices: [0, 2] });
+    expect(useGameStore.getState().eliminatedOptions).toEqual([0, 2]);
+  });
+  it.each([GameMode.Survival, GameMode.Classic])("consumes authoritative powers once and preserves restored inventory in %s", mode => {
+    const own = { userId: "player-1", username: "Own player", score: 0, rank: 1, streak: 0, isConnected: true, isEliminated: false, powerUpInventory: [PowerUpType.Shield, PowerUpType.FiftyFifty] };
+    const peer = { ...own, userId: "player-2", username: "Peer", powerUpInventory: [PowerUpType.Freeze] };
+    useGameStore.getState().syncRoom(room({ mode, players: [own, peer], currentQuestion: question, questionStartedAt: Date.now() - 1000 }));
+    const socket = connectSocket("player-1", "Own player", "test-token", true) as unknown as FakeSocket;
+    const shield = { type: PowerUpType.Shield, sourceUserId: "player-1", expiresAt: Date.now() + 20000 };
+    socket.dispatch("game:powerUpApplied", shield);
+    expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([PowerUpType.FiftyFifty]);
+    expect(useGameStore.getState().activeEffects.filter(effect => effect.type === PowerUpType.Shield)).toHaveLength(1);
+    socket.dispatch("game:powerUpApplied", shield);
+    expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([PowerUpType.FiftyFifty]);
+    socket.dispatch("game:powerUpApplied", { type: PowerUpType.Freeze, sourceUserId: "player-2", targetUserId: "player-1" });
+    expect(useGameStore.getState().players.find(player => player.userId === "player-2")?.powerUpInventory).toEqual([]);
+    expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([PowerUpType.FiftyFifty]);
+    useGameStore.getState().syncRoom(room({ mode, players: [{ ...own, powerUpInventory: [PowerUpType.FiftyFifty] }, peer], activeEffects: [shield] }));
+    socket.dispatch("game:powerUpApplied", shield);
+    expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([PowerUpType.FiftyFifty]);
+    expect(useGameStore.getState().activeEffects).toHaveLength(1);
+  });
+  it("applies a live Survival elimination to both the roster and my active controls", () => {
+    const player = { userId: "player-1", username: "Survivor", score: 100, rank: 1, streak: 0, isConnected: true, isEliminated: false, powerUpInventory: [PowerUpType.Shield] };
+    useGameStore.getState().syncRoom(room({ mode: GameMode.Survival, players: [player], currentQuestion: question, questionStartedAt: Date.now() - 1000 }));
+    const socket = connectSocket("player-1", "Survivor", "test-token", true) as unknown as FakeSocket;
+    socket.dispatch("game:playerEliminated", { userId: "player-1", reason: "Wrong answer in Survival mode" });
+    expect(useGameStore.getState().players[0].isEliminated).toBe(true);
+    expect(useGameStore.getState().currentPlayer?.isEliminated).toBe(true);
+  });
+  it("restores a personal 50:50 hint and clears it on the following question", () => {
+    const gs = useGameStore.getState();
+    gs.syncRoom(room({ currentQuestion: question, eliminatedOptions: [0, 2] }));
+    expect(useGameStore.getState().eliminatedOptions).toEqual([0, 2]);
+    gs.syncRoom(room({ currentQuestion: { ...question, id: "next-question" } }));
+    expect(useGameStore.getState().eliminatedOptions).toEqual([]);
+  });
+
   it.each([-40000, 40000])("restores Classic deadlines and answer timestamps with client skew %sms", (skew) => {
     const serverNow = Date.now();
     jest.setSystemTime(serverNow + skew);

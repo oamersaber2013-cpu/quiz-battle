@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Difficulty, PowerUpType, getPlayableDifficulties, type CustomGameSettings } from "@quiz-battle/shared";
+import { POWER_UP_INFO } from "./powerUpPresentation";
 
 const difficulties = [
   [Difficulty.Novice, "Novice", "مبتدئ"], [Difficulty.Scholar, "Scholar", "باحث"],
@@ -9,11 +10,8 @@ const difficulties = [
   [Difficulty.Legend, "Legend", "أسطورة"],
 ] as const;
 const powers = [
-  [PowerUpType.Shield, "Shield", "درع"], [PowerUpType.FiftyFifty, "50/50", "حذف إجابتين"],
-  [PowerUpType.Freeze, "Freeze", "تجميد"], [PowerUpType.DoubleDown, "Double points", "مضاعفة النقاط"],
-  [PowerUpType.Steal, "Steal", "سرقة"],
-  [PowerUpType.Sandstorm, "Sandstorm", "عاصفة"], [PowerUpType.TimeWarp, "Time Warp", "وقت إضافي"],
-  [PowerUpType.Whole, "Whole", "ثقب"],
+  PowerUpType.Shield, PowerUpType.FiftyFifty, PowerUpType.Freeze, PowerUpType.DoubleDown,
+  PowerUpType.Steal, PowerUpType.Sandstorm, PowerUpType.TimeWarp, PowerUpType.Whole,
 ] as const;
 const categories = [
   ["general", "General knowledge", "معلومات عامة"], ["islamic", "Islamic knowledge", "الثقافة الإسلامية"],
@@ -29,12 +27,24 @@ export function CustomModeBuilder({ value, onChange, language = "en", selectedCa
   selectedCategories?: string[];
 }) {
   const isAr = language === "ar";
+  const [roundsDraft, setRoundsDraft] = useState(String(value.rounds));
+  const [playerLimitDraft, setPlayerLimitDraft] = useState(String(value.maxPlayers));
+  useEffect(() => setRoundsDraft(String(value.rounds)), [value.rounds]);
+  useEffect(() => setPlayerLimitDraft(String(value.maxPlayers)), [value.maxPlayers]);
   const playable = getPlayableDifficulties(value.categoryFilter ? [value.categoryFilter] : selectedCategories);
   useEffect(() => {
     if (playable.length && !playable.includes(value.difficulty)) onChange({ ...value, difficulty: playable[0] });
   }, [value, onChange, playable.join(",")]);
   const update = <K extends keyof CustomGameSettings>(key: K, next: CustomGameSettings[K]) =>
     onChange({ ...value, [key]: next });
+  const commitInteger = (key: "rounds" | "maxPlayers", draft: string) => {
+    const [min, max] = key === "rounds" ? [1, 30] : [2, 20];
+    const parsed = draft.trim() ? Number(draft) : NaN;
+    const next = Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : value[key];
+    if (key === "rounds") setRoundsDraft(String(next));
+    else setPlayerLimitDraft(String(next));
+    if (next !== value[key]) update(key, next);
+  };
 
   return (
     <section className="glass-card p-5" aria-labelledby="custom-settings-heading" dir={isAr ? "rtl" : "ltr"}>
@@ -49,8 +59,10 @@ export function CustomModeBuilder({ value, onChange, language = "en", selectedCa
         </label>
         <label htmlFor="custom-rounds">
           {isAr ? "عدد الجولات" : "Number of rounds"}
-          <input id="custom-rounds" className="input mt-2" type="number" min={1} max={30} value={value.rounds}
-            onChange={event => update("rounds", Math.max(1, Math.min(30, Number(event.target.value) || 1)))} />
+          <input id="custom-rounds" className="input mt-2" type="number" inputMode="numeric" min={1} max={30} step={1} value={roundsDraft}
+            onChange={event => setRoundsDraft(event.target.value)}
+            onBlur={event => commitInteger("rounds", event.currentTarget.value)}
+            onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
         </label>
         <label htmlFor="custom-time">
           {isAr ? "ثواني لكل سؤال" : "Seconds per question"}
@@ -68,8 +80,10 @@ export function CustomModeBuilder({ value, onChange, language = "en", selectedCa
         </label>
         <label htmlFor="custom-player-limit">
           {isAr ? "الحد الأقصى للاعبين" : "Player limit"}
-          <input id="custom-player-limit" className="input mt-2" type="number" min={2} max={20} value={value.maxPlayers}
-            onChange={event => update("maxPlayers", Math.max(2, Math.min(20, Number(event.target.value) || 2)))} />
+          <input id="custom-player-limit" className="input mt-2" type="number" inputMode="numeric" min={2} max={20} step={1} value={playerLimitDraft}
+            onChange={event => setPlayerLimitDraft(event.target.value)}
+            onBlur={event => commitInteger("maxPlayers", event.currentTarget.value)}
+            onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
         </label>
         <label htmlFor="custom-category">
           {isAr ? "قسم الأسئلة" : "Question category"}
@@ -88,11 +102,11 @@ export function CustomModeBuilder({ value, onChange, language = "en", selectedCa
       <fieldset className="mt-6">
         <legend className="font-bold mb-3">{isAr ? "القوى المتاحة" : "Available powers"}</legend>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 12 }}>
-          {powers.map(([power, en, ar]) => <label key={power} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {powers.map(power => <label key={power} style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="checkbox" checked={value.enabledPowerUps.includes(power)} onChange={() =>
               update("enabledPowerUps", value.enabledPowerUps.includes(power)
                 ? value.enabledPowerUps.filter(selected => selected !== power) : [...value.enabledPowerUps, power])} />
-            {isAr ? ar : en}
+            {POWER_UP_INFO[power].label[language]}
           </label>)}
         </div>
         <button type="button" className="btn btn-ghost btn-sm mt-3" onClick={() => update("enabledPowerUps", [])}>

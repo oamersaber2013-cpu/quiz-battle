@@ -1,8 +1,10 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
+import { useEffect, useId, useRef, type RefObject } from "react";
 import { useGameStore } from "../store/gameStore";
 import { ClientQuestion } from "@quiz-battle/shared";
+import styles from "./QuestionReview.module.css";
 
 interface QuestionReviewProps {
   question: ClientQuestion;
@@ -11,6 +13,8 @@ interface QuestionReviewProps {
   playerAnswers: Record<string, number>;
   isOpen: boolean;
   onClose: () => void;
+  returnFocusRef?: RefObject<HTMLButtonElement>;
+  shouldRestoreFocus?: () => boolean;
 }
 
 export function QuestionReview({
@@ -20,9 +24,44 @@ export function QuestionReview({
   playerAnswers,
   isOpen,
   onClose,
+  returnFocusRef,
+  shouldRestoreFocus,
 }: QuestionReviewProps) {
   const { players, userId, language } = useGameStore();
   const isAr = language === "ar";
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const focusReturn = useRef({ returnFocusRef, shouldRestoreFocus });
+  focusReturn.current = { returnFocusRef, shouldRestoreFocus };
+  const text = (isAr ? question.textAr : question.textEn) || question.text;
+  const options = (isAr ? question.optionsAr : question.optionsEn) || question.options;
+  const knownPlayers = players.filter(player => Object.prototype.hasOwnProperty.call(playerAnswers, player.userId));
+
+  useEffect(() => {
+    if (!isOpen || typeof document === "undefined") return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body?.style.overflow;
+    if (document.body) document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const controls = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex='0']"));
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (document.body) document.body.style.overflow = previousOverflow ?? "";
+      const options = focusReturn.current;
+      const target = options.returnFocusRef ? options.returnFocusRef.current : previousFocus;
+      if ((options.shouldRestoreFocus?.() ?? true) && target?.isConnected && !target.matches(":disabled")) target.focus({ preventScroll: true });
+    };
+  }, [isOpen, onClose]);
 
   const currentUserAnswer = userId ? playerAnswers[userId] : undefined;
   const isCorrect = currentUserAnswer === correctIndex;
@@ -30,71 +69,68 @@ export function QuestionReview({
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+        <div
+          className={styles.overlay}
         >
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-3xl p-6 shadow-2xl"
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            className={styles.dialog}
           >
             {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <span className={isCorrect ? "text-green-400" : "text-red-400"}>
-                  {isCorrect ? "✅" : "❌"}
+            <div className={styles.header}>
+              <h2 id={titleId}>
+                <span aria-hidden="true">
+                  {currentUserAnswer === undefined ? "📖" : isCorrect ? "✅" : "❌"}
                 </span>
                 {isAr ? "مراجعة السؤال" : "Question Review"}
               </h2>
               <button
+                ref={closeRef}
+                type="button"
+                aria-label={isAr ? "إغلاق مراجعة السؤال" : "Close question review"}
                 onClick={onClose}
-                className="text-gray-400 hover:text-white transition-colors"
+                className={styles.close}
               >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg width="24" height="24" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
             {/* Question */}
-            <div className="mb-6">
-              <p className="text-white text-lg mb-4">
-                {isAr ? question.textAr : question.textEn}
+            <div className={styles.question}>
+              <p>
+                {text}
               </p>
 
               {/* Options */}
-              <div className="space-y-2">
-                {(isAr ? question.optionsAr : question.optionsEn)?.map((option, index) => {
+              <div className={styles.options}>
+                {options.map((option, index) => {
                   const isCorrectOption = index === correctIndex;
                   const playerCount = Object.values(playerAnswers).filter((a) => a === index).length;
 
                   return (
                     <div
                       key={index}
-                      className={`p-3 rounded-xl border-2 flex items-center justify-between ${
-                        isCorrectOption
-                          ? "border-green-500 bg-green-500/10"
-                          : currentUserAnswer === index
-                          ? "border-red-500 bg-red-500/10"
-                          : "border-gray-700 bg-gray-800"
-                      }`}
+                      className={styles.option}
+                      data-correct={isCorrectOption}
+                      data-selected={currentUserAnswer === index}
                     >
-                      <span className={`${isCorrectOption ? "text-green-400 font-bold" : "text-gray-300"}`}>
+                      <span>
                         {option}
                         {isCorrectOption && (
-                          <span className="ml-2 text-green-500">
+                          <small>
                             {isAr ? "(الإجابة الصحيحة)" : "(Correct Answer)"}
-                          </span>
+                          </small>
                         )}
                       </span>
 
                       {/* Player count for this option */}
                       {playerCount > 0 && (
-                        <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full">
+                        <span className={styles.answerCount}>
                           {playerCount} {isAr ? (playerCount === 1 ? "لاعب" : "لاعبين") : (playerCount === 1 ? "player" : "players")}
                         </span>
                       )}
@@ -106,27 +142,27 @@ export function QuestionReview({
 
             {/* Explanation */}
             {explanation && (explanation.en || explanation.ar) && (
-              <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-                <h3 className="text-amber-400 font-bold mb-2 flex items-center gap-2">
+              <div className={styles.explanation}>
+                <h3>
                   <span>💡</span>
                   {isAr ? "التفسير" : "Explanation"}
                 </h3>
-                <p className="text-gray-300">
-                  {isAr ? explanation.ar : explanation.en}
+                <p>
+                  {(isAr ? explanation.ar : explanation.en) || explanation.en || explanation.ar}
                 </p>
               </div>
             )}
 
             {/* Player Answers Summary */}
-            <div className="mb-6">
-              <h3 className="text-gray-400 font-bold mb-3 text-sm uppercase tracking-wider">
-                {isAr ? "إجابات اللاعبين" : "Player Answers"}
+            {knownPlayers.length > 0 && <div className={styles.playerAnswers}>
+              <h3>
+                {knownPlayers.length === 1 && knownPlayers[0].userId === userId
+                  ? (isAr ? "إجابتك" : "Your answer") : (isAr ? "إجابات اللاعبين" : "Player Answers")}
               </h3>
-              <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
-                {players.map((player) => {
+              <div>
+                {knownPlayers.map((player) => {
                   const answer = playerAnswers[player.userId];
                   const playerCorrect = answer === correctIndex;
-                  const options = isAr ? question.optionsAr : question.optionsEn;
                   const optionText = answer !== undefined && options
                     ? options[answer]
                     : isAr ? "لم يجب" : "No answer";
@@ -134,30 +170,30 @@ export function QuestionReview({
                   return (
                     <div
                       key={player.userId}
-                      className={`flex items-center gap-2 p-2 rounded-lg text-sm ${
-                        player.userId === userId ? "bg-gray-700" : "bg-gray-800"
-                      }`}
+                      className={styles.playerAnswer}
+                      data-correct={playerCorrect}
                     >
-                      <span className={playerCorrect ? "text-green-400" : "text-red-400"}>
+                      <span aria-hidden="true">
                         {playerCorrect ? "✓" : answer !== undefined ? "✗" : "−"}
                       </span>
-                      <span className="text-gray-300 truncate flex-1">{player.username}</span>
-                      <span className="text-gray-500 text-xs truncate max-w-[80px]">{optionText}</span>
+                      <bdi>{player.username}</bdi>
+                      <span>{optionText}</span>
                     </div>
                   );
                 })}
               </div>
-            </div>
+            </div>}
 
             {/* Close Button */}
             <button
+              type="button"
               onClick={onClose}
-              className="w-full py-3 bg-amber-500 text-black font-bold rounded-xl hover:bg-amber-400 transition-colors"
+              className={styles.continue}
             >
               {isAr ? "متابعة" : "Continue"}
             </button>
-          </motion.div>
-        </motion.div>
+          </div>
+        </div>
       )}
     </AnimatePresence>
   );

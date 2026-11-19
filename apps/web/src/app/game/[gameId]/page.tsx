@@ -1,11 +1,11 @@
 "use client";
 import { getServerTime } from "@/lib/gameClock";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { GameMode, GameStatus, GAME_MODE_CONFIG, PowerUpType, QuestionType, getRandomQuote, SubmittedAnswer } from "@quiz-battle/shared";
+import { GameMode, GameStatus, PowerUpType, QuestionType, getRandomQuote, SubmittedAnswer } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
-import { emitAnswer, emitPowerUp, getSocket, emitInvasionAnswer } from "@/lib/socket";
+import { emitAnswer, getSocket, emitInvasionAnswer } from "@/lib/socket";
 import { ChatWindow } from "@/components/ChatWindow";
 import { BattleHeader, MODE_NAMES } from "@/components/BattleHeader";
 import { POWER_UP_INFO } from "@/components/powerUpPresentation";
@@ -23,7 +23,6 @@ import { PowerUpEffects } from "@/components/PowerUpEffects";
 import { PowerUpSelection } from "@/components/PowerUpSelection";
 import { soundManager } from "@/lib/sounds";
 
-import { QuestionTransition } from "@/components/QuestionTransition";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -31,13 +30,8 @@ import { useGameConnection } from "@/hooks/useGameConnection";
 import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 import { RoomPasswordPrompt } from "@/components/RoomPasswordPrompt";
 import { RoomConnectionFrame } from "@/components/RoomConnectionFrame";
-
-const TARGETED_POWER_UPS = new Set<PowerUpType>([
-  PowerUpType.Freeze,
-  PowerUpType.Sandstorm,
-  PowerUpType.Steal,
-  PowerUpType.Whole,
-]);
+import { SurvivalStatus } from "@/components/SurvivalStatus";
+import { PowerUpControls } from "@/components/PowerUpControls";
 
 const T = {
   round: { en: "Round", ar: "الجولة" },
@@ -46,19 +40,14 @@ const T = {
   prepare: { en: "Prepare yourself, warrior...", ar: "استعد أيها المحارب..." },
   scoreboard: { en: "Scoreboard", ar: "لوحة النتائج" },
   spectator: { en: "Spectator Mode", ar: "وضع المشاهدة" },
-  powerups: { en: "Power-Ups", ar: "القوى الخارقة" },
   you: { en: "(you)", ar: "(أنت)" },
   activeEffects: { en: "Active Effects", ar: "التأثيرات النشطة" },
-  chooseTarget: { en: "Choose Your Target", ar: "اختر هدفك" },
-  noTargets: { en: "No live targets right now.", ar: "لا توجد أهداف متاحة الآن." },
-  cancel: { en: "Cancel", ar: "إلغاء" },
   react: { en: "React", ar: "تفاعل" },
-  targetPrompt: { en: "Pick a rival for this move.", ar: "اختر منافساً لهذه الحركة." },
   frozen: { en: "Frozen", ar: "متجمد" },
   sandstorm: { en: "Sandstorm", ar: "عاصفة رملية" },
   timeWarp: { en: "Time Warp", ar: "التواء الزمن" },
   shielded: { en: "Shielded", ar: "محمي" },
-  extraTime: { en: "Extra time live", ar: "وقت إضافي نشط" },
+  effectActive: { en: "Active this round", ar: "نشط خلال هذه الجولة" },
 };
 
 const OPTION_LETTERS = ["A", "B", "C", "D"];
@@ -115,17 +104,12 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
     selectAnswer,
     invasionState,
     powerUpSelection,
-    removeEffect,
   } = useGameStore();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [feedbackQuote, setFeedbackQuote] = useState<{ en: string; ar: string } | null>(null);
-  const [pendingPowerUp, setPendingPowerUp] = useState<PowerUpType | null>(null);
   const [now, setNow] = useState(getServerTime());
-  const [showTransition, setShowTransition] = useState(false);
-  const [transitionRound, setTransitionRound] = useState(0);
-  const completeTransition = useCallback(() => setShowTransition(false), []);
 
   const isRTL = language === "ar";
   useDocumentLocale(language);
@@ -137,13 +121,6 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
 
   useEffect(() => {
     if (status !== GameStatus.Question || !currentQuestion || !questionStartedAt) return;
-
-    // Only show transition after first round
-    if (mode !== GameMode.Chaos && mode !== GameMode.Conquest && currentRound > 1 && currentRound !== transitionRound) {
-      setShowTransition(true);
-      setTransitionRound(currentRound);
-      return;
-    }
 
     setShowScoreboard(false);
 
@@ -163,7 +140,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
         timerRef.current = null;
       }
     };
-  }, [currentQuestion?.id, questionStartedAt, setTimeLeft, status, timeWarpBonusSeconds, currentRound, transitionRound, mode]);
+  }, [currentQuestion?.id, questionStartedAt, setTimeLeft, status, timeWarpBonusSeconds]);
 
   useEffect(() => {
     if (status === GameStatus.Question && currentQuestion && mode && useGameStore.getState().soundEnabled) {
@@ -184,7 +161,6 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
 
     if (status === GameStatus.AnswerReveal) {
       setShowScoreboard(true);
-      setPendingPowerUp(null);
       if (lastAnswerResult) {
         setFeedbackQuote(getRandomQuote(lastAnswerResult.correct ? "right" : "wrong"));
       } else {
@@ -195,12 +171,6 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
 
     setFeedbackQuote(null);
   }, [gameId, lastAnswerResult, router, status, joining, reconnecting, isSpectating]);
-
-  useEffect(() => {
-    if (status !== GameStatus.Question) {
-      setPendingPowerUp(null);
-    }
-  }, [status]);
 
   const liveEffects = activeEffects.filter((effect) => !effect.expiresAt || effect.expiresAt > now);
   const effectsOnMe = liveEffects.filter((effect) => effect.targetUserId === userId);
@@ -215,10 +185,6 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
   const answerControlsDisabled = reconnecting || isSpectating || isFrozen || status !== GameStatus.Question || timeLeft <= 0 || !!currentPlayer?.isEliminated;
 
   const visibleTargetEffects = [...effectsOnMe, ...effectsFromMe];
-  const availableTargets = players.filter(
-    (player) => player.userId !== userId && !player.isEliminated && player.isConnected
-  );
-
   function handleAnswer(answer: SubmittedAnswer) {
     const state = useGameStore.getState();
     const frozen = state.activeEffects.some((effect) => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > getServerTime()));
@@ -235,35 +201,6 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
     }
   }
 
-  async function triggerPowerUp(type: PowerUpType, targetUserId?: string) {
-    if (reconnecting) return;
-    const res = await emitPowerUp(gameId, type, targetUserId);
-    if (!res.success) {
-      useGameStore.getState().addToast(
-        "error",
-        res.error || (language === "ar" ? "فشل تفعيل القوة الخاصة." : "Power-up failed.")
-      );
-      return;
-    }
-
-    setPendingPowerUp(null);
-  }
-
-  async function handlePowerUp(type: PowerUpType) {
-    if (reconnecting || isFrozen || isSpectating) return;
-    
-    if (TARGETED_POWER_UPS.has(type)) {
-      if (availableTargets.length === 0) {
-        useGameStore.getState().addToast("error", T.noTargets[language]);
-        return;
-      }
-      setPendingPowerUp(type);
-      return;
-    }
-
-    await triggerPowerUp(type);
-  }
-
   const effectiveTimeLimit = currentQuestion
     ? currentQuestion.timeLimit + timeWarpBonusSeconds
     : 1;
@@ -274,9 +211,9 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - timeFraction);
 
-  const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
+  const sortedPlayers = [...players].sort((a, b) =>
+    (mode === GameMode.Survival ? Number(a.isEliminated) - Number(b.isEliminated) : 0) || b.score - a.score);
   const themeClass = mode ? `theme-${mode.toLowerCase()}` : "";
-  const modeConfig = mode ? GAME_MODE_CONFIG[mode] : { hasPowerUps: true };
   const hasDedicatedQuestionView = !!currentQuestion && (
     [QuestionType.ImageQuestion, QuestionType.AudioQuestion, QuestionType.TrueFalse, QuestionType.MultiSelect, QuestionType.FillBlank, QuestionType.Ordering].includes(currentQuestion.type as QuestionType) ||
     !!currentQuestion.imageUrl || !!currentQuestion.audioUrl ||
@@ -310,18 +247,6 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
     );
   }
 
-  // Show transition overlay
-  if (showTransition && currentRound > 0) {
-    return (
-      <QuestionTransition
-        round={currentRound}
-        totalRounds={totalRounds}
-        language={language}
-        onComplete={completeTransition}
-      />
-    );
-  }
-
   // Show power-up selection only when status is PowerUpSelect AND selection is active
   if (status === GameStatus.PowerUpSelect) {
     return (
@@ -335,7 +260,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
   if (mode === GameMode.Chaos) {
     return (
       <main className={`${styles.page} ${themeClass}`} dir={isRTL ? "rtl" : "ltr"} style={{ minHeight: "100dvh" }}>
-        <div className={styles.frame}><BattleHeader language={language} stage="play" /><ChaosGame isSpectating={isSpectating} /></div>
+        <div className={styles.frame}><BattleHeader language={language} stage="play" /><ChaosGame isSpectating={isSpectating} /><PowerUpControls isSpectating={isSpectating} disabled={reconnecting} /><PowerUpEffects activeEffects={activeEffects} currentUserId={userId || ""} language={language} /></div>
       </main>
     );
   }
@@ -397,6 +322,8 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
           </div>
         </div>
 
+        {mode === GameMode.Survival && <SurvivalStatus players={players} eliminated={!!currentPlayer?.isEliminated} shielded={hasShield} spectating={isSpectating} language={language} />}
+
         {visibleTargetEffects.length > 0 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: isRTL ? "flex-end" : "flex-start" }}>
             {visibleTargetEffects.map((effect, index) => {
@@ -424,7 +351,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
                   <div style={{ textAlign: isRTL ? "right" : "left" }}>
                     <div style={{ fontWeight: 700, fontSize: "0.85rem" }}>{info.label[language]}</div>
                     <div className="text-xs text-muted">
-                      {secondsLeft ? `${secondsLeft}s` : T.extraTime[language]}
+                      {secondsLeft ? `${secondsLeft.toLocaleString(language)} ${isRTL ? "ث" : "s"}` : T.effectActive[language]}
                     </div>
                   </div>
                 </div>
@@ -643,72 +570,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
           <div className={styles.reactionButtons}>{["🔥", "💀", "🤣", "🫡", "😱", "❓"].map(emote => <button type="button" key={emote} className="btn btn-secondary" aria-label={`${T.react[language]} ${emote}`} disabled={isSpectating} onClick={() => { if (!isSpectating) getSocket()?.emit("game:emote", { gameId, emote }); }}>{emote}</button>)}</div>
         </details>
 
-        {modeConfig.hasPowerUps && currentPlayer && currentPlayer.powerUpInventory.length > 0 && (
-          <section className={styles.toolStrip} aria-label={T.powerups[language]}>
-            <h2 className={styles.sectionHeading}>{T.powerups[language]}</h2>
-            <div className={styles.toolGrid}>
-              {currentPlayer.powerUpInventory.map((pu, i) => {
-                const info = POWER_UP_INFO[pu];
-                return (
-                  <button
-                    key={`${pu}-${i}`}
-                    className="powerup-card"
-                    type="button"
-                    title={info.description[language]}
-                    disabled={isSpectating || isFrozen || status !== GameStatus.Question || !!info.unavailable}
-                    onClick={() => handlePowerUp(pu)}
-                    style={{ width: 96, height: 96 }}
-                  >
-                    <span style={{ fontSize: "1.8rem" }}>{info.icon}</span>
-                    <span style={{ fontSize: "0.72rem", color: "var(--clr-text-2)", fontWeight: 700 }}>{info.label[language]}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {pendingPowerUp && (
-          <div className="glass-card p-4 animate-fade-in battle-target-panel">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-              <div>
-                <div className="font-bold" style={{ marginBottom: 4 }}>
-                  {POWER_UP_INFO[pendingPowerUp].icon} {T.chooseTarget[language]}
-                </div>
-                <div className="text-sm text-muted">{POWER_UP_INFO[pendingPowerUp].description[language]}</div>
-              </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setPendingPowerUp(null)}>
-                {T.cancel[language]}
-              </button>
-            </div>
-
-            <div className="text-sm text-muted" style={{ marginBottom: 14 }}>
-              {T.targetPrompt[language]}
-            </div>
-
-            {availableTargets.length === 0 ? (
-              <div className="text-sm text-muted">{T.noTargets[language]}</div>
-            ) : (
-              <div className="battle-target-grid">
-                {availableTargets.map((player) => (
-                  <button
-                    key={player.userId}
-                    className="battle-target-card"
-                    onClick={() => triggerPowerUp(pendingPowerUp, player.userId)}
-                  >
-                    <div className="player-avatar" style={{ width: 38, height: 38, fontSize: "0.9rem" }}>
-                      {player.username.charAt(0)}
-                    </div>
-                    <div style={{ flex: 1, textAlign: isRTL ? "right" : "left" }}>
-                      <div style={{ fontWeight: 700 }}>{player.username}</div>
-                      <div className="text-xs text-muted">{player.score.toLocaleString()} pts</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <PowerUpControls isSpectating={isSpectating} disabled={reconnecting} />
 
             {showScoreboard && (
           <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -753,7 +615,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
           <section className={styles.surface} aria-label={T.scoreboard[language]}>
             <h2 className={styles.sectionHeading}>{T.scoreboard[language]}</h2>
             <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>{sortedPlayers.map((player, index) => <li className={styles.scoreRow} key={player.userId}>
-              <span className={styles.scoreRank}>{index + 1}</span><span className={styles.scoreName}><bdi>{player.username}</bdi>{player.userId === userId && <small> {T.you[language]}</small>}</span><strong>{player.score.toLocaleString(language)}</strong>
+              <span className={styles.scoreRank}>{index + 1}</span><span className={styles.scoreName}><bdi>{player.username}</bdi>{player.userId === userId && <small> {T.you[language]}</small>}{mode === GameMode.Survival && <small className={styles.survivalPlayerState}>{player.isEliminated ? (isRTL ? "أُقصي" : "Out") : (isRTL ? "في المنافسة" : "Still in")}</small>}</span><strong>{player.score.toLocaleString(language)}</strong>
             </li>)}</ol>
           </section>
           <ChatWindow gameId={gameId} />
@@ -764,7 +626,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
       <PowerUpEffects
         activeEffects={activeEffects}
         currentUserId={userId || ""}
-        onEffectComplete={removeEffect}
+        language={language}
       />
     </main>
   );

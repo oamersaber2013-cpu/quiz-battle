@@ -303,6 +303,7 @@ export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
   activeEffects?: ActivePowerUpEffect[];
   currentQuestion?: SafeClientQuestion | null;
   questionStartedAt?: number;
+  eliminatedOptions?: number[];
   selectedAnswer?: SubmittedAnswer | null;
   answeredAt?: number | null;
   lastAnswerResult?: AnswerReveal | null;
@@ -321,6 +322,15 @@ export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
 
 export interface PowerUpAppliedPayload extends ActivePowerUpEffect {
   eliminatedIndices?: number[];
+}
+
+export interface PowerUpBlockedPayload {
+  gameId: string;
+  questionId: string;
+  type: PowerUpType;
+  sourceUserId: string;
+  targetUserId: string;
+  shieldExpiresAt?: number;
 }
 
 // Conquest mode types
@@ -442,6 +452,7 @@ export interface ServerToClientEvents {
   "game:powerUpApplied": (
     data: PowerUpAppliedPayload
   ) => void;
+  "game:powerUpBlocked": (data: PowerUpBlockedPayload) => void;
   "game:end": (data: {
     results: Array<{
       userId: string;

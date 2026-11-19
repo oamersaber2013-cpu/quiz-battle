@@ -79,6 +79,13 @@ it.each(["en", "ar"] as const)("identifies equal top scores without changing rec
   expect(view.root.findByType("main").props.dir).toBe(language === "ar" ? "rtl" : "ltr");
 });
 
+it.each(["en", "ar"] as const)("keeps a Survival champion and eliminated participants visible when points are equal (%s)", async language => {
+  await mountResults({ ...saved, mode: GameMode.Survival, language, results: saved.results.map(result => ({ ...result, score: 0 })) });
+  expect(view.root.findByType("h1").props.children).toBe(language === "ar" ? "انتصار!" : "Victory!");
+  expect(view.root.findAllByType("li")).toHaveLength(2);
+  expect(content()).toContain("Second player");
+});
+
 it("shows measured Conquest answers alongside territory standings", async () => {
   await mountResults({ ...saved, mode: GameMode.Conquest, results: saved.results.map(result => ({ ...result, score: 8, correctAnswers: 12, totalAnswers: 15, avgAnswerTime: 1200 })) });
   expect(content()).toContain("Territories");

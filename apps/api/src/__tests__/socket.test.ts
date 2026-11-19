@@ -128,6 +128,7 @@ describe("Socket identity and room authority", () => {
       host: { index: 1, timestamp: Date.now(), latencyMs: 100 },
     };
     game.lastAnswerByPlayer = { host: true };
+    game.fiftyFiftyByUser = { host: [1, 3], player: [2, 3] };
     game.password = "private-room-password";
     connect(socket);
     await handlers["game:join"]({ gameId: "room" }, jest.fn());
@@ -138,6 +139,8 @@ describe("Socket identity and room authority", () => {
     expect(room).not.toHaveProperty("password");
     expect(room.currentQuestion).not.toHaveProperty("correctIndex");
     expect(room.questionStartedAt).toBe(game.questionStartTime);
+    expect(room.eliminatedOptions).toEqual([2, 3]);
+    expect(room).not.toHaveProperty("fiftyFiftyByUser");
     expect(room.selectedAnswer).toBe(0);
   });
 
@@ -145,6 +148,19 @@ describe("Socket identity and room authority", () => {
     connect(socket);
     await handlers["player:answer"]({ gameId: "room", questionId: "q1", answer, timestamp: 123 });
     expect(handlePlayerAnswer).toHaveBeenCalledWith(game, io, {}, "player", "q1", answer, 123);
+  });
+
+  it.each([false, true])("reconciles an unaccepted tap with the player's recorded answer (already answered: %s)", async alreadyAnswered => {
+    game.mode = GameMode.Custom;
+    game.currentRound = 1;
+    game.questions = [{ id: "q1", text: "Question", options: ["A", "B"], correctIndex: 1, timeLimit: 5 }];
+    if (alreadyAnswered) game.answersThisRound.player = { index: 0, timestamp: Date.now(), latencyMs: 450 };
+    connect(socket);
+    await handlers["player:answer"]({ gameId: "room", questionId: "q1", answer: 1, timestamp: Date.now() });
+    expect(socket.emit).toHaveBeenCalledWith("game:stateSync", {
+      room: expect.objectContaining({ selectedAnswer: alreadyAnswered ? 0 : null })
+    });
+    expect(socket.emit.mock.calls.filter(([event]: string[]) => event === "game:error")).toHaveLength(alreadyAnswered ? 0 : 1);
   });
 
   it("keeps legacy numeric answerIndex clients working", async () => {

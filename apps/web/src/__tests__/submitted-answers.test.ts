@@ -1,11 +1,11 @@
 import { createElement } from "react";
 import { Difficulty, GameMode, GameStatus, QuestionType, PowerUpType } from "@quiz-battle/shared";
 import GamePage from "@/app/game/[gameId]/page";
-import { emitAnswer } from "@/lib/socket";
+import { emitAnswer, emitPowerUp } from "@/lib/socket";
 import { useGameStore } from "@/store/gameStore";
 
 const { act, create } = require("react-test-renderer");
-const mockSocket = { on: jest.fn(), off: jest.fn(), emit: jest.fn() };
+const mockSocket = { connected: true, on: jest.fn(), off: jest.fn(), emit: jest.fn() };
 let mockSpectating = false;
 jest.mock("@/lib/socket", () => ({ getSocket: () => mockSocket, emitAnswer: jest.fn(), emitInvasionAnswer: jest.fn(), emitPowerUp: jest.fn() }));
 jest.mock("@/lib/sounds", () => ({ soundManager: { play: jest.fn(), playModeSound: jest.fn() } }));
@@ -41,6 +41,7 @@ beforeEach(() => {
   jest.useFakeTimers();
   jest.spyOn(console, "warn").mockImplementation(() => {});
   mockSpectating = false;
+  mockSocket.connected = true;
   useGameStore.getState().resetGame();
   useGameStore.setState({ userId: "player-1", language: "en", soundEnabled: false });
   useGameStore.getState().setGame({ gameId: "battle-1", joinCode: "ABC123", mode: GameMode.Classic, difficulty: Difficulty.Novice });
@@ -80,13 +81,77 @@ it("submits the actual typed text through the game page and preserves it in the 
   expect(useGameStore.getState().selectedAnswer).toBe("Doha");
 });
 
-it("finishes the next-round transition while the live timer continues updating", () => {
+it.each([GameMode.Classic, GameMode.Survival, GameMode.Custom])("makes a running five-second second round immediately playable in %s", mode => {
+  useGameStore.setState({ mode });
   useGameStore.getState().setQuestion({ id: "round-two", text: "Second round question", options: ["Alpha", "Beta"],
-    type: QuestionType.MultipleChoice, category: "general", difficulty: Difficulty.Novice, timeLimit: 30 }, 2, 8);
+    type: QuestionType.MultipleChoice, category: "general", difficulty: Difficulty.Novice, timeLimit: 5 }, 2, 8);
   act(() => { view = create(createElement(GamePage)); });
-  for (let tick = 0; tick < 24; tick++) act(() => jest.advanceTimersByTime(250));
   expect(JSON.stringify(view.toJSON())).toContain("Second round question");
-  expect(view.root.findAllByType("button").some((item: any) => text(item.props.children).includes("Alpha"))).toBe(true);
+  act(() => jest.advanceTimersByTime(1000));
+  expect(useGameStore.getState().timeLeft).toBe(4);
+  click("Alpha");
+  expect(emitAnswer).toHaveBeenCalledWith("battle-1", "round-two", 0);
+});
+
+it.each(["en", "ar"] as const)("explains Survival elimination and disables remaining powers in %s", language => {
+  renderQuestion(QuestionType.MultipleChoice);
+  const eliminated = { userId: "player-1", username: "Eliminated player", score: 9000, rank: 2, streak: 0, isConnected: true, isEliminated: true, powerUpInventory: [PowerUpType.Shield] };
+  const survivor = { ...eliminated, userId: "survivor", username: "Remaining player", score: 500, rank: 1, isEliminated: false };
+  act(() => useGameStore.setState({ mode: GameMode.Survival, language, players: [eliminated, survivor], currentPlayer: eliminated }));
+  const content = JSON.stringify(view.toJSON());
+  expect(content).toContain(language === "ar" ? "أُقصيت من المنافسة" : "You are out of the competition");
+  const shield = view.root.findAllByType("button").find((node: any) => text(node.props.children).includes(language === "ar" ? "الدرع" : "Shield"));
+  expect(shield.props.disabled).toBe(true);
+  act(() => shield.props.onClick());
+  expect(emitPowerUp).not.toHaveBeenCalled();
+  const scoreboard = view.root.findAllByType("section").find((node: any) => node.props["aria-label"] === (language === "ar" ? "لوحة النتائج" : "Scoreboard"));
+  expect(scoreboard.findAllByType("li").map((node: any) => text(node.props.children))[0]).toContain("Remaining player");
+});
+
+it.each(["en", "ar"] as const)("exposes a single Chaos power and submits a chosen live target in %s", async language => {
+  (emitPowerUp as jest.Mock).mockResolvedValue({ success: true });
+  const own = { userId: "player-1", username: "Own player", score: 0, rank: 1, streak: 0, isConnected: true, isEliminated: false, powerUpInventory: [PowerUpType.Freeze] };
+  const target = { ...own, userId: "active-peer", username: "Active rival", powerUpInventory: [] };
+  useGameStore.setState({ mode: GameMode.Chaos, language, players: [own, target, { ...target, userId: "offline", username: "Offline rival", isConnected: false }], currentPlayer: own });
+  renderQuestion(QuestionType.MultipleChoice);
+  const freeze = view.root.findAllByType("button").find((node: any) => text(node.props.children).includes(language === "ar" ? "التجميد" : "Freeze"));
+  expect(freeze).toBeDefined();
+  expect(text(freeze.props.children)).toContain(language === "ar" ? "٥ ثوانٍ" : "5 seconds");
+  act(() => freeze.props.onClick());
+  expect(JSON.stringify(view.toJSON())).not.toContain("Offline rival");
+  const targetButton = view.root.findAllByType("button").find((node: any) => text(node.props.children).includes("Active rival"));
+  expect(targetButton).toBeDefined();
+  await act(async () => { await targetButton.props.onClick(); });
+  expect(emitPowerUp).toHaveBeenCalledWith("battle-1", PowerUpType.Freeze, "active-peer");
+});
+
+it.each(["spectator", "frozen", "eliminated", "expired", "offline"])("blocks a Chaos power for a %s", reason => {
+  mockSpectating = reason === "spectator";
+  const own = { userId: "player-1", username: "Own", score: 0, rank: 1, streak: 0, isConnected: true, isEliminated: reason === "eliminated", powerUpInventory: [PowerUpType.TimeWarp] };
+  useGameStore.setState({ mode: GameMode.Chaos, players: [own], currentPlayer: own });
+  renderQuestion(QuestionType.MultipleChoice);
+  if (reason === "frozen") act(() => useGameStore.setState({ activeEffects: [{ type: PowerUpType.Freeze, sourceUserId: "peer", targetUserId: "player-1", expiresAt: Date.now() + 5000 }] }));
+  if (reason === "expired") act(() => useGameStore.setState({ timeLeft: 0 }));
+  if (reason === "offline") mockSocket.connected = false;
+  const power = view.root.findAllByType("button").find((node: any) => text(node.props.children).includes("Extra time"));
+  expect(power).toBeDefined();
+  if (reason !== "offline") expect(power.props.disabled).toBe(true);
+  act(() => power.props.onClick());
+  expect(emitPowerUp).not.toHaveBeenCalled();
+});
+
+it("prevents repeat activation while awaiting the server and displays an exhausted Chaos inventory", async () => {
+  let resolve!: (value: { success: boolean }) => void;
+  (emitPowerUp as jest.Mock).mockReturnValue(new Promise(result => { resolve = result; }));
+  const own = { userId: "player-1", username: "Own", score: 0, rank: 1, streak: 0, isConnected: true, isEliminated: false, powerUpInventory: [PowerUpType.TimeWarp] };
+  useGameStore.setState({ mode: GameMode.Chaos, players: [own], currentPlayer: own });
+  renderQuestion(QuestionType.MultipleChoice);
+  click("Extra time"); click("Extra time");
+  expect(emitPowerUp).toHaveBeenCalledTimes(1);
+  expect(useGameStore.getState().currentPlayer?.powerUpInventory).toEqual([PowerUpType.TimeWarp]);
+  await act(async () => { resolve({ success: true }); });
+  act(() => useGameStore.getState().updatePlayer("player-1", { powerUpInventory: [] }));
+  expect(JSON.stringify(view.toJSON())).toContain("You have used all your selected powers");
 });
 
 it("submits every selected index rather than converting a multi-select answer to zero", () => {

@@ -1,4 +1,5 @@
 import { Server } from "socket.io";
+import { roomConnections } from "../lib/roomConnections";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "../lib/jwtConfig";
 import type { SafeRedis } from "../lib/redis";
@@ -65,6 +66,7 @@ function roomSnapshot(game: NonNullable<ReturnType<typeof getActiveGame>>, viewe
     currentQuestion: question ? toSafeClientQuestion(question) : null,
     questionStartedAt: game.questionStartTime,
     selectedAnswer: answer?.answer ?? answer?.index ?? null,
+    eliminatedOptions: viewerId ? game.fiftyFiftyByUser?.[viewerId] ?? [] : [],
     answeredAt: answer?.timestamp ?? null,
     lastAnswerResult: viewerId && game.status === GameStatus.AnswerReveal ? getViewerAnswerResult(game.gameId, viewerId) : null,
     finalResults: game.status === GameStatus.Ended ? game.finalResults || [] : [],
@@ -99,18 +101,10 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
     }
   });
 
-  function roomConnections(gameId: string) {
-    const ids = io.sockets.adapter.rooms.get(gameId) ?? [];
-    return Array.from(ids).flatMap(id => {
-      const socket = io.sockets.sockets.get(id);
-      return socket ? [socket] : [];
-    });
-  }
-
   function syncChaosRoom(gameId: string) {
     const game = getActiveGame(gameId);
     if (game?.mode !== GameMode.Chaos) return;
-    for (const socket of roomConnections(gameId)) {
+    for (const socket of roomConnections(io, gameId)) {
       const userId = socket.data.userId as string;
       const player = game.players[userId];
       const viewerId = player && !player.isEliminated && !socket.rooms.has(`${gameId}_spectators`) ? userId : undefined;
@@ -333,6 +327,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
       const game = getActiveGame(gameId);
       if (!game || game.status !== GameStatus.Question || !canParticipate(gameId)) return;
 
+      const alreadyAnswered = !!game.answersThisRound[userId];
       await handlePlayerAnswer(
         game,
         io as TypedServer,
@@ -342,6 +337,18 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         answer ?? answerIndex,
         timestamp
       );
+
+      if (game.questions[game.currentRound - 1]?.id !== questionId) return;
+      if (alreadyAnswered || !game.answersThisRound[userId]) {
+        // The browser locks a tapped choice immediately. Reconcile a rejected
+        // tap (or a second tab's choice) with this player's saved submission.
+        socket.emit("game:stateSync", { room: roomSnapshot(game, userId) });
+        if (!game.answersThisRound[userId]) {
+          socket.emit("game:error", { message: game.language === "ar"
+            ? "لم تُسجّل إجابتك. حاول مرة أخرى قبل انتهاء الوقت."
+            : "Your answer wasn’t recorded. Try again before time runs out." });
+        }
+      }
     });
 
     // ─── Emote ───────────────────────────────────────────────
@@ -566,7 +573,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         cb?.({ success: false, error: "Only the host can open a vote during a round" });
         return;
       }
-      const voterIds = [...new Set(roomConnections(gameId).flatMap(connection => {
+      const voterIds = [...new Set(roomConnections(io, gameId).flatMap(connection => {
         const id = connection.data.userId as string;
         const player = game.players[id];
         return player && !player.isBot && !player.isEliminated && !connection.rooms.has(`${gameId}_spectators`) ? [id] : [];

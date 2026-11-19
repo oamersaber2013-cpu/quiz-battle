@@ -104,7 +104,7 @@ export default function ResultsPage() {
   finalResults.forEach(result => scoreCounts.set(result.score, (scoreCounts.get(result.score) || 0) + 1));
   const highestScore = finalResults.length ? Math.max(...finalResults.map(result => result.score)) : 0;
   const topScoreCount = scoreCounts.get(highestScore) || 0;
-  const topScoreTied = topScoreCount > 1;
+  const topScoreTied = mode !== GameMode.Survival && topScoreCount > 1;
 
   function handlePlayAgain() {
     setLanguage(language);

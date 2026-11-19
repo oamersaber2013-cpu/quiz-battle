@@ -17,6 +17,7 @@ import {
   AnswerReveal,
   CustomGameSettings,
 } from "@quiz-battle/shared";
+import { roomConnections } from "./roomConnections";
 import { KEYS, getRoomState, setRoomState } from "../lib/redis";
 import { prisma } from "@quiz-battle/db";
 import { fetchQuestions, applyFiftyFifty, computePowerUpEffect, clearUsedQuestions } from "../lib/questions";
@@ -66,6 +67,7 @@ interface GameState {
   maxPlayers: number;
   customSettings?: CustomGameSettings;
   questionStartTime: number;
+  fiftyFiftyByUser?: Record<string, number[]>;
   answersThisRound: Record<string, { index?: number; answer?: SubmittedAnswer; timestamp: number; latencyMs: number }>;
   lastAnswerByPlayer: Record<string, boolean>; // for WHOLE power-up
   activeEffects: import("@quiz-battle/shared").ActivePowerUpEffect[];
@@ -256,6 +258,7 @@ async function runRounds(
     game.currentRound = i + 1;
     game.status = GameStatus.Question;
     game.answersThisRound = {};
+    game.fiftyFiftyByUser = {};
     game.activeEffects = [];
 
     const q = game.questions[i];
@@ -362,7 +365,9 @@ async function runRounds(
         })
         .map((p) => p.userId);
 
-      const wrongUsersWithoutActiveShield = wrongUsers.filter((uid) => !consumeActiveShield(game, uid));
+      // Shields belong to this question. Settle protection before applying its
+      // deadline expiry, even when reveal happens after the answer window.
+      const wrongUsersWithoutActiveShield = wrongUsers.filter((uid) => !consumeActiveShield(game, uid, game.questionStartTime));
       const toEliminate = checkSurvivalEliminations(
         game.players,
         wrongUsersWithoutActiveShield,
@@ -660,6 +665,10 @@ export async function handlePowerUp(
   if (player.isEliminated) {
     return { success: false, error: "Eliminated players cannot use power-ups" };
   }
+  const currentQuestion = game.questions[game.currentRound - 1];
+  if (!currentQuestion || Date.now() >= getPlayerAnswerDeadline(game, userId, currentQuestion)) {
+    return { success: false, error: "Your answer window has closed" };
+  }
 
   const idx = player.powerUpInventory.indexOf(type);
   if (idx === -1) return { success: false, error: "Power-up not in inventory" };
@@ -679,6 +688,18 @@ export async function handlePowerUp(
   // Consume the power-up
   player.powerUpInventory.splice(idx, 1);
 
+  const blockingShield = requiresTarget(type) && targetUserId
+    ? consumeActiveShield(game, targetUserId)
+    : undefined;
+  if (blockingShield && targetUserId) {
+    io.to(game.gameId).emit("game:powerUpBlocked", {
+      gameId: game.gameId, questionId: currentQuestion.id, type, sourceUserId: userId, targetUserId,
+      shieldExpiresAt: blockingShield.expiresAt,
+    });
+    await syncToRedis(redis, game);
+    return { success: true };
+  }
+
   const effect = computePowerUpEffect(
     type,
     userId,
@@ -693,10 +714,11 @@ export async function handlePowerUp(
       const q = game.questions[game.currentRound - 1];
       if (q) {
         const { eliminatedIndices } = applyFiftyFifty(q.options, q.correctIndex);
-        io.to(game.gameId).emit("game:powerUpApplied", {
-          ...effect,
-          eliminatedIndices,
-        } as typeof effect & { eliminatedIndices: number[] });
+        (game.fiftyFiftyByUser ??= {})[userId] = eliminatedIndices;
+        for (const connection of roomConnections(io, game.gameId)) {
+          const ownsHint = connection.data.userId === userId && !connection.rooms.has(`${game.gameId}_spectators`);
+          connection.emit("game:powerUpApplied", ownsHint ? { ...effect, eliminatedIndices } : effect);
+        }
       }
       break;
     }
@@ -755,8 +777,8 @@ function requiresTarget(type: PowerUpType): boolean {
   ].includes(type);
 }
 
-function isEffectActive(effect: import("@quiz-battle/shared").ActivePowerUpEffect): boolean {
-  return !effect.expiresAt || effect.expiresAt > Date.now();
+function isEffectActive(effect: import("@quiz-battle/shared").ActivePowerUpEffect, atTime = Date.now()): boolean {
+  return !effect.expiresAt || effect.expiresAt > atTime;
 }
 
 function getPlayerAnswerDeadline(
@@ -794,17 +816,16 @@ function isPlayerFrozen(game: GameState, userId: string): boolean {
   );
 }
 
-function consumeActiveShield(game: GameState, userId: string): boolean {
+function consumeActiveShield(game: GameState, userId: string, atTime = Date.now()): import("@quiz-battle/shared").ActivePowerUpEffect | undefined {
   const shieldIndex = game.activeEffects.findIndex(
     (effect) =>
       effect.type === PowerUpType.Shield &&
       effect.sourceUserId === userId &&
-      isEffectActive(effect)
+      isEffectActive(effect, atTime)
   );
 
-  if (shieldIndex === -1) return false;
-  game.activeEffects.splice(shieldIndex, 1);
-  return true;
+  if (shieldIndex === -1) return undefined;
+  return game.activeEffects.splice(shieldIndex, 1)[0];
 }
 
 function getPowerUpExpiry(game: GameState, type: PowerUpType): number | undefined {

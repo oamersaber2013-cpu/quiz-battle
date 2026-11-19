@@ -133,6 +133,8 @@ export function subscribeGameRoom(
 
 function registerHandlers(s: TypedSocket) {
   let clockRequestId = 0;
+  let blockedQuestion = "";
+  const blockedPowerNotices = new Set<string>();
   s.on("connect", () => {
     console.log("✅ Socket connected:", s.id);
     useGameStore.getState().setConnected(true);
@@ -246,11 +248,44 @@ function registerHandlers(s: TypedSocket) {
     useGameStore.getState().setPlayers(players);
   });
 
+  s.on("game:powerUpBlocked", (blocked) => {
+    const gs = useGameStore.getState();
+    if (gs.gameId !== blocked.gameId || gs.currentQuestion?.id !== blocked.questionId) return;
+    const questionKey = `${blocked.gameId}:${blocked.questionId}`;
+    if (blockedQuestion !== questionKey) { blockedQuestion = questionKey; blockedPowerNotices.clear(); }
+    const key = `${blocked.sourceUserId}:${blocked.targetUserId}:${blocked.type}:${blocked.shieldExpiresAt}`;
+    if (blockedPowerNotices.has(key)) return;
+    blockedPowerNotices.add(key);
+    const source = gs.players.find(player => player.userId === blocked.sourceUserId);
+    const target = gs.players.find(player => player.userId === blocked.targetUserId);
+    const index = source?.powerUpInventory.indexOf(blocked.type) ?? -1;
+    if (source && index >= 0) gs.updatePlayer(source.userId, { powerUpInventory: source.powerUpInventory.filter((_power, position) => position !== index) });
+    useGameStore.setState(state => ({ activeEffects: state.activeEffects.filter(effect => !(effect.type === PowerUpType.Shield &&
+      effect.sourceUserId === blocked.targetUserId && effect.expiresAt === blocked.shieldExpiresAt)) }));
+    const ar = gs.language === "ar";
+    const targetName = target?.username || (ar ? "الخصم" : "opponent");
+    const sourceName = source?.username || (ar ? "لاعب" : "a player");
+    const message = gs.userId === blocked.targetUserId
+      ? (ar ? `🛡️ صدّ درعك هجوم ${sourceName}. استُهلك الدرع.` : `🛡️ Your shield blocked ${sourceName}'s attack. The shield was consumed.`)
+      : gs.userId === blocked.sourceUserId
+        ? (ar ? `🛡️ صدّ درع ${targetName} هجومك. استُهلكت القوة والدرع.` : `🛡️ ${targetName}'s shield blocked your attack. Both powers were consumed.`)
+        : (ar ? `🛡️ صدّ درع ${targetName} هجومًا واستهُلك.` : `🛡️ ${targetName}'s shield blocked an attack and was consumed.`);
+    gs.addToast(gs.userId === blocked.targetUserId ? "success" : "info", message);
+  });
+
   s.on("game:powerUpApplied", (effect) => {
     const gs = useGameStore.getState();
+    const source = gs.players.find(player => player.userId === effect.sourceUserId);
+    const inventoryIndex = source?.powerUpInventory.indexOf(effect.type) ?? -1;
+    if (source && inventoryIndex >= 0) {
+      gs.updatePlayer(source.userId, { powerUpInventory: source.powerUpInventory.filter((_power, index) => index !== inventoryIndex) });
+    }
+    const alreadyApplied = gs.activeEffects.some(existing => existing.type === effect.type &&
+      existing.sourceUserId === effect.sourceUserId && existing.targetUserId === effect.targetUserId && existing.expiresAt === effect.expiresAt);
+    if (alreadyApplied || (effect.expiresAt && effect.expiresAt <= getServerTime())) return;
     gs.addEffect(effect);
 
-    if (effect.type === "fifty_fifty") {
+    if (effect.type === "fifty_fifty" && effect.sourceUserId === gs.userId) {
       const eliminatedIndices = (effect as typeof effect & { eliminatedIndices?: number[] }).eliminatedIndices;
       if (eliminatedIndices) {
         gs.setEliminatedOptions(eliminatedIndices);

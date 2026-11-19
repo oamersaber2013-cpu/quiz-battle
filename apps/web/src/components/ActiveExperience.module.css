@@ -87,7 +87,8 @@
 .toolGrid { display: flex; flex-wrap: wrap; gap: 8px; }
 .powerControl { text-align: start; align-items: flex-start; }
 .powerControlIcon { font-size: 1.6rem; flex-shrink: 0; }
-.powerControlBody { display: grid; gap: 5px; }
+.powerControlBody { display: grid; flex: 1; min-width: 0; gap: 5px; overflow-wrap: anywhere; }
+.powerControlBody strong { font-size: 1rem; line-height: 1.4; }
 .powerControlBody > span { font-size: .8rem; color: #c2beb2; line-height: 1.5; }
 .powerControlBody small { color: #e6b65c; font-size: .72rem; }
 .powerTargetPicker { margin-top: 16px; padding: 18px; background: #17242f; border: 1px solid #9b7e49; border-radius: 10px; }
@@ -96,6 +97,7 @@
 .powerTargetPicker:focus { outline: 2px solid #e6b65c; outline-offset: 3px; }
 .powerTargetGrid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .page :global(.powerup-card) { width: auto !important; height: auto !important; min-height: 54px; flex: 1 1 110px; display: flex; flex-direction: row; gap: 8px; padding: 10px 12px; border: 1px solid #64717a; border-radius: 7px; background: #1b2a35; color: #f1e9d8; box-shadow: none; }
+.page :global(.powerup-card).powerControl { flex-basis: 220px; }
 .page :global(.powerup-card):hover:not(:disabled) { border-color: #e6b65c; transform: none; }
 .page :global(.powerup-card):disabled { opacity: .55; }
 .reactions { padding-block: 8px; color: #bbb7ac; }

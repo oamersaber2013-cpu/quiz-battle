@@ -86,10 +86,10 @@ test("reviews active screens across desktop, tablet and mobile", async ({ page }
     const screens = [
       ["lobby", "en", 1440, 900], ["lobby", "ar", 320, 844], ["lobby", "ar", 390, 844], ["lobby", "ar", 834, 1112],
       ["powers", "en", 1440, 900], ["powers", "ar", 390, 844], ["powers", "ar", 834, 1112],
-      ["question", "en", 1440, 900], ["question", "ar", 390, 844], ["question", "ar", 834, 1112],
+      ["question", "en", 1440, 900], ["question", "ar", 320, 844], ["question", "ar", 390, 844], ["question", "ar", 834, 1112],
       ["conquest", "ar", 1440, 900], ["conquest", "ar", 390, 844], ["conquest", "ar", 834, 1112],
       ["invasion", "ar", 1440, 900], ["invasion", "ar", 390, 844],
-      ["chaos", "ar", 1440, 900], ["chaos", "ar", 390, 844],
+      ["chaos", "ar", 1440, 900], ["chaos", "ar", 320, 844], ["chaos", "ar", 390, 844],
       ["results", "en", 1440, 900], ["results", "ar", 390, 844], ["results", "ar", 834, 1112],
     ] as const;
     for (const [stage, language, width, height] of screens) {
@@ -103,7 +103,27 @@ test("reviews active screens across desktop, tablet and mobile", async ({ page }
         : stage === "invasion" ? page.getByText(/Your turn|دورك/, { exact: false })
         : page.getByText(question(language === "ar").text, { exact: true }).first();
       await expect(visible).toBeVisible({ timeout: 30000 }).catch(error => { throw new Error(`${error.message}\n${JSON.stringify({ socketTargets: [...socketTargets], joinedRooms, pageErrors })}`); });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.evaluate(() => document.fonts.ready);
+      const layoutSnapshot = () => page.evaluate(() => ({
+        width: innerWidth, clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth,
+        visualWidth: visualViewport?.width, path: location.pathname, direction: document.documentElement.dir,
+        overflow: Array.from(document.querySelectorAll<HTMLElement>("body *")).map(element => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return { tag: element.tagName, class: typeof element.className === "string" ? element.className : "", role: element.getAttribute("role"),
+            text: element.textContent?.trim().slice(0, 75), left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width),
+            client: element.clientWidth, scroll: element.scrollWidth, display: style.display, position: style.position, minWidth: style.minWidth,
+            overflowX: style.overflowX, transform: style.transform };
+        }).filter(element => element.width && (element.left < -1 || element.right > innerWidth + 1 || element.scroll > element.client + 1)).slice(0, 24),
+      }));
+      const initialLayout = await layoutSnapshot();
+      if (initialLayout.scrollWidth > initialLayout.width + 1) {
+        const diagnostic = { stage, language, width, initialLayout };
+        console.log(JSON.stringify(diagnostic));
+        await testInfo.attach(`overflow-${stage}-${language}-${width}`, { body: Buffer.from(JSON.stringify(diagnostic, null, 2)), contentType: "application/json" });
+        await page.screenshot({ path: testInfo.outputPath(`overflow-${stage}-${language}-${width}.png`), fullPage: true });
+      }
+      expect(initialLayout.scrollWidth, JSON.stringify({ stage, language, width, initialLayout })).toBeLessThanOrEqual(initialLayout.width + 1);
       if (stage === "question") {
         const answers = page.locator("button.answer-option");
         await expect(answers).toHaveCount(4);

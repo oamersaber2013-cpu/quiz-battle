@@ -55,6 +55,11 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
   const watcher = await watcherContext.newPage();
   const other = observe(peer);
   const audience = observe(watcher);
+  let phase = "enter host lobby";
+  for (const target of [page, peer, watcher]) {
+    target.setDefaultTimeout(15000);
+    target.setDefaultNavigationTimeout(30000);
+  }
   const overflow = async (target: Page) => expect(await target.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const artifactDir = process.env.PLAYWRIGHT_CHAOS_ARTIFACT_DIR;
   if (artifactDir) await mkdir(artifactDir, { recursive: true });
@@ -62,18 +67,29 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
     await page.addInitScript(identity => localStorage.setItem("quiz-battle-storage", JSON.stringify({ version: 0, state: identity })), hostIdentity);
     await page.goto(`${baseURL}/lobby/${room.gameId}`);
     await expect(page.getByRole("heading", { name: "غرفة المعركة", exact: true })).toBeVisible();
+    phase = "join peer from fresh invite";
     await peer.goto(`${baseURL}/?join=${room.joinCode}&lang=ar`);
     await peer.getByRole("textbox", { name: "ادخل اسمك", exact: true }).fill(`فوضى لاعب ${stamp}`);
     await peer.getByRole("button", { name: "انضم إلى الغرفة", exact: true }).tap();
-    await peer.waitForURL(`**/lobby/${room.gameId}`);
+    await peer.waitForURL(`**/lobby/${room.gameId}`, { timeout: 30000 });
     const peerIdentity = await peer.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage")!).state);
+    // Navigation can precede the socket join. Starting a solo lobby here adds a
+    // bot and makes the intended two-player proof invalid.
+    phase = "wait for two connected human participants";
+    await expect(page.getByText(`فوضى لاعب ${stamp}`, { exact: true })).toBeVisible();
+    await expect(peer.getByText(`فوضى مضيف ${stamp}`, { exact: true })).toBeVisible();
+    const roster = await received(host.events, "game:playerJoined", data => data.player?.userId === peerIdentity.userId);
+    expect(roster.data.player.isConnected).toBe(true);
     await expect(peer.getByRole("button", { name: "ابدأ المعركة", exact: true })).toHaveCount(0);
+    phase = "enter spectator lobby";
     const watcherResponse = await page.request.post(`${api}/api/auth/guest`, { headers: { Origin: origin }, data: { username: `فوضى مشاهد ${stamp}` } });
     expect(watcherResponse.status()).toBe(200);
     const watcherIdentity = { ...await watcherResponse.json(), isGuest: true, language: "ar" };
     await watcherContext.addInitScript(identity => localStorage.setItem("quiz-battle-storage", JSON.stringify({ version: 0, state: identity })), watcherIdentity);
     await watcher.goto(`${baseURL}/lobby/${room.gameId}?spectate=true`);
+    await received(audience.events, "game:stateSync", data => data.room.gameId === room.gameId);
     await expect(watcher.getByRole("button", { name: "ابدأ المعركة", exact: true })).toHaveCount(0);
+    phase = "confirm both player inventories";
     await page.getByRole("button", { name: "ابدأ المعركة", exact: true }).tap();
     for (const target of [page, peer]) {
       await target.getByRole("button", { name: /وقت إضافي/ }).tap();
@@ -83,6 +99,7 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
     let ballotDuration = 0;
     let dramaTrigger = "tab visibility";
     for (let round = 1; round <= 2; round++) {
+      phase = `round ${round} question`;
       const questionEvent = await received(host.events, "game:question", data => data.round === round);
       const question = questionEvent.data.question;
       for (const target of [page, peer, watcher]) {
@@ -94,6 +111,7 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
       await expect(watcher.locator('[data-chaos-answer="0"]')).toBeDisabled();
       await page.waitForTimeout(Math.max(0, 350 - (Date.now() - questionEvent.at)));
       if (round === 1) {
+        phase = "activate Time Warp and trigger peer visibility drama";
         const beforeTime = Number((await page.getByRole("timer", { name: "الوقت المتبقي للإجابة" }).textContent())!.replace(/[^0-9]/g, ""));
         await page.getByRole("button", { name: /وقت إضافي/ }).tap();
         await received(host.events, "game:powerUpApplied", data => data.type === "time_warp" && data.sourceUserId === hostIdentity.userId);
@@ -117,6 +135,7 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
           });
         }
         const drama = await received(host.events, "chaos:state", data => data.pendingDrama?.playerId === peerIdentity.userId);
+        phase = "host ballot and answer/reload recovery";
         await expect(peer.getByRole("button", { name: "ابدأ التصويت", exact: true })).toHaveCount(0);
         await expect(watcher.getByRole("button", { name: "ابدأ التصويت", exact: true })).toHaveCount(0);
         await page.getByRole("button", { name: "ابدأ التصويت", exact: true }).tap();
@@ -146,6 +165,7 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
       }
       await expect.poll(() => host.events.filter(event => event.name === "game:answerResult" && event.data.userId === hostIdentity.userId).length).toBe(round);
       if (round === 1) {
+        phase = "review first round";
         const reveal = host.events.filter(event => event.name === "game:answerResult" && event.data.userId === hostIdentity.userId).at(-1)!;
         await expect(page.locator(`[data-player-score="${hostIdentity.userId}"]`)).toHaveText(reveal.data.newScore.toLocaleString("ar"));
         await page.getByRole("button", { name: "مراجعة السؤال", exact: true }).tap();
@@ -158,6 +178,7 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
         await page.keyboard.press("Escape");
       }
     }
+    phase = "compare persisted results with actual reveals";
     await page.waitForURL(`**/results/${room.gameId}`, { timeout: 30000 });
     await expect(page.getByRole("heading", { name: /^الترتيب النهائي/ })).toBeVisible();
     const savedResponse = await page.request.get(`${api}/api/results/${room.gameId}`, { headers: { Authorization: `Bearer ${hostIdentity.token}` } });
@@ -192,8 +213,17 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
     expect(host.errors).toEqual([]);
     expect(other.errors).toEqual([]);
     expect(audience.errors).toEqual([]);
+  } catch (error) {
+    const safeEvents = (events: Received[]) => events.slice(-20).map(({ name, data }) => ({ name, round: data?.round,
+      status: data?.room?.status, players: data?.room?.players?.map(({ userId, isConnected, isBot }: any) => ({ userId, isConnected, isBot })) }));
+    const diagnostic = JSON.stringify({ phase, urls: [page.url(), peer.url(), watcher.url()],
+      events: { host: safeEvents(host.events), peer: safeEvents(other.events), spectator: safeEvents(audience.events) },
+      errors: { host: host.errors, peer: other.errors, spectator: audience.errors } }, null, 2);
+    await testInfo.attach("Chaos bounded phase diagnostic", { body: Buffer.from(diagnostic), contentType: "application/json" });
+    console.log(diagnostic);
+    throw error;
   } finally {
-    await peerContext.close();
-    await watcherContext.close();
+    await peerContext.close().catch(() => {});
+    await watcherContext.close().catch(() => {});
   }
 });

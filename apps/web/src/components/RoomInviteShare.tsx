@@ -12,6 +12,8 @@ export function RoomInviteShare({ joinCode, language }: { joinCode: string | nul
   const [origin, setOrigin] = useState("");
   const [canShare, setCanShare] = useState(false);
   const [status, setStatus] = useState<ShareStatus>(null);
+  const codeInput = useRef<HTMLInputElement>(null);
+  const linkInput = useRef<HTMLInputElement>(null);
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inviteUrl = origin && joinCode ? createRoomInviteUrl(origin, joinCode, language) : "";
   const validCode = !!joinCode && isRoomCode(joinCode);
@@ -30,6 +32,9 @@ export function RoomInviteShare({ joinCode, language }: { joinCode: string | nul
       setStatus(success);
       statusTimer.current = setTimeout(() => setStatus(null), 2500);
     } catch {
+      const field = success === "codeCopied" ? codeInput.current : linkInput.current;
+      field?.focus();
+      field?.select();
       setStatus("copyFailed");
     }
   }
@@ -50,14 +55,14 @@ export function RoomInviteShare({ joinCode, language }: { joinCode: string | nul
 
   const message = status === "codeCopied" ? (ar ? "تم نسخ رمز الغرفة." : "Room code copied.")
     : status === "linkCopied" ? (ar ? "تم نسخ رابط الدعوة." : "Invite link copied.")
-    : status === "copyFailed" ? (ar ? "تعذر النسخ تلقائياً. حدد الرابط أو الرمز ثم انسخه." : "Could not copy automatically. Select the link or code and copy it.")
+    : status === "copyFailed" ? (ar ? "تعذر النسخ تلقائيًا. انسخ النص المحدد." : "Automatic copy failed. Copy the selected text.")
     : status === "shareFailed" ? (ar ? "تعذرت المشاركة. يمكنك نسخ رابط الدعوة أو تحديده ونسخه." : "Could not share. Copy the invite link or select it to copy.")
     : "";
 
   return <section className={sharedStyles.surface} aria-label={ar ? "دعوة اللاعبين" : "Invite players"}>
     <h2 className={sharedStyles.eyebrow}>{ar ? "رمز الغرفة" : "ROOM CODE"}</h2>
     <div className={styles.codeRow}>
-      <input className={styles.code} aria-label={ar ? "رمز الغرفة" : "Room code"} dir="ltr" readOnly value={joinCode || "------"}
+      <input ref={codeInput} className={styles.code} aria-label={ar ? "رمز الغرفة" : "Room code"} dir="ltr" readOnly value={joinCode || "------"}
         onFocus={event => event.currentTarget.select()} />
       <button type="button" className="btn btn-secondary" disabled={!validCode} onClick={() => copy(joinCode!, "codeCopied")}>
         {ar ? "نسخ الرمز" : "Copy code"}
@@ -66,7 +71,7 @@ export function RoomInviteShare({ joinCode, language }: { joinCode: string | nul
     <div className={styles.invite}>
       <label className={styles.linkLabel}>
         {ar ? "رابط الدعوة" : "Invite link"}
-        <input className={styles.link} aria-label={ar ? "رابط الدعوة" : "Invite link"} dir="ltr" readOnly value={inviteUrl}
+        <input ref={linkInput} className={styles.link} aria-label={ar ? "رابط الدعوة" : "Invite link"} dir="ltr" readOnly value={inviteUrl}
           onFocus={event => event.currentTarget.select()} />
       </label>
       <div className={styles.actions}>

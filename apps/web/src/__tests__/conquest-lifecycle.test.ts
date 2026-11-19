@@ -92,6 +92,53 @@ describe("Conquest draft controls", () => {
     expect(rendered.root.findByProps({ "data-testid": "conquest-countdown" }).children.join("")).toContain("17");
   });
 
+  it.each(["battle", "rebuild"] as const)("restores the last two seconds of a %s question and disables answers at expiry", (phase) => {
+    const state = draftState();
+    const question = state.draftPhase!.question!;
+    const clock = { questionStartedAt: Date.now() - 28000, questionEndsAt: Date.now() + 2000 };
+    state.phase = phase;
+    state.draftPhase = null;
+    if (phase === "battle") {
+      state.currentBattle = { ...clock, question, attackerId: "player-1", defenderId: "player-2", targetTerritoryId: "1", isAttackingFort: false, attackerAnswered: false, defenderAnswered: false, consecutiveCorrect: 0 };
+    } else {
+      state.rebuildSession = { ...clock, question, playerId: "player-1", answered: false };
+    }
+    useGameStore.getState().setConquestState(state);
+    act(() => { rendered = create(createElement(ConquestGame)); });
+    expect(rendered.root.findByProps({ "data-testid": "conquest-countdown" }).children.join("")).toBe("2");
+    const option = rendered.root.findByProps({ "data-answer-index": 1 });
+    expect(option.props.disabled).toBe(false);
+    act(() => jest.advanceTimersByTime(2000));
+    expect(option.props.disabled).toBe(true);
+    act(() => option.props.onClick());
+    expect(mockSocket.emit).not.toHaveBeenCalled();
+  });
+
+  it("keeps a rostered player read-only on an explicit spectator route", () => {
+    act(() => { rendered = create(createElement(ConquestGame, { isSpectating: true })); });
+    const option = rendered.root.findByProps({ "data-answer-index": 0 });
+    expect(option.props.disabled).toBe(true);
+    act(() => option.props.onClick());
+    expect(mockSocket.emit).not.toHaveBeenCalled();
+  });
+
+  it("restores only my accepted duel option and clears it on a tie-breaker even if the question repeats", () => {
+    const state = draftState();
+    const question = state.draftPhase!.question!;
+    state.phase = "battle";
+    state.draftPhase = null;
+    const battle = { question, attackerId: "player-1", defenderId: "player-2", targetTerritoryId: "1", isAttackingFort: false, attackerAnswered: true, defenderAnswered: false, consecutiveCorrect: 0 };
+    useGameStore.getState().setConquestState({ ...state, currentBattle: { ...battle, selectedAnswer: 0 } });
+    act(() => { rendered = create(createElement(ConquestGame)); });
+    const option = () => rendered.root.findByProps({ "data-answer-index": 0 });
+    expect(option().props["aria-pressed"]).toBe(true);
+    act(() => useGameStore.getState().setConquestState({ ...state, currentBattle: battle }));
+    expect(option().props["aria-pressed"]).toBe(true);
+    act(() => useGameStore.getState().setConquestState({ ...state, currentBattle: { ...battle, attackerAnswered: false, consecutiveCorrect: 1 } }));
+    expect(option().props["aria-pressed"]).toBe(false);
+    expect(option().props.disabled).toBe(false);
+  });
+
   it.each([-40000, 40000])("keeps a new draft usable with a device clock skew of %sms", (skew) => {
     const serverNow = Date.now();
     jest.setSystemTime(serverNow + skew);

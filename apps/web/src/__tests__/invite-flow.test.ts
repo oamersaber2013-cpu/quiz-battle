@@ -55,11 +55,11 @@ it("keeps a copied invitation on a fresh Arabic phone until the guest explicitly
   expect(code.props.value).toBe("AB12CD");
   expect(view.root.findByType("main").props.dir).toBe("rtl");
   expect(mockFetch).not.toHaveBeenCalled();
-  mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ userId: "guest-1", username: "زائر_12", token: "fixture-token", isGuest: true }) })
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ gameId: "invited-room" }) });
+  mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ gameId: "invited-room" }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ userId: "guest-1", username: "زائر_12", token: "fixture-token", isGuest: true }) });
   act(() => view.root.findByProps({ id: "player-name" }).props.onChange({ target: { value: "زائر" } }));
   await act(async () => view.root.findByType("form").props.onSubmit({ preventDefault: jest.fn() }));
-  expect(mockFetch.mock.calls[1][0]).toBe("https://quiz.example/api/games/join/AB12CD");
+  expect(mockFetch.mock.calls[0][0]).toBe("https://quiz.example/api/games/join/AB12CD");
   expect(mockRouter.push).toHaveBeenCalledWith("/lobby/invited-room");
   expect(useGameStore.getState().username).toBe("زائر_12");
 });
@@ -81,24 +81,37 @@ it("normalizes copied room-code whitespace and directional marks without truncat
   act(() => code().props.onChange({ target: { value: " \u200fab12cd\n " } }));
   expect(code().props.value).toBe("AB12CD");
   expect(button("Join room").props.disabled).toBe(false);
+  for (const value of ["ab١٢cd", "ab۱۲cd"]) {
+    act(() => code().props.onChange({ target: { value } }));
+    expect(code().props.value).toBe("AB12CD");
+    expect(button("Join room").props.disabled).toBe(false);
+  }
   act(() => code().props.onChange({ target: { value: "AB12CDX" } }));
   expect(button("Join room").props.disabled).toBe(true);
 });
 
-it("exposes a selectable invitation link when browser clipboard access fails", async () => {
-  useGameStore.setState({ userId: "host", hostId: "host", gameId: "invited-room", joinCode: "AB12CD", status: GameStatus.Lobby, mode: GameMode.Classic, language: "ar" });
+it.each([["نسخ رابط الدعوة", "رابط الدعوة"], ["نسخ الرمز", "رمز الغرفة"]])("selects the appropriate field for manual copying when %s fails", async (action, fieldLabel) => {
+  useGameStore.setState({ joinCode: "AB12CD", status: GameStatus.Lobby, mode: GameMode.Classic, language: "ar" });
   mockClipboard.mockRejectedValueOnce(new Error("Clipboard blocked"));
-  await act(async () => { view = create(createElement(LobbyPage)); });
-  await act(async () => button("نسخ رابط الدعوة").props.onClick());
-  const link = view.root.findByProps({ "aria-label": "رابط الدعوة" });
-  expect(link.props.value).toBe("https://quiz.example/?join=AB12CD&lang=ar");
-  expect(link.props.readOnly).toBe(true);
-  expect(text(view.root.findByProps({ role: "alert" }).props.children)).toContain("حدد الرابط");
+  const fields = new Map<string, { select: jest.Mock; focus: jest.Mock }>();
+  await act(async () => {
+    view = create(createElement(LobbyPage), { createNodeMock: (element: any) => {
+      if (element.type !== "input") return null;
+      const node = { select: jest.fn(), focus: jest.fn() };
+      fields.set(element.props["aria-label"], node);
+      return node;
+    } });
+  });
+  await act(async () => button(action).props.onClick());
+  expect(fields.get(fieldLabel)?.focus).toHaveBeenCalledTimes(1);
+  expect(fields.get(fieldLabel)?.select).toHaveBeenCalledTimes(1);
+  expect(text(view.root.findByProps({ role: "alert" }).props.children)).toContain("انسخ النص المحدد");
 });
 
 it.each(["en", "ar"] as const)("explains guest rate limits in %s without discarding the invitation", async language => {
   location(`?join=AB12CD&lang=${language}`);
-  mockFetch.mockResolvedValueOnce({ ok: false, status: 429 });
+  mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ gameId: "invited-room" }) })
+    .mockResolvedValueOnce({ ok: false, status: 429 });
   await act(async () => { view = create(createElement(HomePage)); });
   await act(async () => view.root.findByType("form").props.onSubmit({ preventDefault: jest.fn() }));
   expect(text(view.root.findByProps({ role: "alert" }).props.children)).toContain(language === "ar" ? "انتظر دقيقة" : "Wait a minute");

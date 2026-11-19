@@ -58,6 +58,8 @@ interface ConquestInternalState {
     targetTerritoryId: string;
     isAttackingFort: boolean;
     question: { id: string; text: string; options: string[]; timeLimit: number; correctIndex: number };
+    questionStartedAt: number;
+    questionEndsAt: number;
     attackerAnswer: number | null;
     defenderAnswer: number | null;
     consecutiveCorrect: number;
@@ -66,6 +68,8 @@ interface ConquestInternalState {
   } | null;
   rebuildSession: {
     playerId: string;
+    questionStartedAt: number;
+    questionEndsAt: number;
     question: { id: string; text: string; options: string[]; timeLimit: number; correctIndex: number };
     timerHandle: ReturnType<typeof setTimeout> | null;
   } | null;
@@ -89,7 +93,15 @@ function currentPlayer(s: ConquestInternalState): string {
   const active = activePlayers(s);
   return active[s.currentTurnIndex % active.length];
 }
+function questionClock(timeLimit: number) {
+  const questionStartedAt = Date.now();
+  return { questionStartedAt, questionEndsAt: questionStartedAt + timeLimit * 1000 };
+}
+
 export function safeConquestState(s: ConquestInternalState, viewerId?: string): ConquestClientState {
+  const battle = s.currentBattle;
+  const duelAnswer = viewerId === battle?.attackerId ? battle?.attackerAnswer
+    : viewerId === battle?.defenderId ? battle?.defenderAnswer : undefined;
   const ownAnswer = viewerId ? s.draftPhase?.answers.get(viewerId) : undefined;
   return {
     serverNow: Date.now(),
@@ -134,12 +146,17 @@ export function safeConquestState(s: ConquestInternalState, viewerId?: string): 
         options: s.currentBattle.question.options,
         timeLimit: s.currentBattle.question.timeLimit,
       },
+      questionStartedAt: s.currentBattle.questionStartedAt,
+      questionEndsAt: s.currentBattle.questionEndsAt,
+      ...(duelAnswer !== undefined ? { selectedAnswer: duelAnswer !== null && duelAnswer >= 0 ? duelAnswer : null } : {}),
       attackerAnswered: s.currentBattle.attackerAnswer !== null,
       defenderAnswered: s.currentBattle.defenderAnswer !== null,
       consecutiveCorrect: s.currentBattle.consecutiveCorrect,
     } : null,
     rebuildSession: s.rebuildSession ? {
       playerId: s.rebuildSession.playerId,
+      questionStartedAt: s.rebuildSession.questionStartedAt,
+      questionEndsAt: s.rebuildSession.questionEndsAt,
       question: {
         id: s.rebuildSession.question.id,
         text: s.rebuildSession.question.text,
@@ -294,14 +311,16 @@ export async function handleAttack(
   const qs = await fetchQuestions(s.difficulty, 1, categoriesToUse, undefined, s.language, gameId, { singleChoiceOnly: true });
   const q = qs[0];
   if (!q) return { success: false, error: "No question available" };
+  if (games.get(gameId) !== s || s.phase !== "select_target") return { success: false, error: "Turn already started" };
 
   s.phase = "battle";
   s.currentBattle = {
     attackerId, defenderId, targetTerritoryId, isAttackingFort,
     question: { id: q.id, text: q.text, options: q.options, timeLimit: q.timeLimit, correctIndex: q.correctIndex },
+    ...questionClock(q.timeLimit),
     attackerAnswer: null, defenderAnswer: null, consecutiveCorrect: 0,
     selectedCategory,
-    timerHandle: setTimeout(() => timeoutBattle(io, gameId), (q.timeLimit + 3) * 1000),
+    timerHandle: setTimeout(() => timeoutBattle(io, gameId), q.timeLimit * 1000),
   };
 
   emit(io, s);
@@ -321,6 +340,7 @@ export function handleDuelAnswer(io: TypedServer, gameId: string, playerId: stri
   const s = games.get(gameId);
   if (!s || s.phase !== "battle" || !s.currentBattle) return;
   const b = s.currentBattle;
+  if (Date.now() >= b.questionEndsAt || !Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= b.question.options.length) return;
   if (playerId === b.attackerId && b.attackerAnswer === null) b.attackerAnswer = answerIndex;
   else if (playerId === b.defenderId && b.defenderAnswer === null) b.defenderAnswer = answerIndex;
   else return;
@@ -338,9 +358,6 @@ async function resolveDuel(io: TypedServer, s: ConquestInternalState) {
 
   if (aCorrect && dCorrect) {
     // Tie-breaker: fetch next question
-    b.consecutiveCorrect++;
-    b.attackerAnswer = null;
-    b.defenderAnswer = null;
 
     io.to(s.gameId).emit("conquest:duelResult", {
       attackerWon: false, attackerCorrect: true, defenderCorrect: true,
@@ -349,10 +366,15 @@ async function resolveDuel(io: TypedServer, s: ConquestInternalState) {
 
     const qs = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, s.gameId, { singleChoiceOnly: true });
     const q = qs[0];
-    if (!q) { dCorrect && resolveDuel(io, s); return; }
+    if (games.get(s.gameId) !== s || s.currentBattle !== b) return;
+    b.attackerAnswer = null;
+    b.defenderAnswer = null;
+    if (!q) { resolveDuel(io, s); return; }
 
+    b.consecutiveCorrect++;
+    Object.assign(b, questionClock(q.timeLimit));
     b.question = { id: q.id, text: q.text, options: q.options, timeLimit: q.timeLimit, correctIndex: q.correctIndex };
-    b.timerHandle = setTimeout(() => timeoutBattle(io, s.gameId), (q.timeLimit + 3) * 1000);
+    b.timerHandle = setTimeout(() => timeoutBattle(io, s.gameId), q.timeLimit * 1000);
     emit(io, s);
     return;
   }
@@ -416,16 +438,18 @@ export async function handleRebuild(
   const qs = await fetchQuestions(s.difficulty, 1, s.categories, undefined, s.language, gameId, { singleChoiceOnly: true });
   const q = qs[0];
   if (!q) return { success: false, error: "No question" };
+  if (games.get(gameId) !== s || s.phase !== "select_target") return { success: false, error: "Turn already started" };
 
   s.phase = "rebuild";
   s.rebuildSession = {
+    ...questionClock(q.timeLimit),
     playerId, question: { id: q.id, text: q.text, options: q.options, timeLimit: q.timeLimit, correctIndex: q.correctIndex },
     timerHandle: setTimeout(() => {
       const gs = games.get(gameId);
       if (gs?.phase === "rebuild" && gs.rebuildSession?.playerId === playerId) {
-        handleRebuildAnswer(io, gameId, playerId, -1);
+        resolveRebuild(io, gs, gs.rebuildSession, false);
       }
-    }, (q.timeLimit + 3) * 1000),
+    }, q.timeLimit * 1000),
   };
   emit(io, s);
   return { success: true };
@@ -435,10 +459,14 @@ export function handleRebuildAnswer(io: TypedServer, gameId: string, playerId: s
   const s = games.get(gameId);
   if (!s || s.phase !== "rebuild" || !s.rebuildSession || s.rebuildSession.playerId !== playerId) return;
   const r = s.rebuildSession;
-  if (r.timerHandle) clearTimeout(r.timerHandle);
+  if (Date.now() >= r.questionEndsAt || !Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= r.question.options.length) return;
+  resolveRebuild(io, s, r, answerIndex === r.question.correctIndex);
+}
 
+function resolveRebuild(io: TypedServer, s: ConquestInternalState, r: NonNullable<ConquestInternalState["rebuildSession"]>, success: boolean) {
+  if (r.timerHandle) clearTimeout(r.timerHandle);
+  const playerId = r.playerId;
   const correct = r.question.correctIndex;
-  const success = answerIndex === correct;
   const newHealth = success ? Math.min(3, (s.fortHealth[playerId] || 0) + 1) : (s.fortHealth[playerId] || 0);
   if (success) s.fortHealth[playerId] = newHealth;
 

@@ -55,6 +55,10 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
   const watcher = await watcherContext.newPage();
   const other = observe(peer);
   const audience = observe(watcher);
+  const spectatorResultRequests: string[] = [];
+  watcher.on("request", request => {
+    if (new URL(request.url()).pathname === `/api/results/${room.gameId}`) spectatorResultRequests.push(request.method());
+  });
   let phase = "enter host lobby";
   for (const target of [page, peer, watcher]) {
     target.setDefaultTimeout(15000);
@@ -138,22 +142,29 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
         phase = "host ballot and answer/reload recovery";
         await expect(peer.getByRole("button", { name: "ابدأ التصويت", exact: true })).toHaveCount(0);
         await expect(watcher.getByRole("button", { name: "ابدأ التصويت", exact: true })).toHaveCount(0);
+        await hostAnswer.tap();
         await page.getByRole("button", { name: "ابدأ التصويت", exact: true }).tap();
         const ballot = await received(host.events, "chaos:votingStart", data => data.dramaEventId === drama.data.pendingDrama.id);
         expect(ballot.data.duration).toBe(5000);
-        await expect(peer.getByRole("button", { name: /سامح|خفض النقاط/ })).toHaveCount(0);
-        await expect(watcher.getByRole("button", { name: /سامح|خفض النقاط/ })).toHaveCount(0);
-        await hostAnswer.tap();
         await page.getByRole("button", { name: /سامح/ }).tap();
-        await expect(page.getByText(/تم التصويت!/)).toBeVisible();
+        await received(host.events, "chaos:voteConfirmed", data => data.dramaEventId === ballot.data.dramaEventId && data.vote === "FORGIVE");
+        await Promise.all([
+          expect(page.getByText(/تم التصويت!/)).toBeVisible(),
+          expect(peer.getByRole("button", { name: /سامح|خفض النقاط/ })).toHaveCount(0),
+          expect(watcher.getByRole("button", { name: /سامح|خفض النقاط/ })).toHaveCount(0),
+        ]);
         const syncCount = host.events.filter(event => event.name === "game:stateSync").length;
         await page.reload();
         await expect.poll(() => host.events.filter(event => event.name === "game:stateSync").length).toBeGreaterThan(syncCount);
         const latest = host.events.filter(event => event.name === "game:stateSync").at(-1)!;
         expect(latest.data.room.selectedAnswer).toBe(0);
-        expect(latest.data.room.chaos.votingSession.hasVoted).toBe(true);
+        if (latest.data.room.chaos.votingSession) {
+          expect(latest.data.room.chaos.votingSession.hasVoted).toBe(true);
+        } else {
+          expect(latest.at).toBeGreaterThanOrEqual(ballot.at + ballot.data.duration - 250);
+        }
         await expect(page.locator('[data-chaos-answer="0"]')).toBeDisabled();
-        const settled = await received(host.events, "chaos:votingComplete", data => data.dramaEventId === ballot.data.dramaEventId);
+        const settled = await received(audience.events, "chaos:votingComplete", data => data.dramaEventId === ballot.data.dramaEventId);
         ballotDuration = settled.at - ballot.at;
         expect(ballotDuration).toBeGreaterThanOrEqual(4500);
         expect(ballotDuration).toBeLessThan(15000);
@@ -193,6 +204,28 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
       expect(result.correctAnswers).toBe(reveals.filter(event => event.data.correct).length);
       expect(result.score).toBe(reveals.at(-1)!.data.newScore);
     }
+    phase = "spectator final standings and reconnect";
+    const publicStandings = watcher.locator('section[aria-labelledby="spectator-standings"] li');
+    const assertStandings = async () => {
+      await expect(watcher).toHaveURL(`${baseURL}/game/${room.gameId}?spectate=true`);
+      await expect(watcher.getByRole("heading", { name: "انتهت المعركة" })).toBeVisible();
+      await expect(publicStandings).toHaveCount(saved.results.length);
+      for (const [index, result] of [...saved.results].sort((a, b) => a.rank - b.rank).entries()) {
+        const row = publicStandings.nth(index);
+        await expect(row.getByText(result.username, { exact: true })).toBeVisible();
+        await expect(row.locator("strong").last()).toHaveText(result.score.toLocaleString("ar"));
+      }
+      await expect(watcher.getByRole("link", { name: "شاهد معركة أخرى" })).toHaveAttribute("href", "/spectate");
+      await overflow(watcher);
+    };
+    await assertStandings();
+    await watcher.reload();
+    await assertStandings();
+    expect(spectatorResultRequests).toEqual([]);
+    const audienceImage = await watcher.screenshot({ fullPage: true, scale: "css" });
+    await testInfo.attach("Chaos Arabic spectator standings", { body: audienceImage, contentType: "image/png" });
+    if (artifactDir) await writeFile(join(artifactDir, "chaos-live-spectator-standings-320.png"), audienceImage);
+    phase = "player saved standings after reload";
     await page.reload();
     await expect(page.getByRole("heading", { name: /^الترتيب النهائي/ })).toBeVisible();
     for (const result of saved.results) {
@@ -202,7 +235,7 @@ test("finishes a real Arabic Chaos match with host ballot, power, spectator and 
     await overflow(page);
     const standingsImage = await page.screenshot({ fullPage: true, scale: "css" });
     await testInfo.attach("Chaos Arabic saved standings", { body: standingsImage, contentType: "image/png" });
-    const proof = JSON.stringify({ gameId: room.gameId, ballotDuration, dramaTrigger,
+    const proof = JSON.stringify({ gameId: room.gameId, ballotDuration, dramaTrigger, spectatorRows: await publicStandings.count(), spectatorResultRequests,
       results: saved.results.map(({ username, score, totalAnswers, correctAnswers }: any) => ({ username, score, totalAnswers, correctAnswers })) }, null, 2);
     await testInfo.attach("Chaos measured match", { body: Buffer.from(proof), contentType: "application/json" });
     if (artifactDir) {

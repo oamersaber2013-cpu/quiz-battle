@@ -98,6 +98,74 @@ describe("Socket.IO transport", () => {
     expect(typeof (await join(client)).serverNow).toBe("number");
   });
 
+  it("keeps a player's remaining tab connected and frees the lobby seat on its final explicit exit", async () => {
+    game.status = GameStatus.Lobby;
+    game.maxPlayers = 2;
+    const host = await connect("host");
+    await join(host);
+    const tab = await connect("player");
+    const otherTab = await connect("player");
+    await join(tab);
+    await join(otherTab);
+    tab.emit("game:leave", { gameId: game.gameId });
+    await new Promise<void>(resolve => tab.emit("clock:sync", resolve));
+    expect(game.players.player.isConnected).toBe(true);
+    const departed = once(host, "game:playerLeft");
+    otherTab.emit("game:leave", { gameId: game.gameId });
+    await departed;
+    expect(game.players.player).toBeUndefined();
+    await join(await connect("replacement"));
+    expect(Object.keys(game.players).sort()).toEqual(["host", "replacement"]);
+  });
+
+  it("counts a spectator across tabs once and announces departure after their last tab leaves", async () => {
+    const host = await connect("host");
+    await join(host);
+    const first = await connect("observer");
+    const second = await connect("observer");
+    const joined = jest.fn();
+    const left = jest.fn();
+    host.on("game:spectatorJoined", joined);
+    host.on("game:spectatorLeft", left);
+    for (const tab of [first, second]) {
+      const ack = await new Promise<any>(resolve => tab.emit("game:spectate", { gameId: game.gameId }, resolve));
+      expect(ack.success).toBe(true);
+    }
+    first.emit("game:leave", { gameId: game.gameId });
+    await new Promise<void>(resolve => first.emit("clock:sync", resolve));
+    const departed = once(host, "game:spectatorLeft");
+    second.emit("game:leave", { gameId: game.gameId });
+    expect(await departed).toEqual({ spectatorId: "observer", spectatorCount: 0 });
+    expect(joined.mock.calls).toEqual([[{ spectatorId: "observer", spectatorCount: 1 }]]);
+    expect(left).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks only the last disconnected player tab offline and restores its active match score on rejoin", async () => {
+    const host = await connect("host");
+    await join(host);
+    const participant = await connect("player");
+    await join(participant);
+    game.players.player.score = 450;
+    const serverSocket = io.sockets.sockets.get(participant.id!)!;
+    const closed = new Promise<void>(resolve => serverSocket.once("disconnect", () => resolve()));
+    participant.disconnect();
+    await closed;
+    expect(game.players.player).toMatchObject({ isConnected: false, score: 450 });
+    const restored = await join(await connect("player"));
+    expect(restored.players.find((entry: any) => entry.userId === "player")).toMatchObject({ isConnected: true, score: 450 });
+  });
+
+  it("unsubscribes the previous room when one browser joins a different game", async () => {
+    const second = { ...game, gameId: "second-room", status: GameStatus.Lobby, players: {} };
+    (getActiveGame as jest.Mock).mockImplementation(id => id === game.gameId ? game : id === second.gameId ? second : undefined);
+    const player = await connect("player");
+    await join(player);
+    const ack = await new Promise<any>(resolve => player.emit("game:join", { gameId: second.gameId }, resolve));
+    expect(ack.success).toBe(true);
+    expect(io.sockets.sockets.get(player.id!)!.rooms.has(game.gameId)).toBe(false);
+    expect(game.players.player.isConnected).toBe(false);
+  });
+
   it("rejoins a signed guest on a new connection and restores only their answer", async () => {
     const first = await connect("player");
     const initial = await join(first);

@@ -380,6 +380,9 @@ export interface ConquestClientState {
     targetTerritoryId: string;
     isAttackingFort: boolean;
     question: ConquestDuelQuestion;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
+    selectedAnswer?: number | null;
     attackerAnswered: boolean;
     defenderAnswered: boolean;
     consecutiveCorrect: number;
@@ -387,6 +390,8 @@ export interface ConquestClientState {
   rebuildSession: {
     playerId: string;
     question: ConquestDuelQuestion;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
     answered: boolean;
   } | null;
 }
@@ -478,7 +483,7 @@ export interface ServerToClientEvents {
     room: SyncedGameRoom;
   }) => void;
   "game:playerJoined": (data: { player: PlayerState }) => void;
-  "game:playerLeft": (data: { userId: string }) => void;
+  "game:playerLeft": (data: { userId: string; retained?: boolean }) => void;
   // PowerUp selection phase
   "game:powerUpSelectStart": (data: {
     availablePowerUps: PowerUpType[];

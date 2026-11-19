@@ -388,6 +388,14 @@ export const useGameStore = create<GameStore>()(
 
       setConquestState: (nextState) => set((state) => {
         synchronizeServerClock(nextState?.serverNow);
+        const previousBattle = state.conquestState?.currentBattle;
+        const nextBattle = nextState?.currentBattle;
+        if (nextState && nextBattle && previousBattle && nextBattle.selectedAnswer === undefined
+            && previousBattle.selectedAnswer != null && previousBattle.attackerId === nextBattle.attackerId
+            && previousBattle.defenderId === nextBattle.defenderId && previousBattle.question.id === nextBattle.question.id
+            && previousBattle.consecutiveCorrect === nextBattle.consecutiveCorrect && previousBattle.questionStartedAt === nextBattle.questionStartedAt) {
+          return { conquestState: { ...nextState, currentBattle: { ...nextBattle, selectedAnswer: previousBattle.selectedAnswer } } };
+        }
         const previousDraft = state.conquestState?.draftPhase;
         const nextDraft = nextState?.draftPhase;
         const sameQuestion = previousDraft && nextDraft

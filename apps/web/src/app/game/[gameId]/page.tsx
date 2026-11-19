@@ -3,6 +3,7 @@ import { getServerTime } from "@/lib/gameClock";
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { GameMode, GameStatus, PowerUpType, QuestionType, getRandomQuote, SubmittedAnswer } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { emitAnswer, getSocket, emitInvasionAnswer } from "@/lib/socket";
@@ -100,6 +101,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
     questionStartedAt,
     timeWarpBonusSeconds,
     lastAnswerResult,
+    finalResults,
     setTimeLeft,
     selectAnswer,
     invasionState,
@@ -155,7 +157,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
       return;
     }
     if (status === GameStatus.Ended) {
-      router.push(`/results/${gameId}`);
+      if (!isSpectating) router.replace(`/results/${gameId}`);
       return;
     }
 
@@ -247,6 +249,35 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
     );
   }
 
+  if (isSpectating && status === GameStatus.Ended) {
+    const standings = [...finalResults].sort((a, b) => a.rank - b.rank);
+    const title = isRTL ? "الترتيب النهائي" : "Final Standings";
+    const scoreUnit = mode === GameMode.Conquest ? (isRTL ? "أقاليم" : "territories") : (isRTL ? "نقطة" : "pts");
+    return (
+      <main className={`${styles.page} ${themeClass}`} dir={isRTL ? "rtl" : "ltr"}>
+        <div className={styles.frame}>
+          <BattleHeader language={language} stage="results" />
+          <div className={styles.resultsLayout}>
+            <section className={styles.surface} aria-labelledby="spectator-battle-ended">
+              <h1 id="spectator-battle-ended" className={styles.heading}>{isRTL ? "انتهت المعركة" : "Battle finished"}</h1>
+              <Link className="btn btn-primary" href="/spectate">{isRTL ? "شاهد معركة أخرى" : "Watch another battle"}</Link>
+            </section>
+            <section aria-labelledby="spectator-standings">
+              <h2 id="spectator-standings" className={styles.sectionHeading}>{title}</h2>
+              {standings.length ? <ol className={styles.standings} aria-labelledby="spectator-standings">
+                {standings.map(player => <li key={player.userId} className={styles.standing}>
+                  <span className={styles.rank}>{player.rank.toLocaleString(language)}</span>
+                  <strong className={styles.playerName}><bdi>{player.username}</bdi></strong>
+                  <span className={styles.standingScore}><strong>{player.score.toLocaleString(language)}</strong><small>{scoreUnit}</small></span>
+                </li>)}
+              </ol> : <p role="status">{isRTL ? "لم يصل الترتيب النهائي لهذه المعركة." : "Final standings are unavailable for this battle."}</p>}
+            </section>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   // Show power-up selection only when status is PowerUpSelect AND selection is active
   if (status === GameStatus.PowerUpSelect) {
     return (
@@ -273,7 +304,7 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
           {isSpectating && <p className="glass-card p-3 text-center">{T.spectator[language]}</p>}
           {invasionState
             ? <InvasionGame onAnswer={handleAnswer} isSpectating={isSpectating} />
-            : <ConquestGame />}
+            : <ConquestGame isSpectating={isSpectating} />}
           </div><aside className={styles.sideRail}><ChatWindow gameId={gameId} /></aside>
         </div>
       </main>
@@ -315,9 +346,9 @@ function GamePageContent({ connection }: { connection: ReturnType<typeof useGame
           </div>
 
           <div style={{ textAlign: isRTL ? "left" : "right" }}>
-            <div className="text-muted text-sm">{T.yourScore[language]}</div>
+            <div className="text-muted text-sm">{isSpectating ? (isRTL ? "اللاعبون" : "Players") : T.yourScore[language]}</div>
             <div className="font-bold text-xl" style={{ color: "var(--clr-primary)" }}>
-              {currentPlayer?.score?.toLocaleString() || 0}
+              {isSpectating ? players.length.toLocaleString(language) : (currentPlayer?.score ?? 0).toLocaleString(language)}
             </div>
           </div>
         </div>

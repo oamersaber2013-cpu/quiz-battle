@@ -16,10 +16,10 @@ export default function StatsPage() {
   const date = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
   return <AccountShell title={ar ? "إحصائيات اللاعب" : "Player statistics"} active="stats">
     {ready && !signedIn ? <AccountState title={ar ? "ابدأ قصتك في المعركة" : "Start your arena story"}>
-      <p>{ar ? "ادخل اللعبة لعرض إحصائياتك." : "Enter the game to see your statistics."}</p><div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "العب الآن" : "Play now"}</Link><Link href="/login" className={styles.secondary}>{ar ? "تسجيل الدخول" : "Sign in"}</Link></div>
+      <p>{ar ? "ادخل اللعبة لعرض إحصائياتك." : "Enter the game to see your statistics."}</p><div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "العب الآن" : "Play now"}</Link><Link href="/login?returnTo=%2Fstats" className={styles.secondary}>{ar ? "تسجيل الدخول" : "Sign in"}</Link></div>
     </AccountState> : failed ? <AccountState error title={needsSignIn ? (ar ? "سجّل الدخول مجدداً" : "Sign in again") : (ar ? "تعذر تحميل الإحصائيات" : "Statistics could not be loaded")}>
       <p>{needsSignIn ? (ar ? "انتهت صلاحية جلستك. سجّل الدخول لعرض نتائجك." : "Your session has expired. Sign in to view your results.") : (ar ? "حاول مجدداً. ستبقى نتائجك المحفوظة متاحة عند استعادة الاتصال." : "Try again. Your saved results will be available when your connection returns.")}</p>
-      <div className={styles.actions}>{needsSignIn ? <Link href="/login" className={styles.primary}>{ar ? "تسجيل الدخول" : "Sign in"}</Link> : <button className={styles.secondary} onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button>}</div>
+      <div className={styles.actions}>{needsSignIn ? <Link href="/login?returnTo=%2Fstats" className={styles.primary}>{ar ? "تسجيل الدخول" : "Sign in"}</Link> : <button className={styles.secondary} onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button>}</div>
     </AccountState> : !stats ? <AccountState loading title={ar ? "جارٍ تحميل الإحصائيات…" : "Loading statistics…"} /> : <div className={styles.stack}>
       <section className={styles.panel} aria-labelledby="performance-heading"><div className={styles.sectionHeader} style={{ marginTop: 0 }}><h2 id="performance-heading"><bdi>{username}</bdi></h2><span className={styles.badge}>{ar ? "المعارك المكتملة فقط" : "Completed matches only"}</span></div>
         <dl className={styles.metrics}>{[

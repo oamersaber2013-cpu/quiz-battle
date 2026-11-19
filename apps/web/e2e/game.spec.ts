@@ -82,8 +82,8 @@ test("joins by keyboard and announces an invalid room code", async ({ page }) =>
   const lookup = page.waitForResponse((response) => response.url().endsWith("/api/games/join/AB12CD"));
   await code.press("Enter");
   expect((await lookup).status()).toBe(404);
-  const savedName = await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage") || "{}").state.username);
-  expect(savedName).toBe("Keyboard Gues_ab12ef");
+  await expect(page.getByRole("textbox", { name: "Enter your warrior name" })).toHaveValue("Keyboard Guest");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage") || "{}").state?.userId)).toBeFalsy();
   const joinError = page.locator("main").getByRole("alert");
   await expect(joinError).toHaveText("Invalid join code");
   await expect(code).toHaveAttribute("aria-invalid", "true");

@@ -32,7 +32,7 @@ export function useGameConnection(gameId: string, isSpectating: boolean) {
     }
 
     const socket = connectSocket(userId, username, token || undefined, isGuest);
-    return subscribeGameRoom(socket, gameId, isSpectating, {
+    const unsubscribe = subscribeGameRoom(socket, gameId, isSpectating, {
       onJoining: () => { setJoining(true); setConnectionError(false); setPasswordPending(true); },
       onJoined: () => {
         passwordRef.current = undefined;
@@ -65,6 +65,15 @@ export function useGameConnection(gameId: string, isSpectating: boolean) {
         router.replace("/");
       },
     }, { password: passwordRef.current });
+    return () => {
+      unsubscribe();
+      // The lobby and battle share a membership. Leaving both routes releases
+      // the seat without turning the lobby-to-game handoff into a departure.
+      const path = window.location.pathname.replace(/\/$/, "");
+      if (socket.connected && path !== `/lobby/${gameId}` && path !== `/game/${gameId}`) {
+        socket.emit("game:leave", { gameId });
+      }
+    };
   }, [gameId, isSpectating, userId, username, token, isGuest, hydrated, router, attempt]);
 
   const submitPassword = (password: string) => {

@@ -331,7 +331,8 @@ async function runRounds(
     while (true) {
       const now = Date.now();
       const pendingPlayers = Object.values(game.players).filter((player) => {
-        if (player.isEliminated || !player.isConnected) return false;
+        // A participant can reconnect and answer until their own deadline.
+        if (player.isEliminated) return false;
         if (game.answersThisRound[player.userId]) return false;
         return now < getPlayerAnswerDeadline(game, player.userId, q);
       });

@@ -16,7 +16,7 @@ test("opens a fresh Arabic invitation and explains an expired code without losin
   await page.goto("/?join=%E2%80%8Fab12cd%20&lang=ar");
   const code = page.getByRole("textbox", { name: "كود الانضمام", exact: true });
   await expect(code).toHaveValue("AB12CD");
-  await expect(code).toBeFocused();
+  await expect(page.getByRole("textbox", { name: "ادخل اسمك", exact: true })).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute("lang", "ar");
   await expect(page.locator("main")).toHaveAttribute("dir", "rtl");
   expect(guestRequests).toBe(0);
@@ -25,10 +25,35 @@ test("opens a fresh Arabic invitation and explains an expired code without losin
   await expect(page.locator("main").getByRole("alert")).toHaveText("رمز الغرفة غير صحيح");
   await expect(code).toHaveValue("AB12CD");
   await expect(code).toHaveAttribute("aria-invalid", "true");
-  expect(guestRequests).toBe(1);
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage") || "{}").state.username)).toBe("زائر_12");
-  await code.fill("AB12CE");
+  expect(guestRequests).toBe(0);
+  await expect(page.getByRole("textbox", { name: "ادخل اسمك", exact: true })).toHaveValue("زائر الجوال");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage") || "{}").state?.userId)).toBeFalsy();
+  await code.fill("ab١٢ce");
+  await expect(code).toHaveValue("AB12CE");
   await expect(page.locator("main").getByRole("alert")).toHaveCount(0);
+});
+
+test("keeps immediate typing in the name field when an invitation hydrates", async ({ page }) => {
+  await page.goto("/?join=AB12CD&lang=ar", { waitUntil: "domcontentloaded" });
+  await page.locator("#player-name").fill("ضيف الجوال");
+  await expect(page.locator("form #player-name")).toHaveValue("ضيف الجوال");
+  await expect(page.getByRole("textbox", { name: "كود الانضمام", exact: true })).toHaveValue("AB12CD");
+  await expect(page.getByRole("button", { name: "انضم إلى الغرفة", exact: true })).toBeEnabled();
+});
+
+test("explains an unsupported guest name before sending a join request", async ({ page }) => {
+  const requests: string[] = [];
+  page.on("request", request => { if (/\/api\/(auth\/guest|games\/join\/)/.test(request.url())) requests.push(request.url()); });
+  await page.goto("/?join=AB12CD&lang=ar");
+  const name = page.getByRole("textbox", { name: "ادخل اسمك", exact: true });
+  await name.fill("Omar!@");
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByRole("button", { name: "انضم إلى الغرفة", exact: true })).toBeDisabled();
+  await expect(page.locator("#player-name-help")).toContainText("حروف");
+  await name.fill("عُمَر-7");
+  await expect(name).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByRole("button", { name: "انضم إلى الغرفة", exact: true })).toBeEnabled();
+  expect(requests).toEqual([]);
 });
 
 test("keeps an older direct invitation and spectator intent on a fresh browser", async ({ page }) => {
@@ -75,4 +100,7 @@ test("preserves an invitation through registration links and a successful sign-i
   await expect(page).toHaveURL(/\/\?join=AB12CD&lang=en$/);
   await expect(page.getByRole("textbox", { name: "Join Code", exact: true })).toHaveValue("AB12CD");
   await expect(page.getByRole("link", { name: "Profile", exact: true })).toBeVisible();
+  const identity = page.locator("#player-name");
+  await expect(identity).not.toBeEditable();
+  await expect(identity).toHaveValue("SignedPlayer");
 });

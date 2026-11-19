@@ -431,6 +431,18 @@ describe("restoring an active question", () => {
   });
 });
 
+it("keeps a disconnected participant's score until their seat is released", () => {
+  const socket = connectSocket("player-1", "Host", "test-token", true) as unknown as FakeSocket;
+  const peer = { userId: "peer", username: "Peer", score: 450, rank: 1, streak: 2, isEliminated: false, isConnected: true, powerUpInventory: [] };
+  useGameStore.getState().syncRoom(room({ players: [peer] }));
+  socket.dispatch("game:playerLeft", { userId: "peer", retained: true });
+  expect(useGameStore.getState().players).toEqual([{ ...peer, isConnected: false }]);
+  socket.dispatch("game:playerJoined", { player: peer });
+  expect(useGameStore.getState().players).toEqual([peer]);
+  socket.dispatch("game:playerLeft", { userId: "peer" });
+  expect(useGameStore.getState().players).toEqual([]);
+});
+
 describe("answer wire payloads", () => {
   it.each([{ answer: "الدوحة" }, { answer: [0, 2] }, { answer: [2, 0, 1] }])("emits the complete answer and no numeric fallback: %j", ({ answer }) => {
     const socket = connectSocket("player-1", "محارب", "test-token", true) as unknown as FakeSocket;

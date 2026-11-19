@@ -1,4 +1,5 @@
 import { Server } from "socket.io";
+import { trackRoomPresence } from "../lib/roomPresence";
 import { roomConnections } from "../lib/roomConnections";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "../lib/jwtConfig";
@@ -43,7 +44,7 @@ import {
 } from "../lib/invasionOrchestrator";
 import { GameMode } from "@quiz-battle/shared";
 import { fillWithBots, getBotInfo } from "../lib/aiBots";
-import { authorizeRoomAccess, revokeRoomAccess } from "../lib/roomAccess";
+import { authorizeRoomAccess } from "../lib/roomAccess";
 import { getChaosV2, initializeChaosV2, recordDramaV2, type ChaosPersonality } from "../lib/chaosEngineV2";
 import { getChaosClientSnapshot } from "../lib/chaosSnapshot";
 import { castChaosVote, startChaosVoting } from "../lib/chaosVoting";
@@ -116,6 +117,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
   io.on("connection", (socket) => {
     const userId = socket.data.userId as string;
     const username = socket.data.username as string;
+    const presence = trackRoomPresence(io, socket);
     const canParticipate = (gameId: string) => {
       const game = getActiveGame(gameId);
       return !!(socket.rooms.has(gameId) && !socket.rooms.has(`${gameId}_spectators`) && game?.players[userId] && !game.players[userId].isEliminated);
@@ -163,7 +165,9 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
           cb?.({ success: false, error: "Game not found" });
           return;
         }
+        const stillCurrent = presence.begin(gameId);
         const access = await authorizeRoomAccess(activeGame, userId, password);
+        if (!stillCurrent()) { cb?.({ success: false, error: "Room entry was cancelled" }); return; }
         if (!access.success) { cb?.(access); return; }
         if (getActiveGame(gameId) !== activeGame) { cb?.({ success: false, error: "Game not found" }); return; }
 
@@ -172,7 +176,6 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
           return;
         }
 
-        const config = GAME_MODE_CONFIG[activeGame.mode];
         if (Object.keys(activeGame.players).length >= activeGame.maxPlayers && !activeGame.players[userId]) {
           cb?.({ success: false, error: "Game is full" });
           return;
@@ -194,8 +197,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
           activeGame.players[userId].isConnected = true;
         }
 
-        await socket.join(gameId);
-        if (socket.rooms.has(`${gameId}_spectators`)) await socket.leave(`${gameId}_spectators`);
+        const arrived = await presence.enter(gameId, false);
 
         // Sync state to new player
         socket.emit("game:stateSync", {
@@ -212,7 +214,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         syncInvasion(gameId);
 
         // Notify others
-        socket.to(gameId).emit("game:playerJoined", {
+        if (arrived) socket.to(gameId).emit("game:playerJoined", {
           player: activeGame.players[userId],
         });
 
@@ -404,7 +406,9 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
         else socket.emit("game:error", { message: "Game not found" });
         return;
       }
+      const stillCurrent = presence.begin(gameId);
       const access = await authorizeRoomAccess(game, userId, password);
+      if (!stillCurrent()) { cb?.({ success: false, error: "Room entry was cancelled" }); return; }
       if (!access.success) {
         if (cb) cb(access);
         else socket.emit("game:error", { message: access.error || "Room password required" });
@@ -412,15 +416,7 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
       }
       if (getActiveGame(gameId) !== game) { cb?.({ success: false, error: "Game not found" }); return; }
 
-      await socket.join(gameId);
-      await socket.join(`${gameId}_spectators`);
-
-      // Count spectators
-      const spectatorRoom = io.sockets.adapter.rooms.get(`${gameId}_spectators`);
-      const spectatorCount = spectatorRoom?.size || 1;
-
-      // Notify room
-      io.to(gameId).emit("game:spectatorJoined", { spectatorId: userId, spectatorCount });
+      await presence.enter(gameId, true);
 
       // Send current game state (exclude sensitive round/question state)
       socket.emit("game:stateSync", {
@@ -435,20 +431,6 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
       }
       syncInvasion(gameId);
       cb?.({ success: true });
-    });
-
-    // ─── Leave Game ──────────────────────────────────────────
-    socket.on("game:leave", async ({ gameId }) => {
-      if (!socket.rooms.has(gameId)) return;
-      const game = getActiveGame(gameId);
-      const isSpectating = socket.rooms.has(`${gameId}_spectators`);
-      if (!isSpectating && game?.players[userId]) {
-        game.players[userId].isConnected = false;
-      }
-      socket.leave(gameId);
-      socket.leave(`${gameId}_spectators`);
-      revokeRoomAccess(gameId, userId);
-      if (!isSpectating) socket.to(gameId).emit("game:playerLeft", { userId });
     });
 
     // ─── Conquest Handlers ────────────────────────────────────────
@@ -641,12 +623,5 @@ export function registerSocketHandlers(io: TypedServer, redis: SafeRedis) {
       socket.emit("chaos:advantages", advantages);
     });
 
-    // ─── Disconnect ──────────────────────────────────────────────
-    socket.on("disconnect", async () => {
-      console.log(`[Socket] Disconnected: ${socket.id}`);
-      console.log(`🔌 Disconnected: ${username} (${userId})`);
-      // Mark player as disconnected in any active game
-      // Actual cleanup handled by game orchestrator TTL
-    });
   });
 }

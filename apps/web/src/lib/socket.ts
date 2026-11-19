@@ -163,14 +163,15 @@ function registerHandlers(s: TypedSocket) {
     }
   });
 
-  s.on("game:playerLeft", ({ userId }) => {
+  s.on("game:playerLeft", ({ userId, retained }) => {
     const gs = useGameStore.getState();
     const player = gs.players.find(p => p.userId === userId);
-    gs.removePlayer(userId);
-    if (player && userId !== gs.userId) {
+    if (retained) gs.updatePlayer(userId, { isConnected: false });
+    else gs.removePlayer(userId);
+    if (player?.isConnected && userId !== gs.userId) {
       const msg = gs.language === "ar"
-        ? `${player.username} غادر المعركة`
-        : `${player.username} left the battle`;
+        ? (retained ? `انقطع اتصال ${player.username}` : `${player.username} غادر المعركة`)
+        : (retained ? `${player.username} disconnected` : `${player.username} left the battle`);
       gs.addToast("info", msg);
     }
   });

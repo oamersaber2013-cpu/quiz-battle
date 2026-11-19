@@ -91,6 +91,58 @@ test("recovers statistics from an error and shows real history and account balan
   await expect(page.locator('a[href="/store"]')).toHaveCount(0);
 });
 
+test("leaving an in-flight sign-in keeps the guest session after the response arrives", async ({ page }) => {
+  await identity(page, "en");
+  let releaseResponse!: () => void;
+  const delayed = new Promise<void>(resolve => { releaseResponse = resolve; });
+  await page.route("**/api/auth/login", async route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    await delayed;
+    await route.fulfill({ headers: cors, json: { ...player, isGuest: false } });
+  });
+  await page.goto("/login");
+  await page.getByLabel("Email address").fill("player@example.invalid");
+  await page.getByLabel("Password", { exact: true }).fill("example-pass");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Please wait…" })).toBeDisabled();
+  await page.getByRole("link", { name: "Create an account" }).click();
+  await expect(page.getByRole("heading", { name: "Create your account", exact: true })).toBeVisible();
+  const completed = page.waitForEvent("requestfinished", { predicate: req => req.method() === "POST" && req.url().endsWith("/api/auth/login"), timeout: 2000 }).catch(() => undefined);
+  releaseResponse();
+  await completed;
+  await expect(page).toHaveURL(/\/register$/);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage")!).state.token)).toBeNull();
+});
+
+for (const destination of ["/profile", "/stats"]) {
+  test(`returns to ${destination} after signing in from the Arabic account page`, async ({ page }) => {
+    await identity(page, "ar");
+    await page.route("**/api/auth/login", route => route.fulfill({ headers: cors, json: { ...player, isGuest: false } }));
+    await page.route("**/api/user/stats", route => route.fulfill({ headers: cors, json: statistics }));
+    await page.goto(destination);
+    await page.getByRole("link", { name: "تسجيل الدخول", exact: true }).press("Enter");
+    await page.getByLabel("البريد الإلكتروني").fill("player@example.invalid");
+    await page.getByLabel("كلمة المرور", { exact: true }).fill("test-password");
+    await page.getByRole("button", { name: "تسجيل الدخول", exact: true }).press("Enter");
+    await expect(page).toHaveURL(new RegExp(destination + "$"));
+    await expect(page.locator("main")).toHaveAttribute("dir", "rtl");
+    await expect(page.getByRole("heading", { name: player.username })).toBeVisible();
+  });
+}
+
+test("fits a maximum-length warrior name in narrow Arabic statistics", async ({ page }) => {
+  const username = "W".repeat(20);
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.addInitScript(state => localStorage.setItem("quiz-battle-storage", JSON.stringify({ version: 0, state })), {
+    ...player, username, language: "ar",
+  });
+  await page.route("**/api/user/stats", route => route.fulfill({ headers: cors, json: statistics }));
+  await page.goto("/stats");
+  await expect(page.getByRole("heading", { name: username })).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+});
+
 test("distinguishes an empty match list from a network error and retries guest entry", async ({ page }, testInfo) => {
   await identity(page, "en");
   let games: unknown[] = [];
@@ -109,6 +161,30 @@ test("distinguishes an empty match list from a network error and retries guest e
   await page.getByRole("button", { name: "Watch Conquest", exact: true }).click();
   await expect(page).toHaveURL(/\/(lobby|game)\/watch-fixture\?spectate=true$/);
   expect(guestRequests).toBe(2);
+});
+
+test("leaving a pending spectator entry keeps the player on Home", async ({ page }) => {
+  await identity(page, "en");
+  await page.route("**/api/games/active", route => route.fulfill({ headers: cors, json: [{
+    gameId: "waiting-match", mode: "survival", difficulty: "novice", status: "question", playerCount: 2, maxPlayers: 8, currentRound: 1, totalRounds: 3,
+  }] }));
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/auth/guest", async route => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    await delayed;
+    await route.fulfill({ headers: cors, json: player });
+  });
+  await page.goto("/spectate");
+  await page.getByRole("button", { name: "Watch Survival" }).click();
+  await expect(page.getByRole("button", { name: "Watch Survival" })).toBeDisabled();
+  await page.getByRole("link", { name: "Home — Sword of Knowledge" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  const completed = page.waitForEvent("requestfinished", { predicate: req => req.method() === "POST" && req.url().endsWith("/api/auth/guest"), timeout: 2000 }).catch(() => undefined);
+  release();
+  await completed;
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("quiz-battle-storage")!).state.token)).toBeNull();
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("does not claim a verified purchase from a checkout return URL", async ({ page }, testInfo) => {

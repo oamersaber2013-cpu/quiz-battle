@@ -27,7 +27,7 @@ export default function SpectatePage() {
   const [joining, setJoining] = useState<string | null>(null);
   const [guestFailed, setGuestFailed] = useState(false);
   const request = useRef<AbortController | null>(null);
-  const joiningRef = useRef(false);
+  const joiningRef = useRef<AbortController | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (guestFailed) errorRef.current?.focus(); }, [guestFailed]);
   const fetchGames = useCallback(async () => {
@@ -47,23 +47,39 @@ export default function SpectatePage() {
   useEffect(() => {
     void fetchGames();
     const interval = setInterval(() => void fetchGames(), 10000);
-    return () => { clearInterval(interval); request.current?.abort(); request.current = null; };
+    return () => {
+      clearInterval(interval);
+      request.current?.abort();
+      request.current = null;
+      joiningRef.current?.abort();
+      joiningRef.current = null;
+    };
   }, [fetchGames]);
   async function spectate(gameId: string) {
     if (joiningRef.current) return;
-    joiningRef.current = true; setJoining(gameId); setGuestFailed(false);
+    const controller = new AbortController();
+    joiningRef.current = controller;
+    setJoining(gameId);
+    setGuestFailed(false);
     try {
       const store = useGameStore.getState();
       if (!store.userId || !store.token) {
-        const response = await fetch(`${getApiOrigin()}/api/auth/guest`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+        const response = await fetch(`${getApiOrigin()}/api/auth/guest`, { method: "POST", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
         if (!response.ok) throw new Error("Guest unavailable");
         const guest = await response.json();
+        if (controller.signal.aborted) return;
         if (typeof guest.userId !== "string" || typeof guest.token !== "string") throw new Error("Invalid identity");
         store.setAuth({ ...guest, isGuest: true });
       }
       router.push(`/lobby/${gameId}?spectate=true`);
-    } catch { setGuestFailed(true); }
-    finally { joiningRef.current = false; setJoining(null); }
+    } catch {
+      if (!controller.signal.aborted) setGuestFailed(true);
+    } finally {
+      if (joiningRef.current === controller) {
+        joiningRef.current = null;
+        setJoining(null);
+      }
+    }
   }
   const visible = games.filter(game => game.status !== GameStatus.Ended);
   const sections = [[ar ? "معارك جارية" : "In progress", visible.filter(game => game.status !== GameStatus.Lobby)], [ar ? "بانتظار البدء" : "Waiting to start", visible.filter(game => game.status === GameStatus.Lobby)]] as const;

@@ -67,6 +67,25 @@ describe("Survival completion", () => {
     }
   });
 
+  it("keeps an unanswered round open for a disconnected player until their original deadline", async () => {
+    game.totalRounds = 1;
+    jest.mocked(fetchQuestions).mockResolvedValue([{
+      id: "reconnect-question", category: "general", difficulty: Difficulty.Scholar, type: QuestionType.MultipleChoice,
+      text: "Survival question", options: ["Correct", "Wrong"], correctIndex: 0, timeLimit: 3,
+    }]);
+    running = startGame(io, redis, game.gameId);
+    await jest.advanceTimersByTimeAsync(5500);
+    game.players.guest.isConnected = false;
+    await handlePlayerAnswer(game, io, redis, "host", "reconnect-question", 0, Date.now());
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(game.status).toBe(GameStatus.Question);
+    game.players.guest.isConnected = true;
+    await handlePlayerAnswer(game, io, redis, "guest", "reconnect-question", 0, Date.now());
+    expect(game.answersThisRound.guest).toBeDefined();
+    await jest.advanceTimersByTimeAsync(6000);
+    expect(game.players.guest.isEliminated).toBe(false);
+  });
+
   it("finishes when elimination leaves one survivor from a multiplayer start", async () => {
     running = startGame(io, redis, game.gameId);
     await jest.advanceTimersByTimeAsync(5500);

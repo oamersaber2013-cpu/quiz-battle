@@ -3,7 +3,7 @@ jest.mock("../lib/questions", () => ({
 }));
 
 import { Difficulty } from "@quiz-battle/shared";
-import { getConquestState, initConquestGame, processDraftRound, recordDraftAnswer, removeConquestGame, safeConquestState, selectDraftTerritory, startDraftRound } from "../lib/conquestOrchestrator";
+import { getConquestState, handleAttack, handleDuelAnswer, handleRebuild, handleRebuildAnswer, initConquestGame, processDraftRound, recordDraftAnswer, removeConquestGame, safeConquestState, selectDraftTerritory, startDraftRound } from "../lib/conquestOrchestrator";
 import { INVASION_GAMES } from "../lib/invasionOrchestrator";
 import { fillWithBots, removeBots } from "../lib/aiBots";
 import { fetchQuestions } from "../lib/questions";
@@ -85,6 +85,40 @@ describe("Conquest territory draft", () => {
     expect(snapshot.draftPhase.question).not.toHaveProperty("correctIndex");
     expect((safeConquestState as any)(state, "guest").draftPhase.selectedAnswer).toBeNull();
     expect(safeConquestState(state).draftPhase).not.toHaveProperty("selectedAnswer");
+  });
+
+  it("restores duel time and only each fighter's own choice, including a fresh clock for tie-breakers", async () => {
+    const state = getConquestState(gameId)!;
+    state.phase = "select_target";
+    const [attacker, defender] = state.turnOrder;
+    expect((await handleAttack(io, gameId, attacker, state.fortTerritoryId[defender])).success).toBe(true);
+    jest.setSystemTime(114000);
+    handleDuelAnswer(io, gameId, attacker, 0);
+    const fighter = safeConquestState(state, attacker).currentBattle;
+    expect(fighter).toMatchObject({ questionStartedAt: 100000, questionEndsAt: 115000, attackerAnswered: true, selectedAnswer: 0 });
+    expect(fighter!.question).not.toHaveProperty("correctIndex");
+    expect(safeConquestState(state, defender).currentBattle).toHaveProperty("selectedAnswer", null);
+    expect(safeConquestState(state, "outsider").currentBattle).not.toHaveProperty("selectedAnswer");
+    expect(safeConquestState(state).currentBattle).not.toHaveProperty("selectedAnswer");
+    handleDuelAnswer(io, gameId, defender, 0);
+    await Promise.resolve();
+    expect(safeConquestState(state, attacker).currentBattle).toMatchObject({ consecutiveCorrect: 1, selectedAnswer: null, questionStartedAt: 114000, questionEndsAt: 129000 });
+    jest.setSystemTime(129000);
+    handleDuelAnswer(io, gameId, attacker, 0);
+    expect(state.currentBattle!.attackerAnswer).toBeNull();
+  });
+
+  it("restores the original rebuild deadline and rejects an answer received at expiry", async () => {
+    const state = getConquestState(gameId)!;
+    state.phase = "select_target";
+    const player = state.turnOrder[0];
+    state.fortHealth[player] = 2;
+    expect((await handleRebuild(io, gameId, player)).success).toBe(true);
+    jest.setSystemTime(114999);
+    expect(safeConquestState(state, player).rebuildSession).toMatchObject({ questionStartedAt: 100000, questionEndsAt: 115000 });
+    jest.setSystemTime(115000);
+    handleRebuildAnswer(io, gameId, player, 0);
+    expect(state.fortHealth[player]).toBe(2);
   });
 
   it("acknowledges the same answer retry without changing its original response time", () => {

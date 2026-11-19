@@ -22,7 +22,7 @@ const PLAYER_COLORS = [
   "#22d3ee",
 ];
 
-export function ConquestGame() {
+export function ConquestGame({ isSpectating = false }: { isSpectating?: boolean } = {}) {
   const { conquestState, gameId, language } = useGameStore();
   if (!conquestState)
     return (
@@ -38,19 +38,20 @@ export function ConquestGame() {
     conquestState.draftPhase?.pickTurnId ?? conquestState.currentTurnIndex;
   return (
     <ConquestBoard
-      key={`${gameId}:${conquestState.phase}:${conquestState.draftPhase?.currentRound}:${questionId}:${turnKey}`}
+      key={`${gameId}:${isSpectating}:${conquestState.phase}:${conquestState.draftPhase?.currentRound}:${questionId}:${turnKey}:${conquestState.currentBattle?.consecutiveCorrect}`}
+      isSpectating={isSpectating}
     />
   );
 }
 
-function ConquestBoard() {
+function ConquestBoard({ isSpectating }: { isSpectating: boolean }) {
   const { conquestState, userId, language, players, gameId, addToast } =
     useGameStore();
   const state = conquestState!;
   const { phase, draftPhase, currentBattle, rebuildSession } = state;
   const isAr = language === "ar";
   const participant =
-    players.some((player) => player.userId === userId) &&
+    !isSpectating && players.some((player) => player.userId === userId) &&
     !state.eliminatedPlayers.includes(userId ?? "");
   const pickerId = draftPhase?.pickOrder[draftPhase.currentPickerIndex];
   const turnPlayerId =
@@ -62,6 +63,7 @@ function ConquestBoard() {
     currentBattle?.attackerId === userId ||
     currentBattle?.defenderId === userId;
   const isRebuilding = rebuildSession?.playerId === userId;
+  const answeringPlayer = participant && (phase === "draft" || isBattling || isRebuilding);
   const question =
     currentBattle?.question ??
     rebuildSession?.question ??
@@ -80,12 +82,9 @@ function ConquestBoard() {
   const active = useRef(true);
   const answerRequestId = useRef(0);
   const requestTimeout = useRef<ReturnType<typeof setTimeout>>();
-  const questionStartedAt =
-    (phase === "draft" ? draftPhase?.questionStartedAt : undefined) ??
-    mountedAt.current;
-  const questionEndsAt =
-    (phase === "draft" ? draftPhase?.questionEndsAt : undefined) ??
-    questionStartedAt + (question?.timeLimit ?? 30) * 1000;
+  const questionPhase = phase === "draft" ? draftPhase : currentBattle ?? rebuildSession;
+  const questionStartedAt = questionPhase?.questionStartedAt ?? mountedAt.current;
+  const questionEndsAt = questionPhase?.questionEndsAt ?? questionStartedAt + (question?.timeLimit ?? 30) * 1000;
   const deadline =
     phase === "draft_selection"
       ? draftPhase?.pickEndsAt
@@ -95,10 +94,8 @@ function ConquestBoard() {
   const secondsLeft = deadline
     ? Math.max(0, Math.ceil((deadline - now) / 1000))
     : null;
-  const selectedAnswer =
-    phase === "draft"
-      ? (draftPhase?.selectedAnswer ?? submission?.index)
-      : submission?.index;
+  const ownChoice = phase === "draft" ? draftPhase?.selectedAnswer : currentBattle?.selectedAnswer;
+  const selectedAnswer = answeringPlayer ? ownChoice ?? submission?.index : undefined;
   const serverAnswered =
     phase === "draft"
       ? draftPhase?.selectedAnswer != null || draftPhase?.answeredAt != null
@@ -107,12 +104,8 @@ function ConquestBoard() {
           ? currentBattle.attackerAnswered
           : currentBattle.defenderAnswered
         : Boolean(isRebuilding && rebuildSession?.answered);
-  const answered = serverAnswered || submission !== null;
-  const canAnswer =
-    participant &&
-    (phase === "draft" || isBattling || isRebuilding) &&
-    !answered &&
-    secondsLeft !== 0;
+  const answered = answeringPlayer && (serverAnswered || submission !== null);
+  const canAnswer = answeringPlayer && !answered && secondsLeft !== 0;
   const colorFor = (id: string) =>
     PLAYER_COLORS[
       Math.max(
@@ -147,7 +140,7 @@ function ConquestBoard() {
     );
 
   function handleAnswer(index: number) {
-    if (!gameId || !question || !canAnswer || answerLocked.current) return;
+    if (!gameId || !question || !canAnswer || answerLocked.current || getServerTime() >= questionEndsAt) return;
     answerLocked.current = true;
     setSubmission({ index, pending: phase === "draft" });
     if (phase === "draft") {
@@ -378,7 +371,7 @@ function ConquestBoard() {
                   ? isAr
                     ? "انتهى الوقت. في انتظار النتيجة..."
                     : "Time is up. Waiting for the result..."
-                  : !participant
+                  : !answeringPlayer
                     ? isAr
                       ? "أنت تشاهد المعركة"
                       : "You are watching the battle"

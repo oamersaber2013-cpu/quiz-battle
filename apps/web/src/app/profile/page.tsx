@@ -22,11 +22,11 @@ export default function ProfilePage() {
     {!ready ? <AccountState title={ar ? "جارٍ تحميل الملف…" : "Loading your profile…"} loading />
       : !userId || !signedIn ? <AccountState title={ar ? "مساحتك تبدأ هنا" : "Your place starts here"}>
         <p>{ar ? "سجّل الدخول لعرض ملفك، أو عد إلى الرئيسية للعب كضيف." : "Sign in to view your profile, or return home to play as a guest."}</p>
-        <div className={styles.actions}><Link className={styles.primary} href="/login">{ar ? "تسجيل الدخول" : "Sign in"}</Link><Link className={styles.secondary} href="/">{ar ? "العب كضيف" : "Play as guest"}</Link></div>
+        <div className={styles.actions}><Link className={styles.primary} href="/login?returnTo=%2Fprofile">{ar ? "تسجيل الدخول" : "Sign in"}</Link><Link className={styles.secondary} href="/">{ar ? "العب كضيف" : "Play as guest"}</Link></div>
       </AccountState> : <>
       {failed && <AccountState error title={needsSignIn ? (ar ? "سجّل الدخول مجدداً" : "Sign in again") : (ar ? "تعذر تحميل إحصائياتك" : "Your statistics could not be loaded")}>
         <p>{needsSignIn ? (ar ? "انتهت صلاحية جلستك. سجّل الدخول لعرض البيانات المحفوظة." : "Your session has expired. Sign in to view your saved data.") : (ar ? "لم تتغير نتائجك المحفوظة. حاول مجدداً عند استعادة الاتصال." : "Your saved results are unchanged. Try again when your connection is available.")}</p>
-        <div className={styles.actions}>{needsSignIn ? <Link className={styles.primary} href="/login">{ar ? "تسجيل الدخول" : "Sign in"}</Link> : <button className={styles.secondary} onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button>}</div>
+        <div className={styles.actions}>{needsSignIn ? <Link className={styles.primary} href="/login?returnTo=%2Fprofile">{ar ? "تسجيل الدخول" : "Sign in"}</Link> : <button className={styles.secondary} onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button>}</div>
       </AccountState>}
       <div className={styles.profileGrid}>
         <section className={styles.panel} aria-labelledby="profile-name">

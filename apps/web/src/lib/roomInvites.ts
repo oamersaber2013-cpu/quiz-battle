@@ -1,5 +1,8 @@
 export function normalizeRoomCode(value: string): string {
-  return value.replace(/[\s\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "").toUpperCase();
+  return value
+    .replace(/[٠-٩]/g, digit => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, digit => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/[\s\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, "").toUpperCase();
 }
 
 export function isRoomCode(value: string): boolean {

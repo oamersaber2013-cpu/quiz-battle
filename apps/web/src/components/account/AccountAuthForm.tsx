@@ -22,22 +22,26 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
-  const [inviteReturnPath, setInviteReturnPath] = useState<string | null>(null);
+  const [returnPath, setReturnPath] = useState<string | null>(null);
   useEffect(() => {
-    const destination = typeof window !== "undefined"
-      ? validateInviteReturnPath(new URLSearchParams(window.location?.search).get("returnTo")) : null;
-    setInviteReturnPath(destination);
-    if (destination) useGameStore.getState().setLanguage(new URLSearchParams(destination.slice(2)).get("lang") as "en" | "ar");
+    const requested = new URLSearchParams(window.location?.search).get("returnTo");
+    const invite = validateInviteReturnPath(requested);
+    setReturnPath(invite || (requested === "/profile" || requested === "/stats" ? requested : null));
+    if (invite) useGameStore.getState().setLanguage(new URLSearchParams(invite.slice(2)).get("lang") as "en" | "ar");
     setReady(true);
   }, [mode]);
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const submitting = useRef(false);
+  const submission = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    submission.current?.abort();
+    submission.current = null;
+  }, [mode]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting.current) return;
+    if (submission.current) return;
     setError(null);
     if (register && !/^[a-zA-Z0-9_\u0600-\u06FF]{3,20}$/.test(username.trim())) {
       setError({ field: "username", message: ar ? "استخدم اسماً من ٣ إلى ٢٠ حرفاً عربياً أو إنجليزياً أو رقماً أو شرطة سفلية، دون مسافات." : "Use 3–20 Arabic or English letters, numbers or underscores, without spaces." });
@@ -47,14 +51,16 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
       setError({ field: "confirmation", message: ar ? "كلمتا المرور غير متطابقتين. أعد كتابة التأكيد." : "Passwords do not match. Check your confirmation." });
       return;
     }
-    submitting.current = true;
+    const controller = new AbortController();
+    submission.current = controller;
     setLoading(true);
     try {
       const response = await fetch(`${getApiOrigin()}/api/auth/${mode}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
         body: JSON.stringify({ email: email.trim(), password, ...(register ? { username: username.trim() } : {}) }),
       });
       const data = await response.json().catch(() => null);
+      if (controller.signal.aborted) return;
       if (!response.ok) {
         const message = response.status === 429
           ? (ar ? "محاولات كثيرة. انتظر قليلاً ثم حاول مجدداً." : "Too many attempts. Wait a moment and try again.")
@@ -72,12 +78,15 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
       setAuth({ ...data, isGuest: false });
       connectSocket(data.userId, data.username, data.token, false);
       addToast("success", ar ? "أهلاً بك في سيف المعرفة." : "Welcome to Sword of Knowledge.");
-      router.push(inviteReturnPath || "/");
+      router.push(returnPath || "/");
     } catch {
+      if (controller.signal.aborted) return;
       setError({ message: ar ? "تعذر الاتصال بالخادم. تحقق من اتصالك وحاول مجدداً." : "We could not reach the server. Check your connection and try again." });
     } finally {
-      submitting.current = false;
-      setLoading(false);
+      if (submission.current === controller) {
+        submission.current = null;
+        setLoading(false);
+      }
     }
   }
 
@@ -125,9 +134,9 @@ export function AccountAuthForm({ mode }: { mode: "login" | "register" }) {
         </form>
         <div className={styles.formFooter}>
           <p>{register ? (ar ? "لديك حساب بالفعل؟" : "Already have an account?") : (ar ? "جديد في سيف المعرفة؟" : "New to Sword of Knowledge?")} {" "}
-            <Link href={`${register ? "/login" : "/register"}${inviteReturnPath ? `?returnTo=${encodeURIComponent(inviteReturnPath)}` : ""}`} className={styles.textLink}>{register ? (ar ? "سجّل الدخول" : "Sign in") : (ar ? "أنشئ حساباً" : "Create an account")}</Link>
+            <Link href={`${register ? "/login" : "/register"}${returnPath ? `?returnTo=${encodeURIComponent(returnPath)}` : ""}`} className={styles.textLink}>{register ? (ar ? "سجّل الدخول" : "Sign in") : (ar ? "أنشئ حساباً" : "Create an account")}</Link>
           </p>
-          <Link href={inviteReturnPath || "/"} className={styles.textLink}>{ar ? "المتابعة كضيف" : "Continue as guest"}</Link>
+          <Link href={returnPath?.startsWith("/?") ? returnPath : "/"} className={styles.textLink}>{ar ? "المتابعة كضيف" : "Continue as guest"}</Link>
         </div>
       </section>
       <aside className={`${styles.panel} ${styles.paper}`}>

@@ -36,6 +36,10 @@ test("restores an Arabic Chaos answer and ballot after a browser reload", async 
   const votes: Array<Parameters<ClientToServerEvents["chaos:vote"]>[0]> = [];
   let phase = GameStatus.Question;
   let score = 100;
+  const results = [
+    { userId, username: "محارب التجربة", score: 320, rank: 1, correctAnswers: 1, totalAnswers: 2, avgAnswerTime: 500, xpEarned: 12 },
+    { userId: "peer", username: "اللاعب الثاني", score: 100, rank: 2, correctAnswers: 0, totalAnswers: 2, avgAnswerTime: 800, xpEarned: 4 },
+  ];
   let watcherContext: Awaited<ReturnType<typeof browser.newContext>> | undefined;
 
   const chaosSnapshot = (viewerId = userId): ChaosClientSnapshot => ({
@@ -67,6 +71,7 @@ test("restores an Arabic Chaos answer and ballot after a browser reload", async 
     answeredAt: viewerId === userId ? answers[0]?.timestamp ?? null : null,
     lastAnswerResult: phase === GameStatus.AnswerReveal && viewerId === userId ? { correct: true, correctIndex: 0 } : null,
     chaos: chaosSnapshot(viewerId),
+    finalResults: phase === GameStatus.Ended ? results : [],
   });
 
   io.use((socket, next) => {
@@ -208,6 +213,23 @@ test("restores an Arabic Chaos answer and ballot after a browser reload", async 
     await expect(watcher.locator(`[data-player-score="${userId}"]`)).toHaveText((320).toLocaleString("ar"));
     expect(await watcher.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (artifactDir) await watcher.screenshot({ path: join(artifactDir, "chaos-spectator-reveal-320.png"), fullPage: true, scale: "css" });
+
+    const savedRequests: string[] = [];
+    watcher.on("request", request => {
+      if (new URL(request.url()).pathname.startsWith("/api/results/")) savedRequests.push(request.url());
+    });
+    phase = GameStatus.Ended;
+    io.emit("game:end", { results, xpAwarded: 12, resultsPersisted: true });
+    const finalStandings = watcher.getByRole("list", { name: "الترتيب النهائي" });
+    await expect(finalStandings.getByRole("listitem")).toHaveCount(2);
+    await expect(finalStandings.getByRole("listitem").first()).toContainText("محارب التجربة");
+    await expect(watcher.getByRole("link", { name: "شاهد معركة أخرى" })).toHaveAttribute("href", "/spectate");
+    await expect(page).toHaveURL(new RegExp(`/results/${gameId}$`));
+    await watcher.reload();
+    await expect(finalStandings.getByRole("listitem").first()).toContainText((320).toLocaleString("ar"));
+    await expect(watcher).toHaveURL(new RegExp(`/game/${gameId}\\?spectate=true$`));
+    expect(savedRequests).toEqual([]);
+    if (artifactDir) await watcher.screenshot({ path: join(artifactDir, "chaos-spectator-finish-320.png"), fullPage: true, scale: "css" });
   } finally {
     await watcherContext?.close();
     await new Promise<void>((resolve) => io.close(() => resolve()));

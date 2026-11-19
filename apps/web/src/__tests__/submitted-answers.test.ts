@@ -7,12 +7,13 @@ import { useGameStore } from "@/store/gameStore";
 const { act, create } = require("react-test-renderer");
 const mockSocket = { connected: true, on: jest.fn(), off: jest.fn(), emit: jest.fn() };
 let mockSpectating = false;
+const mockRouter = { push: jest.fn(), replace: jest.fn() };
 jest.mock("@/lib/socket", () => ({ getSocket: () => mockSocket, emitAnswer: jest.fn(), emitInvasionAnswer: jest.fn(), emitPowerUp: jest.fn() }));
 jest.mock("@/lib/sounds", () => ({ soundManager: { play: jest.fn(), playModeSound: jest.fn() } }));
 jest.mock("@/hooks/useGameConnection", () => ({ useGameConnection: () => ({ joining: false }) }));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ gameId: "battle-1" }),
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => mockRouter,
   useSearchParams: () => ({ get: () => mockSpectating ? "true" : null }),
 }));
 jest.mock("next/link", () => ({ __esModule: true, default: (props: any) => require("react").createElement("a", props, props.children) }));
@@ -72,6 +73,29 @@ function click(label: string) {
   expect(button).toBeDefined();
   act(() => button.props.onClick());
 }
+
+it.each([GameMode.Classic, GameMode.Chaos, GameMode.Conquest])("keeps a %s spectator in the completed live room and uses server placements", mode => {
+  mockSpectating = true;
+  const common = { correctAnswers: 1, totalAnswers: 1, avgAnswerTime: 500, xpEarned: 12 };
+  useGameStore.setState({ mode });
+  useGameStore.getState().setFinalResults([
+    { ...common, userId: "runner-up", username: "Runner-up", score: 7, rank: 2 },
+    { ...common, userId: "winner", username: "Winner", score: 7, rank: 1 },
+  ]);
+  act(() => { view = create(createElement(GamePage)); });
+  const rows = view.root.findAllByType("li");
+  expect(rows.map((row: any) => text(row.props.children))).toEqual([expect.stringContaining("Winner"), expect.stringContaining("Runner-up")]);
+  expect(text(rows[0].props.children)).toContain(mode === GameMode.Conquest ? "territories" : "pts");
+  expect(view.root.findByProps({ href: "/spectate" })).toBeDefined();
+  expect(mockRouter.replace).not.toHaveBeenCalled();
+  expect(mockRouter.push).not.toHaveBeenCalled();
+});
+
+it("takes a participant to their durable result after the game ends", () => {
+  useGameStore.getState().setFinalResults([]);
+  act(() => { view = create(createElement(GamePage)); });
+  expect(mockRouter.replace).toHaveBeenCalledWith("/results/battle-1");
+});
 
 it("submits the actual typed text through the game page and preserves it in the store", () => {
   renderQuestion(QuestionType.FillBlank, { text: "The capital is [BLANK]", options: [] });

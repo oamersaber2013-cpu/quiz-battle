@@ -1,25 +1,35 @@
 "use client";
+import styles from "./ActiveExperience.module.css";
+import chaosStyles from "./ChaosGame.module.css";
+import { getServerTime } from "@/lib/gameClock";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useGameStore } from "@/store/gameStore";
 import { motion, AnimatePresence } from "framer-motion";
-import { GameStatus } from "@quiz-battle/shared";
+import { GameStatus, PowerUpType, type AckResponse, type ChaosClientSnapshot, type ChaosVote } from "@quiz-battle/shared";
 import { RoundProgress } from "./RoundProgress";
 import { QuestionReview } from "./QuestionReview";
 import { EmoteSystem } from "./EmoteSystem";
 import { useSound } from "@/hooks/useSound";
-import { emitAnswer, emitChaosVote, emitChaosAnswer } from "@/lib/socket";
+import { emitAnswer, emitChaosStartVoting, emitChaosVote, getSocket } from "@/lib/socket";
+
+const CHAOS_STATE_LABELS = {
+  CALM: { en: "Calm", ar: "هادئ" },
+  UNSTABLE: { en: "Unstable", ar: "غير مستقر" },
+  CHAOTIC: { en: "Chaotic", ar: "فوضوي" },
+  INSANITY: { en: "Insanity", ar: "جنون" },
+  ANARCHY: { en: "Anarchy", ar: "فوضى عارمة" },
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHAOS GAME COMPONENT - Full integration of CHAOS mode
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export default function ChaosGame() {
+export default function ChaosGame({ isSpectating = false }: { isSpectating?: boolean }) {
   const {
     status,
     currentQuestion: question,
     currentRound,
-    totalRounds,
     timeLeft,
     players,
     userId,
@@ -30,14 +40,59 @@ export default function ChaosGame() {
     eliminatedOptions,
     lastAnswerResult,
     chaosState,
-    castChaosVote,
+    isConnected,
+    hostId,
+    activeEffects,
+    timeWarpBonusSeconds,
   } = useGameStore();
 
   const { play } = useSound();
   const isAr = language === "ar";
   const [showReview, setShowReview] = useState(false);
-  const [answerMode, setAnswerMode] = useState<"SAFE" | "RISK">("SAFE");
   const [showChaosLog, setShowChaosLog] = useState(false);
+  const [now, setNow] = useState(getServerTime);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmedVote, setConfirmedVote] = useState<string | null>(null);
+  const actionInFlight = useRef(false);
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
+  const reviewContext = useRef<{ questionId: string; round: number } | null>(null);
+  const voting = chaosState?.votingSession;
+  const drama = chaosState?.pendingDrama;
+  const deadline = chaosState?.voteDeadline;
+  const votingSeconds = deadline ? Math.max(0, Math.ceil((deadline - now) / 1000)) : 0;
+  const canParticipate = !isSpectating && isConnected && !!currentPlayer && !currentPlayer.isEliminated;
+  const liveDrama = drama && drama.expiresAt > now ? drama : null;
+  const canStartVote = canParticipate && userId === hostId && !!liveDrama && !voting &&
+    (status === GameStatus.Question || status === GameStatus.AnswerReveal);
+  const voted = !!voting && (voting.hasVoted || confirmedVote === voting.dramaEventId);
+  const isFrozen = activeEffects.some((effect) => effect.type === PowerUpType.Freeze &&
+    effect.targetUserId === userId && (!effect.expiresAt || effect.expiresAt > now));
+  const isSandstormed = activeEffects.some((effect) => effect.type === PowerUpType.Sandstorm &&
+    effect.targetUserId === userId && (!effect.expiresAt || effect.expiresAt > now));
+  const canAnswer = canParticipate && !isFrozen && status === GameStatus.Question && timeLeft > 0 && selectedAnswer === null;
+
+  useEffect(() => { setShowReview(false); }, [question?.id, currentRound, status, isSpectating, gameId]);
+
+  useEffect(() => {
+    setNow(getServerTime());
+    const clock = setInterval(() => setNow(getServerTime()), 250);
+    return () => clearInterval(clock);
+  }, []);
+
+  const dismissTrapResult = useCallback(() => useGameStore.getState().setTrapResult(null), []);
+  const closeReview = useCallback(() => setShowReview(false), []);
+  const shouldRestoreReviewFocus = useCallback(() => {
+    const state = useGameStore.getState();
+    return !isSpectating && state.isConnected && state.status === GameStatus.AnswerReveal &&
+      state.currentQuestion?.id === reviewContext.current?.questionId && state.currentRound === reviewContext.current?.round;
+  }, [isSpectating]);
+  const openReview = useCallback(() => {
+    const state = useGameStore.getState();
+    if (isSpectating || state.status !== GameStatus.AnswerReveal || !state.currentQuestion) return;
+    reviewContext.current = { questionId: state.currentQuestion.id, round: state.currentRound };
+    setShowReview(true);
+  }, [isSpectating]);
 
   // Play sounds on state changes
   useEffect(() => {
@@ -54,50 +109,63 @@ export default function ChaosGame() {
 
   // Drama detection: tab visibility change
   useEffect(() => {
-    if (!gameId || status !== GameStatus.Question) return;
+    if (!gameId || !canParticipate || status !== GameStatus.Question || typeof document === "undefined") return;
     
     const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // Player left tab during active question - report drama!
-        const { getSocket } = require("@/lib/socket");
-        const socket = getSocket();
-        socket.emit("chaos:drama", { gameId, type: "TAB_LEFT" });
-        console.log("[CHAOS] Drama reported: left tab during question");
+      if (document.hidden && getSocket().connected) {
+        getSocket().emit("chaos:drama", { gameId, type: "TAB_LEFT" });
       }
     };
     
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [gameId, status]);
+  }, [gameId, status, canParticipate]);
 
-  // Handle chaos voting
-  const handleVote = useCallback((vote: "FORGIVE" | "REDUCE_SCORE" | "BLOCK_QUESTION") => {
-    if (gameId && chaosState?.votingSession) {
-      emitChaosVote(gameId, vote);
-      castChaosVote(vote);
+  async function submitVoteAction(
+    dramaId: string,
+    send: () => Promise<AckResponse>,
+    isVote: boolean
+  ) {
+    if (actionInFlight.current || !getSocket().connected) return;
+    actionInFlight.current = true;
+    setPendingAction(dramaId);
+    setActionError(null);
+    try {
+      const response = await send();
+      if (!response.success) throw new Error("Voting action rejected");
+      if (isVote) setConfirmedVote(dramaId);
       play("click");
+    } catch {
+      setActionError(dramaId);
+    } finally {
+      actionInFlight.current = false;
+      setPendingAction(null);
     }
-  }, [gameId, chaosState, castChaosVote, play]);
+  }
 
-  // Handle answer with mode selection
-  const handleAnswer = useCallback((index: number) => {
-    if (gameId && question) {
-      useGameStore.getState().selectAnswer(index);
-      emitChaosAnswer(gameId, question.id, index, answerMode);
-      play("click");
-    }
-  }, [gameId, question, answerMode, play]);
+  function handleStartVoting() {
+    if (!gameId || !drama || !canStartVote || getServerTime() >= drama.expiresAt) return;
+    void submitVoteAction(drama.id, () => emitChaosStartVoting(gameId, drama.id), false);
+  }
 
-  if (!question) {
-    return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <p className="text-gray-400">{isAr ? "جاري التحميل..." : "Loading..."}</p>
-      </div>
-    );
+  function handleVote(vote: ChaosVote) {
+    if (!gameId || !voting?.canVote || voted || !canParticipate || !deadline || getServerTime() >= deadline) return;
+    if (!voting.options.includes(vote)) return;
+    void submitVoteAction(voting.dramaEventId, () => emitChaosVote(gameId, voting.dramaEventId, vote), true);
+  }
+
+  function handleAnswer(index: number) {
+    const state = useGameStore.getState();
+    if (!gameId || !question || !canAnswer || !getSocket().connected) return;
+    if (state.currentQuestion?.id !== question.id || state.selectedAnswer !== null || state.timeLeft <= 0 ||
+      state.status !== GameStatus.Question || state.eliminatedOptions.includes(index) || !state.currentPlayer || state.currentPlayer.isEliminated ||
+      state.activeEffects.some(effect => effect.type === PowerUpType.Freeze && effect.targetUserId === state.userId && (!effect.expiresAt || effect.expiresAt > getServerTime()))) return;
+    state.selectAnswer(index);
+    emitAnswer(gameId, question.id, index);
+    play("click");
   }
 
   const isEliminated = (index: number) => eliminatedOptions?.includes(index);
-  const hasAnswered = selectedAnswer !== null;
 
   // Get chaos visual effects based on state
   const getChaosVisuals = () => {
@@ -121,7 +189,7 @@ export default function ChaosGame() {
 
   return (
     <div 
-      className="min-h-screen text-white overflow-hidden relative"
+      className={`${styles.chaos} min-h-screen text-white overflow-hidden relative`}
       style={{
         background: chaosState?.state === "ANARCHY" 
           ? "linear-gradient(135deg, #1a0f1a 0%, #0f0f1a 50%, #1a0f1a 100%)"
@@ -131,12 +199,13 @@ export default function ChaosGame() {
     >
       {/* Chaos Background Effects */}
       {chaosState && (
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }} aria-hidden="true">
           {/* Chaos particles */}
           {Array.from({ length: Math.floor(chaosState.level / 10) }).map((_, i) => (
             <motion.div
               key={i}
-              className="absolute text-2xl"
+              className="text-2xl"
+              style={{ position: "absolute" }}
               initial={{ 
                 x: Math.random() * (typeof window !== 'undefined' ? window.innerWidth : 1000), 
                 y: Math.random() * (typeof window !== 'undefined' ? window.innerHeight : 800),
@@ -171,24 +240,19 @@ export default function ChaosGame() {
       )}
 
       {/* Chaos State Indicator */}
+      <div className="container" style={{ position: "relative", maxWidth: 900, paddingTop: 24 }}>
       {chaosState && (
         <motion.div
-          className="fixed top-20 left-4 z-50"
+          style={{ display: "inline-block" }}
           initial={{ x: -100, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
         >
           <div 
-            className="px-4 py-2 rounded-xl font-bold text-sm border-2"
-            style={{
-              background: "rgba(0,0,0,0.8)",
-              borderColor: chaosVisuals.color || "#ff00ff",
-              color: chaosVisuals.color || "#ff00ff",
-              boxShadow: `0 0 20px ${chaosVisuals.color || "#ff00ff"}40`,
-            }}
+            className={`${styles.chaosBadge} px-4 py-2 rounded-xl font-bold text-sm border-2`}
           >
             <div className="flex items-center gap-2">
               <span>{chaosState.state === "ANARCHY" ? "💀" : chaosState.state === "INSANITY" ? "🔥" : "🌀"}</span>
-              <span>{chaosState.state}</span>
+              <span>{CHAOS_STATE_LABELS[chaosState.state][language]}</span>
               <span className="text-xs opacity-70">({chaosState.level}%)</span>
             </div>
             {/* Chaos meter bar */}
@@ -196,7 +260,7 @@ export default function ChaosGame() {
               <motion.div
                 className="h-full rounded-full"
                 style={{ 
-                  background: `linear-gradient(90deg, #00e676 0%, #ffd700 50%, #ff4757 100%)`,
+                  background: "#e6b65c",
                 }}
                 initial={{ width: 0 }}
                 animate={{ width: `${chaosState.level}%` }}
@@ -210,7 +274,8 @@ export default function ChaosGame() {
       {/* Chaos Log Toggle */}
       {chaosState && (
         <motion.button
-          className="fixed top-20 right-4 z-50 px-3 py-2 rounded-xl bg-gray-800/80 border border-purple-500/50 text-sm"
+          className="btn btn-secondary btn-sm"
+          style={{ marginInlineStart: 12 }}
           onClick={() => setShowChaosLog(!showChaosLog)}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -226,12 +291,14 @@ export default function ChaosGame() {
             initial={{ x: 300, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 300, opacity: 0 }}
-            className="fixed top-32 right-4 z-50 w-64 max-h-64 overflow-y-auto"
+            className="mt-3"
             style={{
               background: "rgba(0,0,0,0.9)",
               border: "1px solid rgba(255,0,255,0.3)",
               borderRadius: "12px",
               padding: "12px",
+              maxHeight: 200,
+              overflowY: "auto",
             }}
           >
             <h4 className="text-purple-400 font-bold mb-2 text-sm">
@@ -252,35 +319,48 @@ export default function ChaosGame() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
 
       {/* Round Progress */}
       <RoundProgress />
 
       {/* Main Game Area */}
-      <div className="pt-24 pb-20 px-4 max-w-4xl mx-auto relative z-10">
-        <AnimatePresence mode="wait">
-          {/* Drama Event Popup */}
-          {chaosState?.activeDrama && !chaosState.isVoting && (
-            <DramaPopup 
-              drama={chaosState.activeDrama} 
-              language={language}
-              onStartVoting={() => {}}
-            />
-          )}
+      <div className="container" style={{ position: "relative", maxWidth: 900, paddingTop: 20, paddingBottom: 80 }}>
+        {liveDrama && !voting && (
+          <DramaPopup
+            drama={liveDrama}
+            language={language}
+            onStartVoting={canStartVote ? handleStartVoting : undefined}
+            pending={pendingAction === liveDrama.id}
+          />
+        )}
+        {voting && (
+          <VotingInterface
+            voting={voting}
+            language={language}
+            onVote={handleVote}
+            hasVoted={voted}
+            canVote={canParticipate && voting.canVote}
+            pending={pendingAction === voting.dramaEventId}
+            seconds={votingSeconds}
+          />
+        )}
+        {actionError && (actionError === drama?.id || actionError === voting?.dramaEventId) && (
+          <p role="alert" className="mb-4" style={{ color: "var(--clr-accent)" }}>
+            {isAr ? "تعذر إتمام إجراء التصويت. حاول مرة أخرى." : "Voting action failed. Try again."}
+          </p>
+        )}
+        {!question && !voting && !liveDrama && (
+          <p role="status" className="text-center text-gray-400">
+            {isAr ? "في انتظار السؤال..." : "Waiting for the question..."}
+          </p>
+        )}
 
-          {/* Voting Interface */}
-          {chaosState?.isVoting && chaosState.votingSession && (
-            <VotingInterface
-              voting={chaosState.votingSession}
-              language={language}
-              onVote={handleVote}
-              hasVoted={chaosState.votingSession.hasVoted}
-            />
-          )}
-
+        <AnimatePresence>
           {/* Trap Warning */}
           {chaosState?.activeTrap && !chaosState.evaluatingTrap && (
             <TrapWarning 
+              key="trap-warning"
               trap={chaosState.activeTrap} 
               language={language}
               isTarget={chaosState.activeTrap.isTarget}
@@ -289,82 +369,65 @@ export default function ChaosGame() {
 
           {/* Evaluating Trap */}
           {chaosState?.evaluatingTrap && (
-            <EvaluatingTrap language={language} />
+            <EvaluatingTrap key="trap-evaluating" language={language} />
           )}
 
           {/* Trap Result */}
           {chaosState?.lastTrapResult && (
-            <TrapResult 
+            <TrapResult
+              key="trap-result"
               result={chaosState.lastTrapResult} 
               language={language}
-              onClose={() => useGameStore.getState().setTrapResult(null)}
+              onClose={dismissTrapResult}
             />
           )}
 
           {/* Question Phase */}
-          {status === GameStatus.Question && !chaosState?.evaluatingTrap && !chaosState?.lastTrapResult && (
+          {question && (status === GameStatus.Question || (isSpectating && status === GameStatus.AnswerReveal)) && (
             <motion.div
               key="question"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              {/* Answer Mode Selection (only in trap rounds) */}
-              {chaosState?.activeTrap && (
-                <div className="mb-4 flex justify-center gap-4">
-                  <button
-                    onClick={() => setAnswerMode("SAFE")}
-                    className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${
-                      answerMode === "SAFE"
-                        ? "bg-green-500 text-white"
-                        : "bg-gray-700 text-gray-400"
-                    }`}
-                  >
-                    🛡️ {isAr ? "آمن" : "SAFE"}
-                  </button>
-                  <button
-                    onClick={() => setAnswerMode("RISK")}
-                    className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${
-                      answerMode === "RISK"
-                        ? "bg-red-500 text-white"
-                        : "bg-gray-700 text-gray-400"
-                    }`}
-                  >
-                    ⚔️ {isAr ? "محفوف بالمخاطر" : "RISK"}
-                  </button>
-                </div>
-              )}
-
               {/* Timer */}
-              <div className="mb-6">
+              {status === GameStatus.Question && <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-gray-400">
                     {isAr ? "الوقت المتبقي" : "Time Remaining"}
                   </span>
-                  <span className={`text-2xl font-bold ${timeLeft <= 5 ? "text-red-500" : "text-amber-400"}`}>
-                    {timeLeft}s
-                    {chaosState?.activeTrap?.isTarget && chaosState.activeTrap.advantages && (
-                      <span className="text-green-400 text-sm ml-2">
-                        +{chaosState.activeTrap.advantages.timeBonus}s
-                      </span>
-                    )}
+                  <span role="timer" aria-label={isAr ? "الوقت المتبقي للإجابة" : "Time remaining to answer"} className={`text-2xl font-bold ${timeLeft <= 5 ? "text-red-500" : "text-amber-400"}`}>
+                    {timeLeft}{isAr ? "ث" : "s"}
                   </span>
                 </div>
                 <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
                   <motion.div
                     initial={{ width: "100%" }}
-                    animate={{ width: `${(timeLeft / Math.max(1, question.timeLimit)) * 100}%` }}
+                    animate={{ width: `${Math.min(100, (timeLeft / Math.max(1, question.timeLimit + timeWarpBonusSeconds)) * 100)}%` }}
                     transition={{ duration: 1, ease: "linear" }}
                     className={`h-full rounded-full ${
                       timeLeft <= 5 ? "bg-red-500" : chaosState?.activeTrap ? "bg-purple-500" : "bg-amber-500"
                     }`}
                   />
                 </div>
-              </div>
+              </div>}
+
+              {(isSpectating || isFrozen || isSandstormed || selectedAnswer !== null || timeLeft <= 0) && <p role="status" className={chaosStyles.answerStatus}>
+                {isSpectating
+                  ? (isAr ? "أنت تشاهد المعركة. تظهر النتائج في ترتيب اللاعبين." : "You are watching. Follow the results in the standings.")
+                  : selectedAnswer !== null
+                    ? (isAr ? "تم اختيار إجابتك. في انتظار نتيجة الجولة." : "Answer selected. Waiting for the round result.")
+                    : isFrozen
+                      ? (isAr ? "أنت مجمد مؤقتاً. ستتمكن من الإجابة بعد انتهاء التجميد." : "You are temporarily frozen. Answering resumes when the freeze ends.")
+                      : isSandstormed
+                        ? (isAr ? "عاصفة رملية: السؤال والخيارات مشوشة مؤقتاً." : "Sandstorm: the question and choices are temporarily blurred.")
+                        : (isAr ? "انتهى وقتك. في انتظار نتيجة الجولة." : "Your time is up. Waiting for the round result.")}
+              </p>}
 
               {/* Question */}
               <div 
-                className="rounded-3xl p-6 mb-6 border-2"
+                className={`rounded-3xl p-6 mb-6 border-2 ${isSandstormed ? chaosStyles.sandstormed : ""}`}
+                data-chaos-sandstorm={isSandstormed || undefined}
                 style={{
                   background: chaosState?.activeTrap 
                     ? "linear-gradient(135deg, #2d1818 0%, #1a0f1a 100%)"
@@ -372,69 +435,48 @@ export default function ChaosGame() {
                   borderColor: chaosState?.activeTrap ? "#ff4757" : "#2a2a3e",
                 }}
               >
-                {chaosState?.activeTrap && (
-                  <div className="text-red-400 text-center mb-4 font-bold flex items-center justify-center gap-2">
-                    💀 {isAr ? "فخ نشط!" : "TRAP ACTIVE!"}
-                  </div>
-                )}
                 <p className="text-xl md:text-2xl font-bold text-white text-center leading-relaxed">
                   {isAr ? (question.textAr || question.text) : (question.textEn || question.text)}
                 </p>
               </div>
 
               {/* Options */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className={isSandstormed ? chaosStyles.sandstormed : undefined} data-chaos-sandstorm={isSandstormed || undefined} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 12 }}>
                 {((isAr ? (question.optionsAr || question.options) : (question.optionsEn || question.options)) || []).map((option: string, index: number) => {
                   const eliminated = isEliminated(index);
                   const selected = selectedAnswer === index;
 
                   return (
-                    <motion.button
+                    <button
                       key={index}
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: eliminated ? 0.3 : 1, scale: 1 }}
-                      whileHover={!eliminated && !hasAnswered ? { scale: 1.02 } : {}}
-                      whileTap={!eliminated && !hasAnswered ? { scale: 0.98 } : {}}
-                      disabled={eliminated || hasAnswered}
+                      type="button"
+                      data-chaos-answer={index}
+                      disabled={eliminated || !canAnswer}
                       onClick={() => handleAnswer(index)}
-                      className={`p-6 rounded-2xl border-2 font-bold text-lg transition-all ${
-                        eliminated
-                          ? "border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed"
-                          : selected
-                          ? "border-purple-500 bg-purple-500/20 text-purple-400"
-                          : chaosState?.activeTrap
-                          ? "border-red-500/50 bg-red-500/10 text-white hover:border-red-500"
-                          : "border-gray-700 bg-gray-800 text-white hover:border-purple-500/50"
-                      }`}
+                      className="btn btn-secondary rounded-2xl"
+                      aria-pressed={selected}
+                      style={{
+                        justifyContent: "flex-start",
+                        whiteSpace: "normal",
+                        textAlign: "start",
+                        borderColor: selected ? "var(--clr-primary)" : undefined,
+                        opacity: eliminated ? 0.35 : 1,
+                      }}
                     >
                       <span className="inline-block w-8 h-8 rounded-full bg-gray-700 text-center leading-8 mr-3 text-sm">
                         {String.fromCharCode(65 + index)}
                       </span>
                       {option}
-                    </motion.button>
+                    </button>
                   );
                 })}
               </div>
 
-              {/* PowerUp Buttons */}
-              <div className="mt-6 flex justify-center gap-3">
-                {currentPlayer?.powerUpInventory.map((powerUp, index) => (
-                  <motion.button
-                    key={index}
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => play("powerup")}
-                    className="px-4 py-2 bg-purple-500/20 border border-purple-500/50 rounded-xl text-purple-400 font-bold text-sm hover:bg-purple-500/30 transition-colors"
-                  >
-                    {powerUp}
-                  </motion.button>
-                ))}
-              </div>
             </motion.div>
           )}
 
           {/* Answer Reveal Phase */}
-          {status === GameStatus.AnswerReveal && lastAnswerResult && (
+          {status === GameStatus.AnswerReveal && lastAnswerResult && !isSpectating && (
             <motion.div
               key="reveal"
               initial={{ opacity: 0, scale: 0.9 }}
@@ -462,7 +504,8 @@ export default function ChaosGame() {
               </h2>
 
               <button
-                onClick={() => setShowReview(true)}
+                ref={reviewTrigger}
+                onClick={openReview}
                 className="px-6 py-3 bg-gray-800 text-white rounded-xl hover:bg-gray-700 transition-colors"
               >
                 {isAr ? "مراجعة السؤال" : "Review Question"}
@@ -523,6 +566,17 @@ export default function ChaosGame() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <section className={chaosStyles.standings} aria-label={isAr ? "الترتيب الحالي" : "Current standings"}>
+          <h2>{isAr ? "الترتيب الحالي" : "Current standings"}</h2>
+          <ol>
+            {[...players].sort((a, b) => b.score - a.score).map((player, index) => <li key={player.userId}>
+              <span className={chaosStyles.rank}>{index + 1}</span>
+              <span className={chaosStyles.playerName}><bdi>{player.username}</bdi>{player.userId === userId && <small> {isAr ? "(أنت)" : "(you)"}</small>}</span>
+              <strong data-player-score={player.userId}>{player.score.toLocaleString(language)}</strong>
+            </li>)}
+          </ol>
+        </section>
       </div>
 
       {/* Question Review Modal */}
@@ -534,14 +588,16 @@ export default function ChaosGame() {
             en: question.explanationEn,
             ar: question.explanationAr,
           }}
-          playerAnswers={{}}
+          playerAnswers={!isSpectating && userId && typeof selectedAnswer === "number" ? { [userId]: selectedAnswer } : {}}
           isOpen={showReview}
-          onClose={() => setShowReview(false)}
+          onClose={closeReview}
+          returnFocusRef={reviewTrigger}
+          shouldRestoreFocus={shouldRestoreReviewFocus}
         />
       )}
 
       {/* Emote System */}
-      <EmoteSystem />
+      {canParticipate && <EmoteSystem />}
 
       {/* CSS Animations */}
       <style jsx global>{`
@@ -571,10 +627,11 @@ export default function ChaosGame() {
 // SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function DramaPopup({ drama, language, onStartVoting }: { 
+function DramaPopup({ drama, language, onStartVoting, pending }: {
   drama: { id: string; type: string; playerId: string; username: string };
   language: "en" | "ar";
-  onStartVoting: () => void;
+  onStartVoting?: () => void;
+  pending: boolean;
 }) {
   const isAr = language === "ar";
   
@@ -592,13 +649,12 @@ function DramaPopup({ drama, language, onStartVoting }: {
       initial={{ opacity: 0, y: -50, scale: 0.9 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -30, scale: 0.9 }}
-      className="fixed top-20 left-1/2 -translate-x-1/2 z-50"
+      className="mb-4"
       style={{
         background: "linear-gradient(135deg, #2d1818 0%, #1a0f0f 100%)",
         border: "2px solid #ff4757",
         borderRadius: 16,
         padding: 20,
-        minWidth: 320,
         boxShadow: "0 20px 60px rgba(255, 71, 87, 0.4)",
       }}
     >
@@ -614,42 +670,42 @@ function DramaPopup({ drama, language, onStartVoting }: {
         </div>
       </div>
       
-      <div style={{ color: "#ffaa88", fontSize: "0.85rem", marginBottom: 12, textAlign: "center" }}>
-        {isAr ? "الفوضى تتزايد..." : "Chaos is rising..."}
-      </div>
+      {onStartVoting && (
+        <button type="button" className="btn btn-secondary" disabled={pending} onClick={onStartVoting}>
+          {isAr ? "ابدأ التصويت" : "Start voting"}
+        </button>
+      )}
     </motion.div>
   );
 }
 
-function VotingInterface({ voting, language, onVote, hasVoted }: {
-  voting: { targetUsername: string; timeRemaining: number; totalVotes: number };
+function VotingInterface({ voting, language, onVote, hasVoted, canVote, pending, seconds }: {
+  voting: NonNullable<ChaosClientSnapshot["votingSession"]>;
   language: "en" | "ar";
-  onVote: (vote: "FORGIVE" | "REDUCE_SCORE" | "BLOCK_QUESTION") => void;
+  onVote: (vote: ChaosVote) => void;
   hasVoted: boolean;
+  canVote: boolean;
+  pending: boolean;
+  seconds: number;
 }) {
   const isAr = language === "ar";
   
-  const options = [
-    { id: "FORGIVE", emoji: "😇", label: { en: "FORGIVE", ar: "سامح" }, color: "#00e676" },
-    { id: "REDUCE_SCORE", emoji: "👎", label: { en: "REDUCE SCORE", ar: "خفض النقاط" }, color: "#ff9800" },
-    { id: "BLOCK_QUESTION", emoji: "🚫", label: { en: "BLOCK NEXT", ar: "منع السؤال القادم" }, color: "#ff4757" },
-  ] as const;
+  const options = {
+    FORGIVE: { emoji: "😇", label: { en: "FORGIVE", ar: "سامح" }, color: "#c8d4cd" },
+    REDUCE_SCORE: { emoji: "👎", label: { en: "REDUCE SCORE", ar: "خفض النقاط" }, color: "#e6b65c" },
+  } as const;
   
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.8 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+      className="mb-4"
     >
       <div 
-        className="p-6 rounded-2xl max-w-md w-full mx-4"
-        style={{
-          background: "linear-gradient(135deg, #2d1f3d 0%, #1a0f1a 100%)",
-          border: "2px solid #ff00ff",
-        }}
+        className={`${styles.chaosBallot} p-4 rounded-2xl`}
       >
-        <h3 className="text-xl font-bold text-center mb-2" style={{ color: "#ff00ff" }}>
+        <h3 className="text-xl font-bold text-center mb-2" style={{ color: "#e6b65c" }}>
           🗳️ {isAr ? "التصويت على العقاب" : "VOTE ON PUNISHMENT"}
         </h3>
         
@@ -658,33 +714,42 @@ function VotingInterface({ voting, language, onVote, hasVoted }: {
         </p>
         
         <div className="text-center mb-6">
-          <span className="text-3xl font-bold text-amber-400">{voting.timeRemaining}s</span>
+          <span className="text-2xl font-bold text-amber-400">{seconds}{isAr ? "ث" : "s"}</span>
         </div>
         
         {hasVoted ? (
           <div className="text-center text-green-400 font-bold">
             ✅ {isAr ? "تم التصويت!" : "VOTE CAST!"}
           </div>
-        ) : (
-          <div className="space-y-3">
-            {options.map((opt) => (
+        ) : canVote ? (
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
+            {voting.options.map((vote) => {
+              const opt = options[vote];
+              return (
               <motion.button
-                key={opt.id}
+                key={vote}
+                type="button"
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => onVote(opt.id)}
-                className="w-full p-4 rounded-xl font-bold flex items-center gap-3 transition-all"
+                disabled={pending || seconds === 0}
+                onClick={() => onVote(vote)}
+                className="btn btn-secondary"
                 style={{
-                  background: "rgba(0,0,0,0.5)",
-                  border: `2px solid ${opt.color}`,
+                  background: "#101923",
+                  border: `1px solid ${opt.color}`,
                   color: opt.color,
                 }}
               >
                 <span className="text-2xl">{opt.emoji}</span>
                 <span>{opt.label[language]}</span>
               </motion.button>
-            ))}
+              );
+            })}
           </div>
+        ) : (
+          <p className="text-center text-gray-300">
+            {isAr ? "يمكنك متابعة التصويت." : "You can watch the vote."}
+          </p>
         )}
         
         <div className="mt-4 text-center text-sm text-gray-500">
@@ -696,7 +761,7 @@ function VotingInterface({ voting, language, onVote, hasVoted }: {
 }
 
 function TrapWarning({ trap, language, isTarget }: {
-  trap: { targetUsername: string; level: number; advantages?: { timeBonus: number; eliminatedOptions: number } };
+  trap: NonNullable<ChaosClientSnapshot["activeTrap"]>;
   language: "en" | "ar";
   isTarget: boolean;
 }) {
@@ -707,40 +772,24 @@ function TrapWarning({ trap, language, isTarget }: {
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.8 }}
-      className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none"
+      className="mb-4"
     >
       <div 
-        className="px-8 py-6 rounded-2xl text-center"
+        className="p-4 rounded-2xl text-center"
         style={{
           background: "linear-gradient(135deg, #3d1f1f 0%, #1f0f0f 100%)",
           border: "3px solid #ff4757",
           boxShadow: "0 0 60px rgba(255, 71, 87, 0.6)",
         }}
       >
-        <div className="text-5xl mb-4">💀</div>
-        <h3 className="text-2xl font-bold text-red-400 mb-2">
-          {isAr ? "فخ نشط!" : "TRAP ACTIVE!"}
+        <h3 className="text-xl font-bold text-red-400 mb-2">
+          💀 {isAr ? "فخ نشط" : "Trap active"}
         </h3>
-        <p className="text-white mb-4">
-          {isAr 
-            ? `${trap.targetUsername} محاصر في فخ مستوى ${trap.level}!`
-            : `${trap.targetUsername} is trapped in a Level ${trap.level} trap!`
-          }
+        <p className="text-white">
+          {isTarget
+            ? (isAr ? `أنت هدف فخ من المستوى ${trap.level}.` : `You are the target of a Level ${trap.level} trap.`)
+            : (isAr ? `${trap.targetUsername} هو هدف فخ من المستوى ${trap.level}.` : `${trap.targetUsername} is the target of a Level ${trap.level} trap.`)}
         </p>
-        
-        {isTarget && trap.advantages && (
-          <div className="bg-green-500/20 border border-green-500/50 rounded-xl p-3 mt-4">
-            <p className="text-green-400 font-bold text-sm">
-              🎁 {isAr ? "مميزاتك كهدف:" : "Your target advantages:"}
-            </p>
-            <p className="text-green-300 text-xs mt-1">
-              +{trap.advantages.timeBonus}s {isAr ? "وقت إضافي" : "extra time"}
-              {trap.advantages.eliminatedOptions > 0 && (
-                <span> • {trap.advantages.eliminatedOptions} {isAr ? "إجابة خاطئة محذوفة" : "wrong answer removed"}</span>
-              )}
-            </p>
-          </div>
-        )}
       </div>
     </motion.div>
   );
@@ -754,7 +803,7 @@ function EvaluatingTrap({ language }: { language: "en" | "ar" }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+      className="mb-4 flex items-center justify-center"
     >
       <div className="text-center">
         <motion.div
@@ -792,7 +841,7 @@ function TrapResult({ result, language, onClose }: {
       initial={{ opacity: 0, scale: 0.5 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.5 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+      className="mb-4 flex items-center justify-center"
     >
       <div 
         className="px-8 py-6 rounded-2xl text-center max-w-md"

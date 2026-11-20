@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { Difficulty, QuestionType } from "@quiz-battle/shared";
 
 const prisma = new PrismaClient();
 
@@ -124,16 +125,26 @@ const questions = [
   },
 ];
 
-async function main() {
+export async function seedQuestions(db: Pick<PrismaClient, "question"> = prisma) {
   console.log("Expanding Knowledge Bank...");
+  const difficultyMap: Record<string, Difficulty> = {
+    easy: Difficulty.Easy,
+    medium: Difficulty.Medium,
+    hard: Difficulty.Hard,
+  };
 
   for (const q of questions) {
+    const { correctIndex, difficulty, ...content } = q;
+    const gameDifficulty = difficultyMap[difficulty];
     const hash = Buffer.from(q.textEn + q.category + q.difficulty).toString("base64").substring(0, 50);
-    await prisma.question.upsert({
+    await db.question.upsert({
       where: { hash },
       update: {},
       create: {
-        ...q,
+        ...content,
+        type: QuestionType.MultipleChoice,
+        difficulty: gameDifficulty,
+        correctAnswer: String(correctIndex),
         hash,
       },
     });
@@ -142,7 +153,7 @@ async function main() {
   console.log(`Knowledge Bank expanded! Total verified questions increased.`);
 }
 
-main()
+if (require.main === module) seedQuestions()
   .catch((e) => {
     console.error(e);
     process.exit(1);

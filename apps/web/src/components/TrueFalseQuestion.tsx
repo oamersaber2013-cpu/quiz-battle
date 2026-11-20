@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { motion } from "framer-motion";
-import { GameStatus, ClientQuestion } from "@quiz-battle/shared";
+import { GameStatus, ClientQuestion, SubmittedAnswer } from "@quiz-battle/shared";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TRUE/FALSE QUESTION COMPONENT - Alternative question type with two choices
@@ -12,9 +12,10 @@ interface TrueFalseQuestionProps {
   question: ClientQuestion;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: { correct: boolean; correctIndex: number } | null;
   language: "en" | "ar";
+  disabled?: boolean;
   themeColor?: string;
   onAnswer: (index: number) => void;
 }
@@ -45,6 +46,7 @@ export function TrueFalseQuestion({
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   themeColor = "#8b5cf6",
   onAnswer,
 }: TrueFalseQuestionProps) {
@@ -52,20 +54,21 @@ export function TrueFalseQuestion({
   const t = TRANSLATIONS[language];
   
   const hasAnswered = selectedAnswer !== null;
-  const isRevealing = status === GameStatus.Results && lastAnswerResult !== null;
+  const isRevealing = status === GameStatus.AnswerReveal && lastAnswerResult !== null;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !lastAnswerResult;
   
   // True = index 0, False = index 1
   const handleTrue = useCallback(() => {
-    if (!hasAnswered && status === GameStatus.Question) {
+    if (canAnswer) {
       onAnswer(0);
     }
-  }, [hasAnswered, status, onAnswer]);
+  }, [canAnswer, onAnswer]);
   
   const handleFalse = useCallback(() => {
-    if (!hasAnswered && status === GameStatus.Question) {
+    if (canAnswer) {
       onAnswer(1);
     }
-  }, [hasAnswered, status, onAnswer]);
+  }, [canAnswer, onAnswer]);
 
   const getButtonState = (isTrueButton: boolean) => {
     const buttonIndex = isTrueButton ? 0 : 1;
@@ -75,7 +78,7 @@ export function TrueFalseQuestion({
       if (selectedAnswer === buttonIndex) {
         return "selected";
       }
-      return hasAnswered ? "disabled" : "default";
+      return canAnswer ? "default" : "disabled";
     }
     
     // During reveal phase
@@ -187,10 +190,10 @@ export function TrueFalseQuestion({
         <div className="grid grid-cols-2 gap-4 md:gap-6">
           {/* TRUE Button */}
           <motion.button
-            whileHover={!hasAnswered && status === GameStatus.Question ? { scale: 1.02 } : {}}
-            whileTap={!hasAnswered && status === GameStatus.Question ? { scale: 0.98 } : {}}
+            whileHover={canAnswer ? { scale: 1.02 } : {}}
+            whileTap={canAnswer ? { scale: 0.98 } : {}}
             onClick={handleTrue}
-            disabled={hasAnswered || status !== GameStatus.Question}
+            disabled={!canAnswer}
             className={`
               relative p-6 md:p-8 rounded-2xl border-4 transition-all duration-300
               flex flex-col items-center justify-center gap-3
@@ -252,10 +255,10 @@ export function TrueFalseQuestion({
 
           {/* FALSE Button */}
           <motion.button
-            whileHover={!hasAnswered && status === GameStatus.Question ? { scale: 1.02 } : {}}
-            whileTap={!hasAnswered && status === GameStatus.Question ? { scale: 0.98 } : {}}
+            whileHover={canAnswer ? { scale: 1.02 } : {}}
+            whileTap={canAnswer ? { scale: 0.98 } : {}}
             onClick={handleFalse}
-            disabled={hasAnswered || status !== GameStatus.Question}
+            disabled={!canAnswer}
             className={`
               relative p-6 md:p-8 rounded-2xl border-4 transition-all duration-300
               flex flex-col items-center justify-center gap-3

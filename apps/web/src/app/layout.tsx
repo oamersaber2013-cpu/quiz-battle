@@ -1,10 +1,15 @@
 import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/cairo";
+import "@fontsource-variable/outfit";
+import "@fontsource-variable/newsreader";
 import "./globals.css";
+import { AccessibleShell } from "@/components/AccessibleShell";
 import { ToastContainer } from "@/components/ToastContainer";
 
 export const metadata: Metadata = {
   title: "سيف المعرفة | Sword of Knowledge — Real-Time Quiz Battle",
   description: "سيف المعرفة هي لعبة تحدي ثقافي مباشر. نافس أصدقاءك، استخدم القوى الخارقة، وتسلق المراتب. Sword of Knowledge is a real-time multiplayer quiz battle game.",
+  manifest: "/manifest.json",
   icons: {
     icon: "/icon-192.svg",
     apple: "/icon-192.svg",
@@ -19,17 +24,13 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: "#08090d",
+  themeColor: "#101923",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" dir="ltr" data-scroll-behavior="smooth">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -43,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        {children}
+        <AccessibleShell>{children}</AccessibleShell>
         <ToastContainer />
       </body>
     </html>

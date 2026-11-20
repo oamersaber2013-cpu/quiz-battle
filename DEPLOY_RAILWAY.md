@@ -1,90 +1,40 @@
-# Deploy to Railway (Both Frontend & Backend)
+# Publish Sword of Knowledge on Railway
 
-Since Vercel is having build issues, let's deploy everything to Railway which is simpler and free.
+Use the existing [Railway project](https://railway.com/project/69ccea59-310d-4d10-b068-46e9de09647d)
+and its production Postgres and Redis services. Railway reported an expired
+trial on 17 November 2026. An active plan is required before deployment.
+Check that the existing volume contents or backups are available when Postgres
+and Redis come online. Volume listings alone do not verify stored data.
 
-## Step 1: Create Railway Account
-1. Go to https://railway.app
-2. Sign up with GitHub (recommended)
-3. Verify your email
+## Service settings
 
-## Step 2: Deploy Backend (API)
+Both application services build from the repository root and track the
+`main` branch. Use the Docker image's default start command.
 
-1. Click "New Project"
-2. Click "Deploy from GitHub repo"
-3. Select your quiz-battle repository
-4. Railway will detect multiple services
-5. Select `apps/api` folder
-6. Add PostgreSQL database:
-   - Click "+ New"
-   - Select "Database"
-   - Choose "PostgreSQL"
-7. Add Redis:
-   - Click "+ New"
-   - Select "Database"
-   - Choose "Redis"
-8. Configure API environment variables:
-   ```
-   PORT=4000
-   NODE_ENV=production
-   DATABASE_URL=${{Postgres.DATABASE_URL}}
-   REDIS_URL=${{Redis.REDIS_URL}}
-   JWT_SECRET=your-super-secret-key-change-this
-   FRONTEND_URL=https://your-frontend-url.railway.app
-   STRIPE_SECRET_KEY=sk_test_your_key
-   STRIPE_WEBHOOK_SECRET=whsec_your_secret
-   OPENAI_API_KEY=sk-your_key
-   ```
-9. Railway will auto-deploy and give you a URL like:
-   `https://quiz-battle-api-production.up.railway.app`
+| Service | Dockerfile | Port | Health check |
+| --- | --- | --- | --- |
+| API | `Dockerfile.api` | `4000` | `/health` |
+| Web | `Dockerfile.web` | `8000` | `/` |
 
-## Step 3: Deploy Frontend (Web)
+- API `FRONTEND_URL` is `https://web-production-126d2.up.railway.app`
+  and `NODE_ENV` is `production`. Keep the existing `JWT_SECRET` if it meets
+  the production requirements. Use the retained project's `DATABASE_URL` and
+  `REDIS_URL`. Store credentials only in Railway.
+- Web `NEXT_PUBLIC_API_URL` is `https://api-production-1eb9.up.railway.app`.
+  Next.js uses it during the build for both HTTP and Socket.IO.
+- Keep one API replica while active match state lives in that process.
 
-1. In same Railway project, click "+ New"
-2. Select "GitHub Repo"
-3. Choose `apps/web` folder
-4. Configure Web environment variables:
-   ```
-   NEXT_PUBLIC_API_URL=https://your-api-url.railway.app
-   NEXT_PUBLIC_SOCKET_URL=https://your-api-url.railway.app
-   ```
-5. Railway will auto-deploy and give you a URL like:
-   `https://quiz-battle-web-production.up.railway.app`
+## Release and verify
 
-## Step 4: Update Backend with Frontend URL
-
-1. Go back to API service settings
-2. Update `FRONTEND_URL` environment variable with your actual frontend URL
-3. Railway will auto-redeploy
-
-## Step 5: Run Database Migrations
-
-1. In Railway API service, click "Settings"
-2. Scroll to "Deploy"
-3. Add this to "Build Command":
-   ```
-   npm install && npm run build && npx prisma migrate deploy
-   ```
-4. Redeploy
-
-## Done!
-
-Your game is now live 24/7 with permanent URLs:
-- Frontend: `https://quiz-battle-web-production.up.railway.app`
-- Backend: `https://quiz-battle-api-production.up.railway.app`
-
-Share the frontend URL with anyone to play!
-
-## Alternative: Use Render.com
-
-If Railway doesn't work, try Render.com (also free):
-1. Go to https://render.com
-2. Create "Web Service" for API
-3. Create "Static Site" for Web
-4. Follow similar steps as Railway
-
-Both platforms offer:
-- ✅ Free tier
-- ✅ Automatic HTTPS
-- ✅ Permanent URLs
-- ✅ Auto-deploy from GitHub
-- ✅ Built-in databases
+1. Start the existing data services and verify Postgres has the expected
+   database and migration history. Take a backup of retained production data
+   before applying migrations. If Prisma reports an unexpected schema or
+   migration history, inspect it before proceeding.
+2. Promote the reviewed commit to `main` and follow both Railway deployments
+   through a successful build and start. The API startup runs Prisma
+   `migrate deploy` before it serves requests. The API can use its bundled
+   questions so startup requires no seed write.
+3. Check the web home page, the API health endpoint, the exact production CORS
+   origin, and the Socket.IO connection. Create a test room with two browser
+   sessions, play through to results, and reload the authenticated results page.
+   Verify the published URLs and commit after the test.

@@ -3,7 +3,7 @@ import { Worker, Job } from "bullmq";
 import Redis from "ioredis";
 import { prisma } from "@quiz-battle/db";
 import { OpenAI } from "openai";
-import { QuestionCategory, CATEGORY_SAFETY_MAP, SafetyLevel } from "@quiz-battle/shared";
+import { QuestionCategory, QuestionType, CATEGORY_SAFETY_MAP, SafetyLevel } from "@quiz-battle/shared";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const connection = new Redis(redisUrl, { maxRetriesPerRequest: null });
@@ -84,15 +84,15 @@ const questionGenWorker = new Worker(
           where: { hash },
           update: {},
           create: {
+            type: QuestionType.MultipleChoice,
             category,
-            topic,
-            subtopic,
+            subcategory: subtopic || topic,
             difficulty,
             textEn: q.textEn,
             textAr: q.textAr,
             optionsEnJson: JSON.stringify(q.optionsEn),
             optionsArJson: JSON.stringify(q.optionsAr),
-            correctIndex: q.correctIndex,
+            correctAnswer: String(q.correctIndex),
             explanationEn: q.explanationEn,
             explanationAr: q.explanationAr,
             sourceType: safetyLevel === SafetyLevel.LEVEL_2_CONTROLLED ? "hybrid" : "ai_generated",

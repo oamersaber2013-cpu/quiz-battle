@@ -1,107 +1,32 @@
 "use client";
-import { useEffect, useState } from "react";
+import { getApiOrigin } from "@/lib/apiOrigin";
+import { createRoomInvitePath, isRoomCode, isRoomId, normalizeRoomCode } from "@/lib/roomInvites";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { GameMode, Difficulty, GAME_MODE_CONFIG } from "@quiz-battle/shared";
+import { GameMode, Difficulty, DEFAULT_CUSTOM_SETTINGS, getPlayableDifficulties, type CustomGameSettings } from "@quiz-battle/shared";
 import { useGameStore } from "@/store/gameStore";
 import { connectSocket } from "@/lib/socket";
-import { ModeVisualSelector } from "@/components/ModeVisualSelector";
+import styles from "./home.module.css";
 import { CustomModeBuilder } from "@/components/CustomModeBuilder";
+import { isValidRoomPassword } from "@/components/RoomPasswordPrompt";
+import { useDocumentLocale } from "@/hooks/useDocumentLocale";
 
-// Purchase status type
-interface PurchaseStatus {
-  hasPurchased: boolean;
-  shortGames: number;
-  longGames: number;
-  price: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// GAME MODE THEMES - Each mode has unique visual identity
-// ═══════════════════════════════════════════════════════════════════════════════
-interface ModeTheme {
-  mode: GameMode;
-  label: { en: string; ar: string };
-  icon: string;
-  desc: { en: string; ar: string };
-  rounds: number;
-  // Visual Theme Properties
-  gradient: string;
-  glowColor: string;
-  borderColor: string;
-  iconBg: string;
-  particleEffect?: string;
-}
-
-const MODE_THEMES: ModeTheme[] = [
-  { 
-    mode: GameMode.Classic, 
-    label: { en: "Classic", ar: "كلاسيك" }, 
-    icon: "⚔️", 
-    desc: { en: "Forge your legend alone or with friends", ar: "اصنع أسطورتك مع الأصدقاء" }, 
-    rounds: 15,
-    gradient: "linear-gradient(135deg, #6c63ff 0%, #a855f7 50%, #6366f1 100%)",
-    glowColor: "rgba(108, 99, 255, 0.5)",
-    borderColor: "rgba(108, 99, 255, 0.3)",
-    iconBg: "linear-gradient(135deg, #6c63ff 0%, #a855f7 100%)",
-    particleEffect: "swords"
-  },
-  { 
-    mode: GameMode.Survival, 
-    label: { en: "Survival", ar: "بقاء" }, 
-    icon: "💀", 
-    desc: { en: "One wrong answer = elimination", ar: "خطأ واحد = الإقصاء" }, 
-    rounds: 25,
-    gradient: "linear-gradient(135deg, #ff4757 0%, #ff6348 50%, #ff3838 100%)",
-    glowColor: "rgba(255, 71, 87, 0.5)",
-    borderColor: "rgba(255, 71, 87, 0.3)",
-    iconBg: "linear-gradient(135deg, #ff4757 0%, #ff3838 100%)",
-    particleEffect: "skulls"
-  },
-  { 
-    mode: GameMode.Conquest, 
-    label: { en: "Conquest", ar: "غزو" }, 
-    icon: "🌍", 
-    desc: { en: "Conquer the world map", ar: "اغزُ خريطة العالم" }, 
-    rounds: 12,
-    gradient: "linear-gradient(135deg, #2ed573 0%, #1e90ff 50%, #7bed9f 100%)",
-    glowColor: "rgba(46, 213, 115, 0.5)",
-    borderColor: "rgba(46, 213, 115, 0.3)",
-    iconBg: "linear-gradient(135deg, #2ed573 0%, #1e90ff 100%)",
-    particleEffect: "earth"
-  },
-  { 
-    mode: GameMode.Chaos, 
-    label: { en: "Chaos", ar: "فوضى" }, 
-    icon: "😈", 
-    desc: { en: "Expect the unexpected", ar: "توقع ما لا يُتوقع" }, 
-    rounds: 15,
-    gradient: "linear-gradient(135deg, #ff00ff 0%, #00ffff 50%, #ff00ff 100%)",
-    glowColor: "rgba(255, 0, 255, 0.6)",
-    borderColor: "rgba(255, 0, 255, 0.4)",
-    iconBg: "linear-gradient(135deg, #ff00ff 0%, #00ffff 100%)",
-    particleEffect: "chaos"
-  },
-  { 
-    mode: GameMode.Custom, 
-    label: { en: "Custom", ar: "مخصص" }, 
-    icon: "⚙️", 
-    desc: { en: "Create your own rules", ar: "ابتكر قواعدك الخاصة" }, 
-    rounds: 15,
-    gradient: "linear-gradient(135deg, #8b5cf6 0%, #a78bfa 50%, #7c3aed 100%)",
-    glowColor: "rgba(139, 92, 246, 0.5)",
-    borderColor: "rgba(139, 92, 246, 0.3)",
-    iconBg: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
-    particleEffect: "gears"
-  },
+const MODE_THEMES = [
+  { mode: GameMode.Classic, label: { en: "Classic", ar: "كلاسيك" }, desc: { en: "Compete for the highest score.", ar: "تنافس على أعلى نتيجة." } },
+  { mode: GameMode.Survival, label: { en: "Survival", ar: "البقاء" }, desc: { en: "One wrong answer means elimination.", ar: "إجابة خاطئة واحدة تعني الإقصاء." } },
+  { mode: GameMode.Conquest, label: { en: "Conquest", ar: "غزو" }, desc: { en: "Answer questions and claim territories.", ar: "أجب عن الأسئلة وسيطر على الأقاليم." } },
+  { mode: GameMode.Chaos, label: { en: "Chaos", ar: "فوضى" }, desc: { en: "Quiz rounds with unpredictable twists.", ar: "تحديات ثقافية مليئة بالمفاجآت." } },
+  { mode: GameMode.Custom, label: { en: "Custom", ar: "مخصص" }, desc: { en: "Set the pace, subjects, and powers.", ar: "اختر الجولات والمواضيع والقوى." } },
 ];
 
 const DIFFICULTIES = [
-  { value: Difficulty.Novice, label: { en: "Novice", ar: "مبتدئ" }, color: "#00e676", icon: "🌱" },
-  { value: Difficulty.Scholar, label: { en: "Scholar", ar: "باحث" }, color: "#00d4ff", icon: "📚" },
-  { value: Difficulty.Sage, label: { en: "Sage", ar: "حكيم" }, color: "#ffa502", icon: "🦉" },
-  { value: Difficulty.Master, label: { en: "Master", ar: "خبير" }, color: "#ff6b6b", icon: "⚔️" },
-  { value: Difficulty.Legend, label: { en: "Legend", ar: "أسطورة" }, color: "#ffd700", icon: "👑" },
+  { value: Difficulty.Novice, label: { en: "Novice", ar: "مبتدئ" } },
+  { value: Difficulty.Scholar, label: { en: "Scholar", ar: "باحث" } },
+  { value: Difficulty.Sage, label: { en: "Sage", ar: "حكيم" } },
+  { value: Difficulty.Master, label: { en: "Master", ar: "خبير" } },
+  { value: Difficulty.Legend, label: { en: "Legend", ar: "أسطورة" } },
 ];
 
 const CATEGORIES: Record<string, { label: { en: string; ar: string }; icon: string; topics: { id: string; label: { en: string; ar: string } }[] }> = {
@@ -365,6 +290,13 @@ const T = {
     ar: "أعظم معركة ثقافية جماعية. أنشئ غرفتك، اختر مواضيعك، واغزُ العالم."
   },
   joinCode: { en: "🔗 Join Code", ar: "🔗 كود الانضمام" },
+  joinErrors: {
+    format: { en: "Enter a 6-character room code", ar: "أدخل رمز غرفة مكوناً من 6 خانات" },
+    invalid: { en: "Invalid join code", ar: "رمز الغرفة غير صحيح" },
+    guest: { en: "Failed to create guest account", ar: "فشل إنشاء حساب ضيف" },
+    connection: { en: "Could not connect. Check your connection and try again.", ar: "تعذر الاتصال. تحقق من اتصالك ثم حاول مرة أخرى." },
+    rateLimited: { en: "Too many attempts. Wait a minute and try again.", ar: "محاولات كثيرة. انتظر دقيقة ثم حاول مرة أخرى." },
+  },
   warriorName: { en: "Your Battle Name", ar: "اسم المحارب الخاص بك" },
   createRoom: { en: "⚔️ Create Battle Room", ar: "⚔️ إنشاء غرفة معركة" },
   chooseMode: { en: "Choose Game Mode", ar: "اختر نمط اللعبة" },
@@ -377,145 +309,144 @@ const T = {
 export default function HomePage() {
   const router = useRouter();
   const {
-    setAuth, setGame, addToast, userId, username, token,
+    setAuth, setGame, addToast, userId, username,
     language, setLanguage
   } = useGameStore();
 
-  const [view, setView] = useState<"home" | "create" | "join" | "buy">("home");
+  const [view, setView] = useState<"home" | "create" | "join">("home");
   const [selectedMode, setSelectedMode] = useState<GameMode>(GameMode.Classic);
   const [selectedDiff, setSelectedDiff] = useState<Difficulty>(Difficulty.Sage);
   const [selectedCats, setSelectedCats] = useState<string[]>(["general"]);
   const [selectedTopics, setSelectedTopics] = useState<string[]>(["trivia"]);
   const [joinCode, setJoinCode] = useState("");
+  const [joinError, setJoinError] = useState<keyof typeof T.joinErrors | null>(null);
+  const [invitedRoomId, setInvitedRoomId] = useState<string | null>(null);
+  const [invitedAsSpectator, setInvitedAsSpectator] = useState(false);
+  const [entryReady, setEntryReady] = useState(false);
+  const joinSubmit = useRef<HTMLButtonElement>(null);
+  const joinCodeInput = useRef<HTMLInputElement>(null);
+  const playerNameInput = useRef<HTMLInputElement>(null);
+  const joinViewButton = useRef<HTMLButtonElement>(null);
+  const wizardHeading = useRef<HTMLHeadingElement>(null);
+  const returnToJoinButton = useRef(false);
+  const canJoin = !!invitedRoomId || isRoomCode(joinCode);
   const [loading, setLoading] = useState(false);
-  const [inputUsername, setInputUsername] = useState(username || `Warrior${Math.floor(Math.random() * 9999)}`);
-  const [botCount, setBotCount] = useState<number>(0);
-  const [customRounds, setCustomRounds] = useState<number | null>(null);
-  const [showCustomBuilder, setShowCustomBuilder] = useState(false);
-  const [customConfig, setCustomConfig] = useState<any>(null);
+  const [inputUsername, setInputUsername] = useState("");
+  const guestName = inputUsername.trim();
+  const invalidName = !userId && !!guestName && !/^[\p{L}\p{M}\p{N}_ -]{1,20}$/u.test(guestName);
+  const [customConfig, setCustomConfig] = useState<CustomGameSettings>(() => ({
+    ...DEFAULT_CUSTOM_SETTINGS, enabledPowerUps: [...DEFAULT_CUSTOM_SETTINGS.enabledPowerUps],
+  }));
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [isCreating, setIsCreating] = useState(false);
+  const [privateRoom, setPrivateRoom] = useState(false);
+  const [roomPassword, setRoomPassword] = useState("");
+  const playableDifficulties = getPlayableDifficulties(selectedCats);
+  const effectiveCategories = selectedMode === GameMode.Custom && customConfig.categoryFilter
+    ? [customConfig.categoryFilter] : selectedCats;
+  const canCreateWithQuestions = getPlayableDifficulties(effectiveCategories)
+    .includes(selectedMode === GameMode.Custom ? customConfig.difficulty : selectedDiff);
+  useEffect(() => {
+    if (playableDifficulties.length && !playableDifficulties.includes(selectedDiff)) setSelectedDiff(playableDifficulties[0]);
+  }, [selectedDiff, playableDifficulties.join(",")]);
 
-  // Purchase status
-  const [purchaseStatus, setPurchaseStatus] = useState<PurchaseStatus | null>(null);
-  const [checkingPurchase, setCheckingPurchase] = useState(true);
 
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+  useEffect(() => { if (view !== "create") setRoomPassword(""); }, [view]);
+
+  useEffect(() => {
+    setEntryReady(true);
+    if (typeof window === "undefined" || typeof window.location?.search !== "string") return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("join");
+    const room = params.get("room");
+    if (code === null && room === null) return;
+    const inviteLanguage = params.get("lang");
+    if (inviteLanguage === "ar" || inviteLanguage === "en") setLanguage(inviteLanguage);
+    const normalizedCode = normalizeRoomCode(code ?? "");
+    const validRoom = code === null && isRoomId(room) ? room : null;
+    setJoinCode(normalizedCode);
+    setInvitedRoomId(validRoom);
+    setInvitedAsSpectator(params.get("spectate") === "true");
+    setJoinError(validRoom || isRoomCode(normalizedCode) ? null : "format");
+    setView("join");
+  }, [setLanguage]);
+
+  useEffect(() => {
+    if (view === "join") {
+      // The code in an invitation is already complete. Keep the next keystroke
+      // in the name field rather than moving focus back to that code.
+      const hasInvite = !!invitedRoomId || isRoomCode(joinCodeInput.current?.value ?? "");
+      const target = hasInvite ? (userId ? joinSubmit.current : playerNameInput.current) : joinCodeInput.current;
+      target?.focus();
+    }
+    if (view === "home" && returnToJoinButton.current) {
+      returnToJoinButton.current = false;
+      joinViewButton.current?.focus();
+    }
+  }, [view, invitedRoomId]);
+
+  useEffect(() => {
+    if (view === "create") wizardHeading.current?.focus();
+  }, [view, step]);
+
+  const API = getApiOrigin();
 
   const isRTL = language === "ar";
-
-  // Check purchase status on mount
-  useEffect(() => {
-    async function checkPurchaseStatus() {
-      if (!userId || !token) {
-        setPurchaseStatus({
-          hasPurchased: false,
-          shortGames: 0,
-          longGames: 0,
-          price: 35,
-        });
-        setCheckingPurchase(false);
-        return;
-      }
-
-      try {
-        const res = await fetch(`${API}/api/purchase/status`, {
-          headers: { Authorization: `Bearer ${token || ""}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setPurchaseStatus({
-            hasPurchased: Boolean(data.hasPurchased),
-            shortGames: Number(data.shortGames ?? 0),
-            longGames: Number(data.longGames ?? 0),
-            price: Number(data.price ?? 35),
-          });
-        } else {
-          setPurchaseStatus({
-            hasPurchased: false,
-            shortGames: 0,
-            longGames: 0,
-            price: 35,
-          });
-        }
-      } catch (_err) {
-        setPurchaseStatus({
-          hasPurchased: false,
-          shortGames: 0,
-          longGames: 0,
-          price: 35,
-        });
-      } finally {
-        setCheckingPurchase(false);
-      }
-    }
-
-    checkPurchaseStatus();
-  }, [userId, token, API]);
-
-  async function handlePurchase() {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API}/api/purchase/buy`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ paymentMethod: "paypal" }),
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        addToast("error", error.error || "Purchase failed");
-        return;
-      }
-
-      const data = await res.json();
-      setPurchaseStatus({
-        hasPurchased: true,
-        shortGames: data.shortGames,
-        longGames: data.longGames,
-        price: purchaseStatus?.price || 35,
-      });
-      addToast("success", "Game purchased successfully!");
-      setView("home");
-    } catch (err) {
-      addToast("error", "Failed to purchase game");
-    } finally {
-      setLoading(false);
-    }
-  }
+  useDocumentLocale(language);
+  const inviteReturnPath = view === "join"
+    ? createRoomInvitePath({ code: joinCode, roomId: invitedRoomId ?? undefined, language, spectate: invitedAsSpectator }) : "";
+  const accountHref = userId ? "/profile" : inviteReturnPath ? `/login?returnTo=${encodeURIComponent(inviteReturnPath)}` : "/login";
 
   async function handleCreateGame() {
+    if (invalidName || loading) return;
+    if (!canCreateWithQuestions) {
+      addToast("error", isRTL ? "اختر صعوبة متاحة أو معلومات متنوعة." : "Choose an available difficulty or mixed trivia.");
+      return;
+    }
+    if (selectedMode === GameMode.Custom && !customConfig.name.trim()) {
+      addToast("error", isRTL ? "أدخل اسماً للمعركة." : "Enter a battle name.");
+      return;
+    }
+    if (privateRoom && !isValidRoomPassword(roomPassword)) {
+      addToast("error", isRTL ? "أدخل كلمة مرور قصيرة للغرفة." : "Enter a shorter room password.");
+      return;
+    }
     setLoading(true);
     setIsCreating(true);
     try {
       const store = useGameStore.getState();
       let currentId = store.userId;
       let currentToken = store.token;
-      let currentName = inputUsername;
+      let currentName = store.username ?? guestName;
 
       if (!currentId) {
-        const res = await fetch(`${API}/api/auth/guest`, { method: "POST" });
+        const res = await fetch(`${API}/api/auth/guest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: guestName || undefined }),
+        });
         if (!res.ok) {
           addToast("error", isRTL ? "فشل إنشاء حساب ضيف" : "Failed to create guest account");
           return;
         }
         const data = await res.json();
-        setAuth({ ...data, username: currentName });
-        connectSocket(data.userId, currentName, data.token, true);
+        setAuth(data);
+        setInputUsername(data.username);
+        connectSocket(data.userId, data.username, data.token, true);
         currentId = data.userId;
         currentToken = data.token;
+        currentName = data.username;
       }
 
       const gameConfig: any = {
         mode: selectedMode,
-        difficulty: selectedDiff,
+        difficulty: selectedMode === GameMode.Custom ? customConfig.difficulty : selectedDiff,
         categories: selectedCats,
         subcategories: selectedTopics,
         username: currentName,
-        language: language // LOCK LANGUAGE
+        language: language,
+        isPrivate: privateRoom,
+        ...(privateRoom ? { password: roomPassword } : {}),
       };
       
       // Include custom configuration if Custom mode
@@ -534,9 +465,6 @@ export default function HomePage() {
 
       const game = await res.json();
       if (!res.ok) {
-        if (res.status === 402) {
-          setView("buy");
-        }
         addToast("error", game.error || (isRTL ? "فشل في إنشاء اللعبة" : "Failed to create game"));
         return;
       }
@@ -549,10 +477,11 @@ export default function HomePage() {
         joinCode: game.joinCode,
         hostId: currentId || undefined,   // host is the creator
         mode: selectedMode, 
-        difficulty: selectedDiff,
+        difficulty: game.difficulty,
         category: selectedCats.join(", "),
         language: language
       });
+      setRoomPassword("");
       router.push(`/lobby/${game.gameId}`);
     } catch {
       addToast("error", isRTL ? "فشل في إنشاء اللعبة" : "Failed to create game");
@@ -562,675 +491,262 @@ export default function HomePage() {
     }
   }
 
-  async function handleJoinGame() {
-    if (!joinCode.trim()) return;
+  async function handleJoinGame(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (loading || !canJoin || invalidName) return;
+    setJoinError(null);
     setLoading(true);
     try {
-      const store = useGameStore.getState();
-      let currentId = store.userId;
+      let roomId = invitedRoomId;
+      if (!roomId) {
+        const lookup = await fetch(`${API}/api/games/join/${joinCode}`);
+        if (!lookup.ok) {
+          setJoinError(lookup.status === 404 ? "invalid" : lookup.status === 429 ? "rateLimited" : "connection");
+          return;
+        }
+        const { gameId } = await lookup.json();
+        if (!isRoomId(gameId)) {
+          setJoinError("connection");
+          return;
+        }
+        roomId = gameId;
+      }
 
-      if (!currentId) {
-        const res = await fetch(`${API}/api/auth/guest`, { method: "POST" });
+      if (!useGameStore.getState().userId) {
+        const res = await fetch(`${API}/api/auth/guest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: guestName || undefined }),
+        });
         if (!res.ok) {
-          addToast("error", isRTL ? "فشل إنشاء حساب ضيف" : "Failed to create guest account");
+          setJoinError(res.status === 429 ? "rateLimited" : "guest");
           return;
         }
         const data = await res.json();
-        setAuth({ ...data, username: inputUsername });
-        connectSocket(data.userId, inputUsername, data.token, true);
-        currentId = data.userId;
+        setAuth(data);
+        setInputUsername(data.username);
+        connectSocket(data.userId, data.username, data.token, true);
       }
 
-      const res = await fetch(`${API}/api/games/join/${joinCode.trim()}`);
-      if (!res.ok) { addToast("error", isRTL ? "كود غير صحيح" : "Invalid join code"); return; }
-      const { gameId } = await res.json();
-      router.push(`/lobby/${gameId}`);
+      router.push(`/lobby/${encodeURIComponent(roomId)}${invitedAsSpectator ? "?spectate=true" : ""}`);
     } catch {
-      addToast("error", isRTL ? "فشل في الانضمام" : "Failed to join game");
+      setJoinError("connection");
     } finally {
       setLoading(false);
     }
   }
 
+  const modes = MODE_THEMES;
+  const availableCategories = Object.entries(CATEGORIES).filter(([id]) => getPlayableDifficulties([id]).length > 0);
+  const selectedModeDetails = modes.find(mode => mode.mode === selectedMode)!;
+  const selectedDifficulty = DIFFICULTIES.find(item => item.value === (selectedMode === GameMode.Custom ? customConfig.difficulty : selectedDiff));
+  const stepLabels = isRTL ? ["نمط اللعب", "الأقسام والمواضيع", "إعدادات الغرفة"] : ["Game mode", "Subjects & topics", "Room settings"];
+
+  function toggleCategory(id: string) {
+    const category = CATEGORIES[id];
+    if (selectedCats.includes(id)) {
+      if (selectedCats.length === 1) return;
+      setSelectedCats(selectedCats.filter(selected => selected !== id));
+      setSelectedTopics(selectedTopics.filter(topic => !category.topics.some(item => item.id === topic)));
+    } else {
+      setSelectedCats([...selectedCats, id]);
+      if (!selectedTopics.some(topic => category.topics.some(item => item.id === topic))) {
+        setSelectedTopics([...selectedTopics, category.topics[0].id]);
+      }
+    }
+  }
+
+  const inviteHelp = invitedAsSpectator
+    ? (userId ? (isRTL ? "شاهد المعركة بهذا الاسم." : "Watch the match with this name.")
+      : (isRTL ? "اختر اسمك لمشاهدة المعركة." : "Choose your name to watch the match."))
+    : (userId ? (isRTL ? "انضم إلى الغرفة بهذا الاسم." : "Join the room with this name.")
+      : (isRTL ? "اختر اسمك ثم انضم إلى الغرفة." : "Choose your name, then join the room."));
+
+  const nameField = <div className={styles.nameField}>
+    <label htmlFor="player-name">{userId ? (isRTL ? "اسم اللاعب" : "Player name") : (isRTL ? "ادخل اسمك" : "Enter your warrior name")}</label>
+    <input ref={playerNameInput} disabled={!entryReady} id="player-name" className={styles.textInput} value={userId ? username ?? "" : inputUsername}
+      readOnly={!!userId || loading} aria-invalid={invalidName} onChange={event => setInputUsername(event.target.value)}
+      maxLength={20} autoComplete="nickname" placeholder={isRTL ? "ادخل اسمك" : "Enter your warrior name"} aria-describedby="player-name-help" />
+    <p id="player-name-help" className={invalidName ? styles.error : undefined} aria-live="polite">{userId
+      ? (isRTL ? "ستنضم بهذا الاسم." : "You’ll join with this name.")
+      : invalidName
+        ? (isRTL ? "استخدم حروفًا أو أرقامًا أو مسافات أو شرطات (- أو _)." : "Use letters, numbers, spaces, hyphens or underscores.")
+        : (isRTL ? "اتركه فارغًا لاستخدام اسم ضيف تلقائي." : "Leave blank to use an assigned guest name.")}</p>
+  </div>;
+
   return (
-    <main className="page" dir={isRTL ? "rtl" : "ltr"} style={{ background: "var(--clr-bg)" }}>
-      {/* Background orbs */}
-      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 0 }}>
-        <div style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(108,99,255,0.12) 0%, transparent 70%)", top: -100, [isRTL ? "right" : "left"]: -100 }} />
-        <div style={{ position: "absolute", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,212,255,0.08) 0%, transparent 70%)", bottom: 0, [isRTL ? "left" : "right"]: -50 }} />
-      </div>
-
-      <div className="container" style={{ position: "relative", zIndex: 1, padding: "40px 20px", display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
-
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", marginBottom: 20 }}>
-          <Link href="/" className="font-black text-xl" style={{ textDecoration: "none", color: "var(--clr-text)" }}>
-            ⚔️ {T.title[language]}
-          </Link>
-          
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button 
-              className="btn btn-ghost btn-sm" 
-              onClick={() => setLanguage(language === "en" ? "ar" : "en")}
-              style={{ fontWeight: 800, fontSize: "0.85rem", color: "var(--clr-primary)" }}
-            >
-              {language === "en" ? "العربية 🇸🇦" : "English 🇺🇸"}
+    <main className={styles.page} dir={isRTL ? "rtl" : "ltr"}>
+      <div className={styles.shell}>
+        <header className={styles.header}>
+          <Link href="/" className={styles.brand}><img src="/icon-192.svg" width="30" height="30" alt="" />{T.title[language]}</Link>
+          <nav className={styles.navigation} aria-label={isRTL ? "القائمة الرئيسية" : "Main navigation"}>
+            <Link href="/spectate" className={styles.navLink}>{isRTL ? "شاهد المعارك" : "Watch matches"}</Link>
+            <button type="button" className={styles.languageButton} onClick={() => setLanguage(language === "en" ? "ar" : "en")}>
+              {isRTL ? "English" : "العربية"}
             </button>
+            <Link href={accountHref} className={styles.accountLink}>
+              {userId ? (isRTL ? "الملف الشخصي" : "Profile") : (isRTL ? "تسجيل دخول" : "Sign In")}
+            </Link>
+          </nav>
+        </header>
 
-            {userId ? (
-              <Link href="/profile" className="btn btn-secondary btn-sm" style={{ padding: "8px 16px" }}>👤 {isRTL ? "الملف الشخصي" : "Profile"}</Link>
-            ) : (
-              <Link href="/login" className="btn btn-secondary btn-sm" style={{ padding: "8px 16px" }}>{isRTL ? "تسجيل دخول" : "Sign In"}</Link>
-            )}
+        {view === "home" && <section className={styles.hero} aria-labelledby="home-title">
+          <div className={styles.heroArtwork} aria-hidden="true">
+            <picture>
+              <source media="(max-width: 720px)" srcSet="/battle-atlas-small.webp" />
+              <img src="/battle-atlas.webp" alt="" width={1672} height={940} loading="eager" fetchPriority="high" />
+            </picture>
           </div>
-        </div>
-
-        {/* Hero */}
-        <div className="text-center animate-fade-in" style={{ paddingTop: 40, paddingBottom: 48 }}>
-          <div style={{ 
-            fontSize: "5rem", 
-            marginBottom: 16, 
-            animation: "float 3s ease-in-out infinite",
-            filter: "drop-shadow(0 8px 24px rgba(108, 99, 255, 0.5))"
-          }}>⚔️</div>
-          <h1 style={{ 
-            fontSize: "clamp(2.5rem, 6vw, 4.5rem)", 
-            fontWeight: 900, 
-            letterSpacing: isRTL ? "0" : "-0.03em", 
-            lineHeight: 1.1, 
-            marginBottom: 20 
-          }}>
-            <span style={{ 
-              background: "var(--grad-primary)", 
-              WebkitBackgroundClip: "text", 
-              WebkitTextFillColor: "transparent",
-              position: "relative",
-              display: "inline-block"
-            }}>
-              {T.title[language]}
-              <div style={{
-                position: "absolute",
-                inset: 0,
-                background: "var(--grad-primary)",
-                filter: "blur(20px)",
-                opacity: 0.3,
-                zIndex: -1
-              }} />
-            </span>
-          </h1>
-          <p className="text-muted" style={{ 
-            fontSize: "1.15rem", 
-            maxWidth: 520, 
-            margin: "0 auto 32px", 
-            lineHeight: 1.7,
-            fontWeight: 500
-          }}>
-            {T.tagline[language]}
-          </p>
-        </div>
-
-        {/* Loading State */}
-        {checkingPurchase && (
-          <div className="text-center animate-fade-in" style={{ padding: 80 }}>
-            <div style={{ fontSize: "4rem", marginBottom: 20, animation: "float 2s ease-in-out infinite" }}>⚔️</div>
-            <div className="text-muted" style={{ fontSize: "1.1rem" }}>{isRTL ? "جاري التحميل..." : "Loading..."}</div>
-            <div style={{ 
-              width: 200, 
-              height: 4, 
-              background: "var(--clr-surface-2)", 
-              borderRadius: "var(--radius-full)",
-              margin: "20px auto 0",
-              overflow: "hidden"
-            }}>
-              <div style={{
-                width: "40%",
-                height: "100%",
-                background: "var(--grad-primary)",
-                borderRadius: "var(--radius-full)",
-                animation: "shimmer 1.5s ease-in-out infinite"
-              }} />
-            </div>
-          </div>
-        )}
-
-        {/* Main View */}
-        {view === "home" && (
-          <div className="animate-scale-in" style={{ maxWidth: 520, margin: "0 auto", width: "100%" }}>
-            {/* Game Credits Display */}
-            <div className="glass-card p-5 mb-6" style={{ 
-              display: "grid", 
-              gridTemplateColumns: "repeat(3, 1fr)", 
-              gap: 20,
-              textAlign: "center",
-              background: "linear-gradient(135deg, rgba(108,99,255,0.08) 0%, rgba(168,85,247,0.05) 100%)",
-              border: "1px solid rgba(108,99,255,0.2)"
-            }}>
-              <div>
-                <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>⚡</div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, color: (purchaseStatus?.shortGames || 0) > 0 ? "#00e676" : "#ff6b6b", marginBottom: 4 }}>
-                  {purchaseStatus?.shortGames ?? 0}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--clr-text-2)", fontWeight: 600 }}>{isRTL ? "ألعاب قصيرة" : "Short Games"}</div>
-                <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)" }}>1-5 {isRTL ? "جولات" : "rounds"}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>🏆</div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, color: (purchaseStatus?.longGames || 0) > 0 ? "#00d4ff" : "#ff6b6b", marginBottom: 4 }}>
-                  {purchaseStatus?.longGames ?? 0}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--clr-text-2)", fontWeight: 600 }}>{isRTL ? "ألعاب طويلة" : "Long Games"}</div>
-                <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)" }}>10-15 {isRTL ? "جولة" : "rounds"}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: "2.5rem", marginBottom: 8 }}>🎁</div>
-                <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#ffa502", marginBottom: 4 }}>∞</div>
-                <div style={{ fontSize: "0.75rem", color: "var(--clr-text-2)", fontWeight: 600 }}>{isRTL ? "مجاني" : "Free"}</div>
-                <div style={{ fontSize: "0.65rem", color: "var(--clr-text-3)" }}>6-9 {isRTL ? "جولات" : "rounds"}</div>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 28 }}>
-              <label className="text-muted text-sm" style={{ display: "block", marginBottom: 10, textAlign: isRTL ? "right" : "left", fontWeight: 600 }}>
-                {T.warriorName[language]}
-              </label>
-              <input
-                className="input"
-                value={inputUsername}
-                onChange={(e) => setInputUsername(e.target.value)}
-                placeholder={isRTL ? "ادخل اسمك" : "Enter your warrior name"}
-                maxLength={20}
-                style={{ 
-                  textAlign: isRTL ? "right" : "left",
-                  height: 56,
-                  fontSize: "1.05rem",
-                  fontWeight: 600
-                }}
-              />
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <button
-                className="btn btn-primary btn-lg w-full"
-                style={{
-                  background: "var(--grad-primary)",
-                  border: "none",
-                  boxShadow: "0 12px 40px rgba(108,99,255,0.4)",
-                  height: 68,
-                  fontSize: "1.25rem",
-                  fontWeight: 800,
-                  position: "relative",
-                  overflow: "hidden"
-                }}
-                onClick={() => setView("create")}
-              >
-                <span style={{ position: "relative", zIndex: 1 }}>🏰 {isRTL ? "إنشاء غرفة معركة" : "Create Battle Room"}</span>
+          <div className={styles.heroCopy}>
+            <h1 id="home-title">{T.title[language]}</h1>
+            <p className={styles.heroDescription}>{isRTL
+              ? "تحدٍ ثقافي مباشر مع الأصدقاء. أنشئ غرفة أو انضم باستخدام الرمز."
+              : "A live quiz battle with friends. Create a room or enter a code to begin."}</p>
+            {nameField}
+            <div className={styles.heroActions}>
+              <button type="button" className={styles.primaryButton} disabled={!entryReady || invalidName} onClick={() => { setStep(1); setView("create"); }}>
+                {isRTL ? "إنشاء غرفة معركة" : "Create Battle Room"}<span aria-hidden="true">{isRTL ? "←" : "→"}</span>
               </button>
-
-              <button
-                className="btn btn-secondary btn-lg w-full"
-                style={{ 
-                  height: 64, 
-                  fontSize: "1.15rem",
-                  fontWeight: 700,
-                  border: "2px solid var(--clr-border)"
-                }}
-                onClick={() => setView("join")}
-              >
-                🔑 {isRTL ? "انضمام عبر الكود" : "Join with Code"}
+              <button type="button" ref={joinViewButton} disabled={!entryReady} className={styles.secondaryButton} onClick={() => { setJoinError(null); setInvitedRoomId(null); setInvitedAsSpectator(false); setView("join"); }}>
+                {isRTL ? "انضمام عبر الكود" : "Join with Code"}
               </button>
-
-              {!purchaseStatus?.hasPurchased && (
-                <button
-                  className="btn btn-ghost btn-lg w-full"
-                  style={{ 
-                    height: 56, 
-                    fontSize: "1rem", 
-                    border: "2px solid var(--clr-primary)",
-                    fontWeight: 700,
-                    color: "var(--clr-primary)"
-                  }}
-                  onClick={() => setView("buy")}
-                >
-                  💎 {isRTL ? "شراء الوصول للاستضافة" : "Buy Hosting Access"}
-                </button>
-              )}
             </div>
-
-            <div style={{ display: "flex", gap: 20, justifyContent: "center", marginTop: 40, flexWrap: "wrap" }}>
-              {[["👁️ Spectate", "بث مباشر", "/spectate"]].map(([en, ar, href]) => (
-                <Link key={href} href={href} className="text-muted hover:text-white text-sm font-semibold transition-all">
-                  {language === "en" ? en : ar}
-                </Link>
-              ))}
-            </div>
+            {!userId && <p className={styles.guestNote}>{isRTL ? "يمكنك البدء كضيف." : "You can start as a guest."}</p>}
           </div>
-        )}
+        </section>}
 
-        {/* Buy Game View */}
-        {view === "buy" && (
-          <div className="animate-scale-in" style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}>
-            <div className="glass-card p-8 text-center" style={{ border: "2px solid var(--clr-primary)" }}>
-              <div style={{ fontSize: "3rem", marginBottom: 16 }}>🎮</div>
-              <h2 style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 12 }}>
-                {isRTL ? "اشترِ اللعبة" : "Buy the Game"}
-              </h2>
-              <p className="text-muted" style={{ marginBottom: 24 }}>
-                {isRTL
-                  ? "اشترِ اللعبة مرة واحدة واستضف حتى 3 ألعاب قصيرة و 2 طويلة"
-                  : "Buy once to host up to 3 short games (1-5 rounds) and 2 long games (10-15 rounds). Medium games (6-9 rounds) are always FREE!"}
-              </p>
-
-              <div style={{ display: "flex", justifyContent: "center", gap: 30, marginBottom: 24 }}>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "2rem" }}>3</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--clr-muted)" }}>{isRTL ? "ألعاب قصيرة" : "Short Games"}</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "2rem" }}>2</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--clr-muted)" }}>{isRTL ? "ألعاب طويلة" : "Long Games"}</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "2rem" }}>∞</div>
-                  <div style={{ fontSize: "0.8rem", color: "var(--clr-muted)" }}>{isRTL ? "مجاني" : "Free (6-9)"}</div>
-                </div>
-              </div>
-
-              <div style={{ fontSize: "2rem", fontWeight: 800, color: "var(--clr-primary)", marginBottom: 24 }}>
-                {purchaseStatus?.price || 35} QAR
-              </div>
-
-              <button
-                className="btn btn-primary btn-lg w-full"
-                onClick={handlePurchase}
-                disabled={loading}
-                style={{ height: 60, fontSize: "1.2rem" }}
-              >
-                {loading ? "..." : (isRTL ? "اشترِ الآن 💎" : "Buy Now 💎")}
-              </button>
-
-              {userId && (
-                <button
-                  className="btn btn-ghost btn-sm w-full mt-4"
-                  onClick={() => setView("join")}
-                >
-                  {isRTL ? "انضم للعبة بدلاً من ذلك" : "Join a Game Instead"}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Create Game View - Step by Step */}
-        {view === "create" && (
-          <div className="animate-scale-in" style={{ maxWidth: 680, margin: "0 auto", width: "100%" }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setView("home"); setStep(1); }} style={{ marginBottom: 24 }}>
-              {T.back[language]}
+        {view === "create" && <section className={styles.flowShell} aria-labelledby="wizard-title">
+          <div className={styles.flowHeader}>
+            <button type="button" className={styles.backButton} onClick={() => { setView("home"); setStep(1); }}>
+              {isRTL ? "العودة للرئيسية" : "Back to home"}
             </button>
-
-            {/* Progress Steps */}
-            <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 32 }}>
-              {[1, 2, 3].map((s) => (
-                <div
-                  key={s}
-                  style={{
-                    width: step >= s ? 48 : 40,
-                    height: step >= s ? 48 : 40,
-                    borderRadius: "50%",
-                    background: step >= s ? "var(--grad-primary)" : "var(--clr-surface-2)",
-                    border: step === s ? "3px solid var(--clr-primary)" : "2px solid var(--clr-border)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontWeight: 800,
-                    fontSize: "1.1rem",
-                    transition: "all 0.3s ease",
-                    boxShadow: step === s ? "0 0 20px rgba(108,99,255,0.5)" : "none"
-                  }}
-                >
-                  {s}
-                </div>
-              ))}
-            </div>
-
-            {/* Step 1: Mode Selection */}
-            {step === 1 && (
-              <div className="animate-fade-in">
-                <h2 className="text-2xl font-bold mb-6" style={{ textAlign: "center" }}>
-                  {T.chooseMode[language]}
-                </h2>
-                <ModeVisualSelector
-                  selectedMode={selectedMode}
-                  onSelect={setSelectedMode}
-                  language={language}
-                />
-                <button
-                  className="btn btn-primary btn-lg w-full mt-8"
-                  onClick={() => setStep(2)}
-                  style={{ height: 60, fontSize: "1.1rem" }}
-                >
-                  {isRTL ? "التالي →" : "Next →"}
+            <ol className={styles.stepper} aria-label={isRTL ? "خطوات إنشاء الغرفة" : "Room creation steps"}>
+              {stepLabels.map((label, index) => <li key={label}>
+                <button type="button" aria-current={step === index + 1 ? "step" : undefined} onClick={() => setStep((index + 1) as 1 | 2 | 3)}>
+                  {step > index + 1 && <span aria-hidden="true">✓</span>}{label}
                 </button>
-              </div>
-            )}
-
-            {/* Step 2: Category & Topics */}
-            {step === 2 && (
-              <div className="animate-fade-in">
-                <h2 className="text-2xl font-bold mb-4" style={{ textAlign: "center" }}>
-                  {T.chooseCategory[language]}
-                </h2>
-                <p className="text-muted text-sm mb-6" style={{ textAlign: "center" }}>
-                  {isRTL ? "اختر فئة واحدة أو أكثر، ثم اختر المواضيع" : "Select one or more categories, then choose topics"}
-                </p>
-                
-                {/* ALL Categories - Scrollable */}
-                <div className="glass-card p-6 mb-6" style={{ maxHeight: "50vh", overflowY: "auto" }}>
-                  <div className="text-sm font-bold mb-3" style={{ color: "var(--clr-primary)" }}>
-                    {isRTL ? "الفئات المتاحة" : "Available Categories"} ({Object.keys(CATEGORIES).length})
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
-                    {Object.entries(CATEGORIES).map(([id, cat]) => {
-                      const isSelected = selectedCats.includes(id);
-                      return (
-                        <div
-                          key={id}
-                          className={`mode-card category-card ${isSelected ? "selected" : ""}`}
-                          onClick={() => { 
-                            if (isSelected) {
-                              // Deselect category
-                              const newCats = selectedCats.filter(c => c !== id);
-                              if (newCats.length === 0) return; // Must have at least 1
-                              setSelectedCats(newCats);
-                              // Remove topics from this category
-                              const catTopicIds = cat.topics.map(t => t.id);
-                              setSelectedTopics(selectedTopics.filter(t => !catTopicIds.includes(t)));
-                            } else {
-                              // Select category
-                              setSelectedCats([...selectedCats, id]);
-                              // Auto-select first topic
-                              if (!selectedTopics.some(t => cat.topics.map(tp => tp.id).includes(t))) {
-                                setSelectedTopics([...selectedTopics, cat.topics[0].id]);
-                              }
-                            }
-                          }}
-                          style={{ 
-                            padding: "16px 12px", 
-                            textAlign: "center",
-                            background: isSelected 
-                              ? "linear-gradient(135deg, rgba(108, 99, 255, 0.25) 0%, rgba(168, 85, 247, 0.15) 100%)" 
-                              : undefined,
-                            borderColor: isSelected ? "rgba(108, 99, 255, 0.6)" : undefined,
-                            boxShadow: isSelected ? "0 8px 32px rgba(108, 99, 255, 0.4)" : undefined,
-                            transform: isSelected ? "scale(1.02)" : "scale(1)",
-                            cursor: "pointer",
-                            position: "relative"
-                          }}
-                        >
-                          {isSelected && (
-                            <div style={{ 
-                              position: "absolute",
-                              top: 6,
-                              right: 6,
-                              width: 20,
-                              height: 20,
-                              borderRadius: "50%",
-                              background: "var(--clr-success)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: "0.7rem",
-                              fontWeight: 900,
-                              color: "white"
-                            }}>✓</div>
-                          )}
-                          <div style={{ 
-                            fontSize: "2.2rem", 
-                            marginBottom: 6,
-                            filter: isSelected ? "drop-shadow(0 4px 12px rgba(108, 99, 255, 0.6))" : "none"
-                          }}>{cat.icon}</div>
-                          <div style={{ 
-                            fontWeight: 800, 
-                            fontSize: "0.8rem",
-                            color: isSelected ? "#fff" : undefined,
-                            lineHeight: 1.2
-                          }}>{cat.label[language]}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Topics for Selected Categories */}
-                {selectedCats.length > 0 && (
-                  <div className="glass-card p-6 mb-6" style={{ maxHeight: "40vh", overflowY: "auto" }}>
-                    <div className="text-sm font-bold mb-3" style={{ color: "var(--clr-primary)" }}>
-                      {isRTL ? "اختر المواضيع" : "Choose Topics"}
-                    </div>
-                    {selectedCats.map(catId => (
-                      <div key={catId} style={{ marginBottom: 16 }}>
-                        <div className="text-xs font-bold uppercase tracking-widest text-muted mb-2" style={{ color: "var(--clr-secondary)", opacity: 0.9 }}>
-                          {CATEGORIES[catId].icon} {CATEGORIES[catId].label[language]}
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {CATEGORIES[catId].topics.map((topic) => {
-                            const isSelected = selectedTopics.includes(topic.id);
-                            return (
-                              <button
-                                key={topic.id}
-                                onClick={() => {
-                                  if (isSelected) {
-                                    const newTopics = selectedTopics.filter(t => t !== topic.id);
-                                    if (newTopics.length > 0) setSelectedTopics(newTopics);
-                                  } else {
-                                    setSelectedTopics([...selectedTopics, topic.id]);
-                                  }
-                                }}
-                                style={{
-                                  padding: "8px 12px",
-                                  borderRadius: "var(--radius-full)",
-                                  border: `2px solid ${isSelected ? "var(--clr-primary)" : "var(--clr-border)"}`,
-                                  background: isSelected ? "rgba(108, 99, 255, 0.2)" : "var(--clr-surface-2)",
-                                  color: isSelected ? "#fff" : "var(--clr-text-2)",
-                                  fontWeight: isSelected ? 700 : 500,
-                                  cursor: "pointer",
-                                  fontSize: "0.8rem",
-                                  transition: "all 0.2s ease"
-                                }}
-                              >
-                                {isSelected && "✓ "}{topic.label[language]}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Selection Summary */}
-                <div className="glass-card p-4 mb-6" style={{ background: "rgba(108,99,255,0.08)", border: "1px solid rgba(108,99,255,0.3)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <span className="text-sm font-bold" style={{ color: "var(--clr-primary)" }}>
-                        {isRTL ? "الفئات:" : "Categories:"}
-                      </span>
-                      <span className="text-sm ml-2" style={{ fontWeight: 600 }}>{selectedCats.length}</span>
-                    </div>
-                    <div>
-                      <span className="text-sm font-bold" style={{ color: "var(--clr-secondary)" }}>
-                        {isRTL ? "المواضيع:" : "Topics:"}
-                      </span>
-                      <span className="text-sm ml-2" style={{ fontWeight: 600 }}>{selectedTopics.length}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button
-                    className="btn btn-secondary btn-lg"
-                    onClick={() => setStep(1)}
-                    style={{ height: 60, fontSize: "1.1rem", flex: 1 }}
-                  >
-                    {isRTL ? "← السابق" : "← Back"}
-                  </button>
-                  <button
-                    className="btn btn-primary btn-lg"
-                    onClick={() => setStep(3)}
-                    style={{ height: 60, fontSize: "1.1rem", flex: 2 }}
-                  >
-                    {isRTL ? "التالي →" : "Next →"}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Step 3: Difficulty & Create */}
-            {step === 3 && (
-              <div className="animate-fade-in">
-                <h2 className="text-2xl font-bold mb-6" style={{ textAlign: "center" }}>
-                  {T.difficulty[language]}
-                </h2>
-                
-                <div className="glass-card p-6 mb-6">
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
-                    {DIFFICULTIES.map(({ value, label, color, icon }) => (
-                      <button
-                        key={value}
-                        onClick={() => setSelectedDiff(value)}
-                        style={{
-                          padding: "20px 16px",
-                          borderRadius: "var(--radius-lg)",
-                          border: `3px solid ${selectedDiff === value ? color : "var(--clr-border)"}`,
-                          background: selectedDiff === value ? `${color}25` : "var(--clr-surface-2)",
-                          color: selectedDiff === value ? color : "var(--clr-text-2)",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          fontSize: "1rem",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 8,
-                          transition: "all 0.3s ease",
-                          transform: selectedDiff === value ? "scale(1.05)" : "scale(1)",
-                          boxShadow: selectedDiff === value ? `0 8px 24px ${color}40` : "none"
-                        }}
-                      >
-                        <span style={{ fontSize: "2rem" }}>{icon}</span>
-                        <span>{label[language]}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Summary */}
-                <div className="glass-card p-5 mb-6" style={{ background: "rgba(108,99,255,0.08)", border: "1px solid rgba(108,99,255,0.3)" }}>
-                  <div className="text-sm font-bold mb-3" style={{ color: "var(--clr-primary)" }}>
-                    {isRTL ? "ملخص اللعبة" : "Game Summary"}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: "0.9rem" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span className="text-muted">{isRTL ? "الوضع:" : "Mode:"}</span>
-                      <span className="font-bold">{MODE_THEMES.find(m => m.mode === selectedMode)?.label[language]}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span className="text-muted">{isRTL ? "الصعوبة:" : "Difficulty:"}</span>
-                      <span className="font-bold">{DIFFICULTIES.find(d => d.value === selectedDiff)?.label[language]}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span className="text-muted">{isRTL ? "الفئات:" : "Categories:"}</span>
-                      <span className="font-bold">{selectedCats.length}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Custom Mode Builder */}
-                {selectedMode === GameMode.Custom && (
-                  <div className="mb-6 animate-fade-in">
-                    <CustomModeBuilder
-                      isOpen={true}
-                      onClose={() => {}}
-                      onSave={(config) => {
-                        setCustomConfig(config);
-                        addToast("success", isRTL ? "تم حفظ الإعدادات المخصصة" : "Custom settings saved");
-                      }}
-                      language={language}
-                    />
-                  </div>
-                )}
-
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button
-                    className="btn btn-secondary btn-lg"
-                    onClick={() => setStep(2)}
-                    style={{ height: 60, fontSize: "1.1rem", flex: 1 }}
-                  >
-                    {isRTL ? "← السابق" : "← Back"}
-                  </button>
-                  <button
-                    className="btn btn-primary btn-lg"
-                    onClick={handleCreateGame}
-                    disabled={loading || isCreating}
-                    style={{ height: 60, fontSize: "1.2rem", fontWeight: 900, flex: 2, boxShadow: "0 12px 40px rgba(108,99,255,0.5)" }}
-                  >
-                    {isCreating ? (
-                      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ width: 20, height: 20, border: "3px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                        {isRTL ? "جاري الإنشاء..." : "Creating..."}
-                      </span>
-                    ) : `⚔️ ${T.createRoom[language]}`}
-                  </button>
-                </div>
-              </div>
-            )}
+              </li>)}
+            </ol>
           </div>
-        )}
+          <div className={styles.flowGrid}>
+            <div className={styles.flowMain}>
+              <h1 ref={wizardHeading} tabIndex={-1} id="wizard-title">{step === 1 ? T.chooseMode[language] : step === 2 ? T.chooseCategory[language] : selectedMode === GameMode.Custom ? (isRTL ? "معركتك المخصصة" : "Your custom battle") : T.difficulty[language]}</h1>
 
-        {/* Join View */}
-        {view === "join" && (
-          <div className="animate-scale-in" style={{ maxWidth: 400, margin: "0 auto", width: "100%" }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setView("home")} style={{ marginBottom: 24 }}>
-              {T.back[language]}
-            </button>
+              {step === 1 && <fieldset className={styles.modeGrid}>
+                <legend className={styles.srOnly}>{T.chooseMode[language]}</legend>
+                {modes.map(mode => <label key={mode.mode} className={`${styles.modeCard} ${selectedMode === mode.mode ? styles.selected : ""}`}>
+                  <input type="radio" name="game-mode" value={mode.mode} checked={selectedMode === mode.mode} onChange={() => setSelectedMode(mode.mode)} />
+                  <span className={styles.modeName}>{mode.label[language]}</span>
+                  <span className={styles.modeDescription}>{mode.desc[language]}</span>
+                </label>)}
+              </fieldset>}
 
-            <div className="glass-card p-8 text-center">
-              <h2 className="text-2xl font-bold mb-2">{T.joinCode[language]}</h2>
-              <p className="text-muted text-sm mb-8">{isRTL ? "أدخل الكود المكون من 6 أرقام" : "Enter the 6-character code"}</p>
+              {step === 2 && <>
+                <p className={styles.intro}>{isRTL ? "اختر قسماً واحداً أو أكثر، ثم حدّد المواضيع." : "Choose one or more subjects, then select your topics."}</p>
+                <div className={styles.categoryGrid} aria-label={isRTL ? "الأقسام المتاحة" : "Available categories"}>
+                  {availableCategories.map(([id, category]) => <button type="button" key={id}
+                    className={`${styles.categoryChoice} ${selectedCats.includes(id) ? styles.selected : ""}`}
+                    aria-pressed={selectedCats.includes(id)} disabled={selectedCats.length === 1 && selectedCats.includes(id)} onClick={() => toggleCategory(id)}>
+                    <span className={styles.choiceCheck} aria-hidden="true">{selectedCats.includes(id) ? "✓" : ""}</span>{category.label[language]}
+                  </button>)}
+                </div>
+                <div className={styles.topics}>
+                  <h2>{isRTL ? "اختر المواضيع" : "Choose topics"}</h2>
+                  {selectedCats.map(id => <fieldset key={id} className={styles.topicGroup}>
+                    <legend>{CATEGORIES[id].label[language]}</legend>
+                    <div className={styles.topicChoices}>{CATEGORIES[id].topics.map(topic => <button type="button" key={topic.id}
+                      className={`${styles.topicButton} ${selectedTopics.includes(topic.id) ? styles.selected : ""}`}
+                      aria-pressed={selectedTopics.includes(topic.id)} disabled={selectedTopics.length === 1 && selectedTopics.includes(topic.id)}
+                      onClick={() => setSelectedTopics(selectedTopics.includes(topic.id) ? selectedTopics.filter(id => id !== topic.id) : [...selectedTopics, topic.id])}>
+                      {selectedTopics.includes(topic.id) && <span aria-hidden="true">✓ </span>}{topic.label[language]}
+                    </button>)}</div>
+                  </fieldset>)}
+                </div>
+              </>}
 
-              <input
-                className="input"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                placeholder="ABCXYZ"
-                maxLength={6}
-                style={{ 
-                  textAlign: "center", 
-                  fontSize: "2rem", 
-                  fontWeight: 900, 
-                  letterSpacing: "0.2em", 
-                  fontFamily: "monospace", 
-                  marginBottom: 24,
-                  height: 70
-                }}
-              />
+              {step === 3 && <div className={styles.settings}>
+                {selectedMode === GameMode.Custom ? <div className={styles.customSettings}>
+                  <CustomModeBuilder value={customConfig} onChange={setCustomConfig} selectedCategories={selectedCats} language={language} />
+                </div> : <>
+                  <div className={styles.difficultyGrid}>
+                    {DIFFICULTIES.filter(item => playableDifficulties.includes(item.value)).map(item => <button key={item.value} type="button"
+                      className={`${styles.difficultyButton} ${selectedDiff === item.value ? styles.selected : ""}`}
+                      aria-pressed={selectedDiff === item.value} onClick={() => setSelectedDiff(item.value)}>
+                      {item.label[language]}{selectedDiff === item.value && <span aria-hidden="true">✓</span>}
+                    </button>)}
+                  </div>
+                  {playableDifficulties.length < DIFFICULTIES.length && <div className={styles.availabilityNote}>
+                    <p role={!playableDifficulties.length ? "alert" : undefined}>{playableDifficulties.length
+                      ? (isRTL ? "هذه المستويات متاحة للأقسام المختارة." : "These levels are available for your selected subjects.")
+                      : (isRTL ? "لا يوجد مستوى مشترك. غيّر الأقسام أو استخدم معلومات متنوعة." : "No shared difficulty. Change subjects or use mixed trivia.")}</p>
+                    <button type="button" className={styles.textButton} onClick={() => { setSelectedCats(["general"]); setSelectedTopics(["trivia"]); }}>
+                      {isRTL ? "استخدام معلومات متنوعة" : "Use mixed trivia"}
+                    </button>
+                  </div>}
+                </>}
 
-              <button
-                className="btn btn-primary btn-lg w-full"
-                onClick={handleJoinGame}
-                disabled={loading || joinCode.length < 6}
-                style={{ height: 60, fontSize: "1.1rem" }}
-              >
-                {loading ? "..." : T.joinCode[language]}
-              </button>
+                <section className={styles.privacy}>
+                  <label className={styles.privateToggle}>
+                    <input type="checkbox" name="privateRoom" checked={privateRoom} onChange={event => { setPrivateRoom(event.target.checked); if (!event.target.checked) setRoomPassword(""); }} />
+                    {isRTL ? "غرفة خاصة بكلمة مرور" : "Private room with a password"}
+                  </label>
+                  {privateRoom && <div className={styles.passwordField}>
+                    <label htmlFor="create-room-password">{isRTL ? "كلمة مرور الغرفة" : "Room password"}</label>
+                    <input id="create-room-password" className={styles.textInput} type="password" autoComplete="off" value={roomPassword}
+                      aria-describedby="room-password-help" aria-invalid={roomPassword.length > 0 && !isValidRoomPassword(roomPassword)} onChange={event => setRoomPassword(event.target.value)} />
+                    <p id="room-password-help">{isRTL ? "شارك كلمة المرور مع من تدعوهم للعب أو المشاهدة." : "Share the password with the people you invite to play or watch."}</p>
+                    {roomPassword.length > 0 && !isValidRoomPassword(roomPassword) && <p role="alert" className={styles.error}>{isRTL ? "كلمة المرور طويلة جداً. استخدم كلمة مرور أقصر." : "Password is too long. Please use a shorter password."}</p>}
+                  </div>}
+                </section>
+              </div>}
             </div>
-          </div>
-        )}
 
-        {/* Footer info */}
-        <div style={{ marginTop: "auto", paddingTop: 40, textAlign: "center" }}>
-          <p className="text-muted text-xs opacity-50">
-            © 2024 Sword of Knowledge • سيف المعرفة. All rights reserved.
-          </p>
-        </div>
+            <aside className={styles.summary} aria-labelledby="room-summary-title">
+              <h2 id="room-summary-title">{isRTL ? "ملخص اللعبة" : "Game Summary"}</h2>
+              <ul>
+                <li>{isRTL ? "النمط" : "Mode"}<strong>{selectedModeDetails.label[language]}</strong></li>
+                <li>{isRTL ? "الأقسام" : "Subjects"}<strong>{effectiveCategories.map(id => CATEGORIES[id]?.label[language] ?? id).join(isRTL ? "، " : ", ")}</strong></li>
+                <li>{isRTL ? "المواضيع" : "Topics"}<strong>{!selectedTopics.length || (selectedMode === GameMode.Custom && customConfig.categoryFilter) ? (isRTL ? "جميع مواضيع القسم" : "All subject topics") : selectedTopics.length}</strong></li>
+                {step === 3 && <li>{isRTL ? "الصعوبة" : "Difficulty"}<strong>{selectedDifficulty?.label[language]}</strong></li>}
+                <li>{isRTL ? "الغرفة" : "Room"}<strong>{privateRoom ? (isRTL ? "خاصة" : "Private") : (isRTL ? "عامة" : "Public")}</strong></li>
+                {selectedMode === GameMode.Custom && step === 3 && <li>{isRTL ? "الجولات" : "Rounds"}<strong>{customConfig.rounds}</strong></li>}
+              </ul>
+            </aside>
+          </div>
+          <div className={styles.flowActions}>
+            {step > 1 && <button type="button" className={styles.secondaryButton} onClick={() => setStep((step - 1) as 1 | 2)}>{isRTL ? "← السابق" : "← Back"}</button>}
+            {step < 3 ? <button type="button" className={styles.primaryButton} onClick={() => setStep((step + 1) as 2 | 3)}>{isRTL ? "التالي →" : "Next →"}</button>
+              : <button type="button" className={styles.primaryButton} onClick={handleCreateGame}
+                disabled={loading || isCreating || !canCreateWithQuestions || (privateRoom && !isValidRoomPassword(roomPassword))}>
+                {isCreating ? (isRTL ? "جارٍ الإنشاء..." : "Creating...") : (isRTL ? "إنشاء غرفة معركة" : "Create Battle Room")}
+              </button>}
+          </div>
+        </section>}
+
+        {view === "join" && <section className={styles.joinShell}>
+          <button type="button" className={styles.backButton} disabled={loading} onClick={() => { returnToJoinButton.current = true; setInvitedRoomId(null); setInvitedAsSpectator(false); setView("home"); }}>{T.back[language]}</button>
+          <form className={styles.joinCard} onSubmit={handleJoinGame} aria-busy={loading}>
+            <h1 id="join-code-heading">{invitedRoomId ? (isRTL ? "الانضمام إلى الغرفة" : "Join invited room") : (isRTL ? "كود الانضمام" : "Join Code")}</h1>
+            <p id="join-code-help" className={styles.intro}>{canJoin ? inviteHelp
+              : (isRTL ? "أدخل رمز الغرفة المكون من 6 خانات." : "Enter the 6-character room code.")}</p>
+            {!invitedRoomId && <input ref={joinCodeInput} className={styles.codeInput} aria-labelledby="join-code-heading" aria-describedby={joinError ? "join-code-help join-code-error" : "join-code-help"}
+              aria-invalid={joinError === "invalid" || joinError === "format"} autoCapitalize="characters" autoComplete="off" spellCheck={false} dir="ltr" readOnly={loading}
+              value={joinCode} onChange={event => { setJoinCode(normalizeRoomCode(event.target.value)); setJoinError(null); }} placeholder="ABCXYZ" maxLength={32} />}
+            {nameField}
+            {joinError && <p id="join-code-error" role="alert" className={styles.error}>{T.joinErrors[joinError][language]}</p>}
+            <button type="submit" ref={joinSubmit} className={styles.primaryButton} disabled={loading || !canJoin || invalidName}>{loading
+              ? invitedAsSpectator ? (isRTL ? "جارٍ فتح المعركة..." : "Opening match...") : (isRTL ? "جارٍ الانضمام..." : "Joining...")
+              : invitedAsSpectator ? (isRTL ? "شاهد المعركة" : "Watch match") : (isRTL ? "انضم إلى الغرفة" : "Join room")}</button>
+            {invitedRoomId && <button type="button" className={styles.textButton} disabled={loading} onClick={() => { setInvitedRoomId(null); setInvitedAsSpectator(false); setJoinCode(""); setJoinError(null); }}>
+              {isRTL ? "استخدام رمز غرفة أخرى" : "Use another room code"}
+            </button>}
+          </form>
+        </section>}
+
+        <footer className={styles.footer}>
+          <span>© {new Date().getFullYear()} {T.title[language]}</span>
+          <Link href="/spectate" className={styles.mobileWatchLink}>{isRTL ? "شاهد المعارك" : "Watch matches"}</Link>
+        </footer>
       </div>
     </main>
   );

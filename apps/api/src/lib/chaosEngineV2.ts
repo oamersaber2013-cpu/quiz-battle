@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { Server } from "socket.io";
+import type { ChaosDramaSnapshot, ChaosVote } from "@quiz-battle/shared";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES & INTERFACES
@@ -79,6 +80,8 @@ interface ChaosStateV2 {
   
   // Voting state
   activeVoting: VotingSession | null;
+  pendingDrama: ChaosDramaSnapshot | null;
+  votingClosed: boolean;
   
   // Game state tracking
   consecutiveWrongAnswers: number;
@@ -90,12 +93,14 @@ interface VotingSession {
   dramaEventId: string;
   targetPlayerId: string;
   targetUsername: string;
-  votes: Map<string, VoteOption>;
-  startTime: number;
-  duration: number;
-  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
-  result?: VoteOption;
-  intensity: number; // 0-10, how aggressive the votes are
+  votes: Map<string, ChaosVote>;
+  eligibleVoters: ReadonlySet<string>;
+  endsAt: number;
+  durationMs: number;
+  timer: ReturnType<typeof setTimeout>;
+  settled: Promise<void>;
+  resolveSettlement: () => void;
+  onChanged?: () => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -123,6 +128,7 @@ const CHAOS_DECAY_INTERVAL = 30000; // 30 seconds
 const MOMENTUM_BURST_THRESHOLD = 3; // 3 events in short time = burst
 const MOMENTUM_BURST_BONUS = 20;   // +20 chaos on burst
 const MOMENTUM_TIME_WINDOW = 10000; // 10 seconds window
+const PENDING_DRAMA_LIFETIME_MS = 30000;
 
 const EVENT_COOLDOWNS: Record<ChaosEvent, number> = {
   NONE: 0,
@@ -176,6 +182,7 @@ const PERSONALITY_WEIGHTS: Record<ChaosPersonality, Partial<Record<ChaosEvent, n
 
 // Store chaos states
 const chaosStates = new Map<string, ChaosStateV2>();
+const decayTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // INITIALIZATION
@@ -185,6 +192,9 @@ export function initializeChaosV2(
   gameId: string,
   personality: ChaosPersonality = "RANDOM"
 ): ChaosStateV2 {
+  const existing = getChaosV2(gameId);
+  if (existing) return existing;
+
   const state: ChaosStateV2 = {
     gameId,
     chaosLevel: 0,
@@ -208,6 +218,8 @@ export function initializeChaosV2(
     eventCooldowns: new Map(),
     eventHistory: [],
     activeVoting: null,
+    pendingDrama: null,
+    votingClosed: false,
     consecutiveWrongAnswers: 0,
     leaderPlayerId: null,
     scoreSpread: 0,
@@ -226,6 +238,13 @@ export function getChaosV2(gameId: string): ChaosStateV2 | undefined {
 }
 
 export function cleanupChaosV2(gameId: string): void {
+  const voting = getChaosV2(gameId)?.activeVoting;
+  if (voting) {
+    clearTimeout(voting.timer);
+    voting.resolveSettlement();
+  }
+  clearInterval(decayTimers.get(gameId));
+  decayTimers.delete(gameId);
   chaosStates.delete(gameId);
 }
 
@@ -416,6 +435,8 @@ function startDecayLoop(gameId: string): void {
       state.lastDecay = now;
     }
   }, 5000); // Check every 5 seconds
+  interval.unref();
+  decayTimers.set(gameId, interval);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -736,14 +757,15 @@ export function recordDramaV2(
   username: string
 ): { dramaId: string; chaosIncreased: boolean } | null {
   const state = getChaosV2(gameId);
-  if (!state) return null;
+  if (!state || state.votingClosed) return null;
+  if (!["TAB_LEFT", "INACTIVITY", "SWITCHED_APP", "SUSPICIOUS_BEHAVIOR"].includes(type)) return null;
   
   // Update profile
   const profile = getPlayerProfile(gameId, playerId);
   const now = Date.now();
   
   // Anti-spam cooldown
-  if (now - profile.lastDramaTime < 10000) {
+  if (profile.lastDramaTime > 0 && now - profile.lastDramaTime < 10000) {
     return null;
   }
   
@@ -757,10 +779,16 @@ export function recordDramaV2(
   recordEvent(gameId);
   
   const dramaId = `drama_${now}_${Math.random().toString(36).substr(2, 9)}`;
+  state.pendingDrama = { id: dramaId, type, playerId, username, expiresAt: now + PENDING_DRAMA_LIFETIME_MS };
   
   console.log(`[CHAOS] Drama recorded: ${type} by ${username}`);
   
   return { dramaId, chaosIncreased: true };
+}
+
+export function getPendingChaosDrama(gameId: string, now = Date.now()): ChaosDramaSnapshot | null {
+  const pendingDrama = getChaosV2(gameId)?.pendingDrama;
+  return pendingDrama && pendingDrama.expiresAt > now ? pendingDrama : null;
 }
 
 // Export everything

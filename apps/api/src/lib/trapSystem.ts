@@ -261,6 +261,7 @@ export async function evaluateTrap(
   
   // Wait 1.5 seconds for suspense
   await new Promise(resolve => setTimeout(resolve, 1500));
+  if (getTrap(gameId) !== trap) return null;
   
   // Emit results
   emitTrapResults(io, trap);

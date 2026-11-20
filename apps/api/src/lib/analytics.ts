@@ -106,4 +106,13 @@ export async function updateLeaderboard() {
   }
 }
 
-setInterval(updateLeaderboard, 5 * 60 * 1000);
+const leaderboardTimer = setInterval(async () => {
+  try {
+    await updateLeaderboard();
+  } catch (error) {
+    // A background refresh must not terminate the API during a database outage.
+    // Leave the interval running so the next scheduled update can recover.
+    console.error("Leaderboard update error:", error);
+  }
+}, 5 * 60 * 1000);
+leaderboardTimer.unref();

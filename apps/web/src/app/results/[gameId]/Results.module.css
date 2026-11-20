@@ -1,0 +1,7 @@
+.errorState { max-width: 620px; margin-block: 36px; }
+.shareFeedback { min-height: 1.6em; margin-block: 14px 0; color: #f1e9d8; font-size: .875rem; }
+
+/* Result metrics use a definition list so each value has an accessible label. */
+.metrics { margin-inline: 0; }
+.metrics dt { color: #bbb7ac; font-size: .75rem; }
+.metrics dd { margin: 8px 0 0; color: #f1e9d8; font-size: 1.6rem; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }

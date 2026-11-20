@@ -1,0 +1,287 @@
+jest.mock("../lib/gameOrchestrator", () => ({
+  getActiveGame: jest.fn(), startGame: jest.fn(), handlePlayerAnswer: jest.fn(), handlePowerUp: jest.fn(),
+  startPowerUpSelectionPhase: jest.fn(), handlePowerUpSelection: jest.fn(), confirmPowerUpSelection: jest.fn(),
+  getPowerUpSelectionSnapshot: jest.fn(),
+  getViewerAnswerResult: jest.fn(() => null),
+}));
+jest.mock("../lib/aiBots", () => ({ fillWithBots: jest.fn(), getBotInfo: jest.fn() }));
+jest.mock("../lib/questions", () => ({ fetchQuestions: jest.fn() }));
+
+import { createServer } from "http";
+import { AddressInfo } from "net";
+import { Server } from "socket.io";
+import { io as connectClient, Socket } from "socket.io-client";
+import jwt from "jsonwebtoken";
+import { Difficulty, GameMode, GameStatus } from "@quiz-battle/shared";
+import { getActiveGame } from "../lib/gameOrchestrator";
+import { getJwtSecret } from "../lib/jwtConfig";
+import { fetchQuestions } from "../lib/questions";
+import { createInvasionGame, deleteInvasionGame, getInvasionState } from "../lib/invasionOrchestrator";
+import { SafeRedis } from "../lib/redis";
+import { registerSocketHandlers } from "../socket";
+import { protectRoom, removeRoomAccess } from "../lib/roomAccess";
+import { initConquestGame, removeConquestGame } from "../lib/conquestOrchestrator";
+
+describe("Socket.IO transport", () => {
+  let io: Server;
+  let url: string;
+  let game: any;
+  const clients: Socket[] = [];
+
+  async function connect(userId: string, overrides: Record<string, unknown> = {}) {
+    const client = connectClient(url, {
+      transports: ["websocket"], reconnection: false, forceNew: true,
+      auth: { token: jwt.sign({ userId, username: userId }, getJwtSecret()), ...overrides },
+    });
+    clients.push(client);
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", () => resolve());
+      client.once("connect_error", reject);
+    });
+    return client;
+  }
+
+  function once(client: Socket, event: string): Promise<any> {
+    return new Promise(resolve => client.once(event, resolve));
+  }
+
+  async function join(client: Socket) {
+    const sync = once(client, "game:stateSync");
+    const response = await new Promise<any>(resolve => client.emit("game:join", { gameId: "wire-room" }, resolve));
+    expect(response.success).toBe(true);
+    return (await sync).room;
+  }
+
+  beforeAll(async () => {
+    const http = createServer();
+    io = new Server(http);
+    registerSocketHandlers(io as any, new SafeRedis(null));
+    await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
+    url = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
+  });
+
+  beforeEach(() => {
+    game = {
+      gameId: "wire-room", joinCode: "WIRE", hostId: "host", mode: GameMode.Classic,
+      difficulty: Difficulty.Medium, language: "ar", status: GameStatus.Question, maxPlayers: 8,
+      currentRound: 1, totalRounds: 6, questionStartTime: Date.now() - 2000,
+      questions: [{ id: "wire-question", text: "سؤال", options: ["أ", "ب"], correctIndex: 1, timeLimit: 15 }],
+      answersThisRound: {}, lastAnswerByPlayer: { host: true },
+      players: {
+        host: { userId: "host", username: "Host", isConnected: true },
+        player: { userId: "player", username: "Player", isConnected: false },
+      },
+    };
+    (getActiveGame as jest.Mock).mockImplementation(id => id === "wire-room" ? game : undefined);
+    (fetchQuestions as jest.Mock).mockReset().mockResolvedValue([{
+      id: "invasion-question", text: "سؤال الغزو", options: ["أ", "ب"], correctIndex: 1, timeLimit: 15,
+    }]);
+  });
+
+  afterEach(() => {
+    clients.splice(0).forEach(client => client.disconnect());
+    deleteInvasionGame("wire-room");
+    removeConquestGame("wire-room");
+    removeRoomAccess("wire-room");
+  });
+
+  afterAll(async () => {
+    await new Promise<void>(resolve => io.close(() => resolve()));
+  });
+
+  it("returns a fresh authenticated server-time sample before joining a room", async () => {
+    const earliest = Date.now();
+    const client = await connect("player");
+    const sample = await new Promise<{ serverNow: number }>(resolve => client.emit("clock:sync", resolve));
+    expect(sample.serverNow).toBeGreaterThanOrEqual(earliest);
+    expect(sample.serverNow).toBeLessThanOrEqual(Date.now());
+    expect(typeof (await join(client)).serverNow).toBe("number");
+  });
+
+  it("keeps a player's remaining tab connected and frees the lobby seat on its final explicit exit", async () => {
+    game.status = GameStatus.Lobby;
+    game.maxPlayers = 2;
+    const host = await connect("host");
+    await join(host);
+    const tab = await connect("player");
+    const otherTab = await connect("player");
+    await join(tab);
+    await join(otherTab);
+    tab.emit("game:leave", { gameId: game.gameId });
+    await new Promise<void>(resolve => tab.emit("clock:sync", resolve));
+    expect(game.players.player.isConnected).toBe(true);
+    const departed = once(host, "game:playerLeft");
+    otherTab.emit("game:leave", { gameId: game.gameId });
+    await departed;
+    expect(game.players.player).toBeUndefined();
+    await join(await connect("replacement"));
+    expect(Object.keys(game.players).sort()).toEqual(["host", "replacement"]);
+  });
+
+  it("counts a spectator across tabs once and announces departure after their last tab leaves", async () => {
+    const host = await connect("host");
+    await join(host);
+    const first = await connect("observer");
+    const second = await connect("observer");
+    const joined = jest.fn();
+    const left = jest.fn();
+    host.on("game:spectatorJoined", joined);
+    host.on("game:spectatorLeft", left);
+    for (const tab of [first, second]) {
+      const ack = await new Promise<any>(resolve => tab.emit("game:spectate", { gameId: game.gameId }, resolve));
+      expect(ack.success).toBe(true);
+    }
+    first.emit("game:leave", { gameId: game.gameId });
+    await new Promise<void>(resolve => first.emit("clock:sync", resolve));
+    const departed = once(host, "game:spectatorLeft");
+    second.emit("game:leave", { gameId: game.gameId });
+    expect(await departed).toEqual({ spectatorId: "observer", spectatorCount: 0 });
+    expect(joined.mock.calls).toEqual([[{ spectatorId: "observer", spectatorCount: 1 }]]);
+    expect(left).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks only the last disconnected player tab offline and restores its active match score on rejoin", async () => {
+    const host = await connect("host");
+    await join(host);
+    const participant = await connect("player");
+    await join(participant);
+    game.players.player.score = 450;
+    const serverSocket = io.sockets.sockets.get(participant.id!)!;
+    const closed = new Promise<void>(resolve => serverSocket.once("disconnect", () => resolve()));
+    participant.disconnect();
+    await closed;
+    expect(game.players.player).toMatchObject({ isConnected: false, score: 450 });
+    const restored = await join(await connect("player"));
+    expect(restored.players.find((entry: any) => entry.userId === "player")).toMatchObject({ isConnected: true, score: 450 });
+  });
+
+  it("unsubscribes the previous room when one browser joins a different game", async () => {
+    const second = { ...game, gameId: "second-room", status: GameStatus.Lobby, players: {} };
+    (getActiveGame as jest.Mock).mockImplementation(id => id === game.gameId ? game : id === second.gameId ? second : undefined);
+    const player = await connect("player");
+    await join(player);
+    const ack = await new Promise<any>(resolve => player.emit("game:join", { gameId: second.gameId }, resolve));
+    expect(ack.success).toBe(true);
+    expect(io.sockets.sockets.get(player.id!)!.rooms.has(game.gameId)).toBe(false);
+    expect(game.players.player.isConnected).toBe(false);
+  });
+
+  it("rejoins a signed guest on a new connection and restores only their answer", async () => {
+    const first = await connect("player");
+    const initial = await join(first);
+    expect(initial.currentQuestion.text).toBe("سؤال");
+    expect(initial.currentQuestion).not.toHaveProperty("correctIndex");
+    expect(initial.selectedAnswer).toBeNull();
+    first.disconnect();
+
+    game.answersThisRound = {
+      host: { index: 1, timestamp: Date.now(), latencyMs: 200 },
+      player: { index: 0, timestamp: Date.now(), latencyMs: 500 },
+    };
+    const reconnect = await connect("player");
+    const restored = await join(reconnect);
+    expect(restored.questionStartedAt).toBe(game.questionStartTime);
+    expect(restored.selectedAnswer).toBe(0);
+    expect(restored).not.toHaveProperty("answersThisRound");
+    expect(restored).not.toHaveProperty("lastAnswerByPlayer");
+    expect(restored).not.toHaveProperty("questions");
+  });
+
+  it("acknowledges a Conquest answer once and restores it with the original deadline on reconnect", async () => {
+    game.mode = GameMode.Conquest;
+    await initConquestGame(io as any, "wire-room", ["host", "player"], {}, Difficulty.Sage, "ar");
+    const first = await connect("player");
+    const initialState = once(first, "conquest:state");
+    await join(first);
+    const initial = await initialState;
+    const payload = { gameId: "wire-room", answerIndex: 1, responseTimeMs: 0, questionId: initial.draftPhase.question.id, round: initial.draftPhase.currentRound };
+    const submit = (data = payload) => new Promise<any>(resolve => first.emit("conquest:draftAnswer", data, resolve));
+    expect(await submit()).toEqual({ success: true });
+    expect(await submit()).toEqual({ success: true });
+    expect(await submit({ ...payload, round: 0 })).toMatchObject({ success: false });
+    first.disconnect();
+    const reconnect = await connect("player");
+    const restoredState = once(reconnect, "conquest:state");
+    await join(reconnect);
+    const restored = await restoredState;
+    expect(restored.draftPhase).toMatchObject({ selectedAnswer: 1, answered: 1, questionStartedAt: initial.draftPhase.questionStartedAt, questionEndsAt: initial.draftPhase.questionEndsAt });
+    expect(restored.draftPhase.question).not.toHaveProperty("correctIndex");
+    const spectator = await connect("spectator");
+    const publicState = once(spectator, "conquest:state");
+    await new Promise<void>(resolve => spectator.emit("game:spectate", { gameId: "wire-room" }, () => resolve()));
+    expect((await publicState).draftPhase).not.toHaveProperty("selectedAnswer");
+  });
+
+  it("ignores a forged host id and rejects outsider invasion controls over the wire", async () => {
+    const player = await connect("player", { userId: "host", username: "Host" });
+    await join(player);
+    const start = await new Promise<any>(resolve => player.emit("game:start", { gameId: "wire-room" }, resolve));
+    expect(start).toEqual({ success: false, error: "Only the host can start" });
+
+    game.mode = GameMode.Conquest;
+    createInvasionGame("wire-room", ["host", "player"]);
+    const outsider = await connect("outsider");
+    const error = once(outsider, "game:error");
+    outsider.emit("invasion:startRound", { gameId: "wire-room" });
+    expect((await error).message).toMatch(/Only the host/);
+    expect(getInvasionState("wire-room")!.currentQuestion).toBeNull();
+  });
+
+  it("rejects an unsigned claimed identity at the transport handshake", async () => {
+    await expect(connect("player", { token: "host", userId: "host" })).rejects.toThrow("Invalid token");
+  });
+
+  it("lets the joined host start exactly one invasion question", async () => {
+    game.mode = GameMode.Conquest;
+    createInvasionGame("wire-room", ["host", "player"], { language: "ar" });
+    const host = await connect("host");
+    await join(host);
+    const question = once(host, "invasion:roundStart");
+    host.emit("invasion:startRound", { gameId: "wire-room" });
+    host.emit("invasion:startRound", { gameId: "wire-room" });
+    expect((await question).question.text).toBe("سؤال الغزو");
+    expect(fetchQuestions).toHaveBeenCalledTimes(1);
+    expect(fetchQuestions).toHaveBeenCalledWith(Difficulty.Medium, 1, undefined, undefined, "ar", "wire-room", { singleChoiceOnly: true });
+  });
+
+  it("requires the private password before room admission and remembers an authenticated participant", async () => {
+    game.status = GameStatus.Lobby;
+    game.isPrivate = true;
+    delete game.players.player;
+    await protectRoom("wire-room", "  private secret  ");
+    const player = await connect("player");
+    const received: unknown[] = [];
+    player.on("game:stateSync", state => received.push(state));
+    const attempt = (password?: string) => new Promise<any>(resolve => player.emit("game:join", { gameId: "wire-room", password }, resolve));
+    expect(await attempt()).toMatchObject({ success: false, code: "PASSWORD_REQUIRED" });
+    expect(game.players.player).toBeUndefined();
+    expect(received).toHaveLength(0);
+    expect(await attempt("wrong")).toMatchObject({ success: false, code: "INVALID_PASSWORD" });
+    expect(await attempt("  private secret  ")).toMatchObject({ success: true });
+    expect(received).toHaveLength(1);
+    player.disconnect();
+    const restored = await connect("player");
+    expect((await join(restored)).gameId).toBe("wire-room");
+  });
+
+  it("protects spectators too, restores their grant, and revokes it when they leave", async () => {
+    game.isPrivate = true;
+    await protectRoom("wire-room", "spectator-password");
+    const spectator = await connect("spectator");
+    const received: any[] = [];
+    spectator.on("game:stateSync", state => received.push(state));
+    const watch = (client: Socket, password?: string) => new Promise<any>(resolve => client.emit("game:spectate", { gameId: "wire-room", password }, resolve));
+    expect(await watch(spectator)).toMatchObject({ success: false, code: "PASSWORD_REQUIRED" });
+    expect(received).toHaveLength(0);
+    expect(await watch(spectator, "wrong")).toMatchObject({ success: false, code: "INVALID_PASSWORD" });
+    expect(await watch(spectator, "spectator-password")).toEqual({ success: true });
+    expect(received[0].room.selectedAnswer).toBeNull();
+    expect(received[0].room).not.toHaveProperty("passwordHash");
+    spectator.disconnect();
+    const restored = await connect("spectator");
+    expect(await watch(restored)).toEqual({ success: true });
+    restored.emit("game:leave", { gameId: "wire-room" });
+    // Event ordering on this socket guarantees leave is processed before spectate.
+    expect(await watch(restored)).toMatchObject({ success: false, code: "PASSWORD_REQUIRED" });
+  });
+});

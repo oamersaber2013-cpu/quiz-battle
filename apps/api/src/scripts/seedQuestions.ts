@@ -15,7 +15,17 @@ function generateHash(text: string): string {
   return crypto.createHash("md5").update(text).digest("hex");
 }
 
-const sampleQuestions = {
+interface SampleQuestion {
+  textEn: string;
+  textAr: string;
+  optionsEn?: string[];
+  optionsAr?: string[];
+  correctAnswer: string;
+  category: string;
+  difficulty: string;
+}
+
+const sampleQuestions: Record<string, SampleQuestion[]> = {
   MultipleChoice: [
     {
       textEn: "What is the capital of France?",

@@ -1,18 +1,45 @@
 import { FastifyPluginAsync } from "fastify";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import {
   GameMode,
   GameStatus,
   Difficulty,
   GAME_MODE_CONFIG,
+  getPlayableDifficulties, normalizeQuestionCategory,
 } from "@quiz-battle/shared";
 import { prisma } from "@quiz-battle/db";
+import { DEFAULT_CUSTOM_SETTINGS, PowerUpType, type CustomGameSettings } from "@quiz-battle/shared";
 import { KEYS } from "../lib/redis";
+import { hasCuratedQuestions } from "../lib/questions";
 import { setActiveGame } from "../lib/gameOrchestrator";
 import type { JWTPayload } from "./auth";
+import { hasRoomAccess, protectRoom, validRoomPassword } from "../lib/roomAccess";
 
 // Local fallback for join code resolution (works without Redis)
 const localJoinCodes = new Map<string, string>(); // code -> gameId
+
+const customSettingsSchema = z.object({
+  name: z.string().trim().min(1).max(60).default(DEFAULT_CUSTOM_SETTINGS.name),
+  rounds: z.number().int().min(1).max(30).default(DEFAULT_CUSTOM_SETTINGS.rounds),
+  timePerQuestion: z.number().int().min(5).max(60).default(DEFAULT_CUSTOM_SETTINGS.timePerQuestion),
+  difficulty: z.nativeEnum(Difficulty).default(DEFAULT_CUSTOM_SETTINGS.difficulty),
+  enabledPowerUps: z.array(z.nativeEnum(PowerUpType).refine(power => power !== PowerUpType.DoublePick,
+    "Double pick is not supported in Custom battles")).max(8)
+    .transform(powers => [...new Set(powers)]).default(DEFAULT_CUSTOM_SETTINGS.enabledPowerUps),
+  maxPlayers: z.number().int().min(2).max(20).default(DEFAULT_CUSTOM_SETTINGS.maxPlayers),
+  categoryFilter: z.string().trim().min(1).max(100).nullable().default(null),
+});
+
+const createRoomSchema = z.object({
+  mode: z.nativeEnum(GameMode), difficulty: z.nativeEnum(Difficulty),
+  rounds: z.number().int().min(1).max(15).optional(),
+  categories: z.array(z.string().min(1).max(100)).max(100).optional(),
+  subcategories: z.array(z.string().min(1).max(100)).max(200).optional(),
+  language: z.enum(["en", "ar"]).optional(), username: z.string().max(100).optional(),
+  userId: z.string().optional(), password: z.string().optional(), isPrivate: z.boolean().optional(),
+  customSettings: customSettingsSchema.optional(),
+}).passthrough();
 
 function generateJoinCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -42,10 +69,32 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       isPrivate?: boolean;
     };
   }>("/", { onRequest: [app.authenticate] }, async (req, reply) => {
-    const { mode, difficulty, rounds, categories, password, isPrivate } = req.body;
+    const parsed = createRoomSchema.safeParse(req.body);
+    if (!parsed.success) return reply.status(400).send({ error: "Invalid room configuration" });
+    const body = parsed.data;
+    const { mode, rounds, password, isPrivate } = body;
+    if (body.customSettings && mode !== GameMode.Custom) {
+      return reply.status(400).send({ error: "Custom settings require Custom mode" });
+    }
+    const customSettings = mode === GameMode.Custom ? customSettingsSchema.parse(body.customSettings || {
+      ...DEFAULT_CUSTOM_SETTINGS, difficulty: body.difficulty, ...(rounds === undefined ? {} : { rounds }),
+    }) as CustomGameSettings : undefined;
+    const difficulty = customSettings?.difficulty || body.difficulty;
+    const categories = (customSettings?.categoryFilter ? [customSettings.categoryFilter]
+      : body.categories?.length ? body.categories : ["general"]).map(normalizeQuestionCategory);
+    const compatibleCategories = await Promise.all(categories.map(category =>
+      getPlayableDifficulties([category]).includes(difficulty) || hasCuratedQuestions(category, difficulty,
+        body.language || "en", mode === GameMode.Conquest || mode === GameMode.Chaos)));
+    if (compatibleCategories.some(available => !available)) {
+      return reply.status(400).send({ error: "No compatible questions for this category and difficulty. Choose another difficulty or mixed trivia." });
+    }
+    const privateRoom = !!isPrivate || !!password;
+    if (privateRoom && !validRoomPassword(password)) {
+      return reply.status(400).send({ error: "A private room requires a password of 1 to 72 UTF-8 bytes" });
+    }
     const authUser = (req.user as Partial<JWTPayload> | undefined) ?? {};
-    const userId = authUser.userId ?? req.body.userId;
-    const usernameInput = (req.body.username ?? authUser.username ?? "").trim();
+    const userId = authUser.userId;
+    const usernameInput = (body.username ?? authUser.username ?? "").trim();
     const username =
       usernameInput.length > 0
         ? usernameInput.slice(0, 20)
@@ -67,6 +116,8 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     if (rounds !== undefined) {
       totalRounds = Math.min(Math.max(rounds, 1), 15);
     }
+    if (customSettings) totalRounds = customSettings.rounds;
+    const maxPlayers = customSettings?.maxPlayers || config.maxPlayers;
 
     const creditTier = getCreditTier(totalRounds);
     const creditUseResult = await prisma.$transaction(async (tx) => {
@@ -114,6 +165,7 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     }
 
     const gameId = nanoid(10);
+    if (privateRoom) await protectRoom(gameId, password!);
 
     const gameState = {
       gameId,
@@ -137,16 +189,16 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       questions: [],
       currentRound: 0,
       totalRounds,
-      maxPlayers: config.maxPlayers,
+      maxPlayers,
+      ...(customSettings ? { customSettings } : {}),
       questionStartTime: 0,
       answersThisRound: {},
       lastAnswerByPlayer: {},
       activeEffects: [],
       categories,
-      subcategories: req.body.subcategories,
-      language: (req.body.language as 'en' | 'ar') || 'en',
-      password, // Store password for private rooms
-      isPrivate: isPrivate || !!password,
+      subcategories: customSettings?.categoryFilter ? undefined : body.subcategories,
+      language: body.language || 'en',
+      isPrivate: privateRoom,
       chat: [], // Initialize empty chat
       readyPlayers: [], // Initialize empty ready list
     };
@@ -164,8 +216,10 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
       joinCode,
       mode,
       difficulty,
-      maxPlayers: config.maxPlayers,
+      maxPlayers,
+      ...(customSettings ? { customSettings } : {}),
       totalRounds,
+      isPrivate: privateRoom,
       shortGamesRemaining: creditUseResult.shortGamesRemaining,
       longGamesRemaining: creditUseResult.longGamesRemaining,
     });
@@ -180,7 +234,8 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     const gameId = (redis ? await redis.get(KEYS.joinCode(code)) : null) || localJoinCodes.get(code) || null;
     if (!gameId) return reply.status(404).send({ error: "Game not found" });
 
-    return reply.send({ gameId });
+    const { getActiveGame } = await import("../lib/gameOrchestrator");
+    return reply.send({ gameId, isPrivate: !!getActiveGame(gameId)?.isPrivate });
   });
 
   // GET /api/games/:gameId — Get game state (lobby info)
@@ -188,64 +243,41 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     const { getActiveGame } = await import("../lib/gameOrchestrator");
     const game = getActiveGame(req.params.gameId);
     if (!game) return reply.status(404).send({ error: "Game not found" });
-
-    const { questions: _q, answersThisRound: _a, lastAnswerByPlayer: _l, ...safe } = game;
+    if (game.isPrivate) {
+      try { await req.jwtVerify(); }
+      catch { return reply.status(401).send({ error: "Unauthorized" }); }
+      const userId = (req.user as Partial<JWTPayload> | undefined)?.userId;
+      if (!userId || !hasRoomAccess(game, userId)) {
+        return reply.status(403).send({ code: "PASSWORD_REQUIRED", error: "Join this private room with its password first" });
+      }
+    }
     return reply.send({
-      ...safe,
-      players: Object.values(safe.players),
+      gameId: game.gameId, joinCode: game.joinCode, hostId: game.hostId,
+      mode: game.mode, difficulty: game.difficulty, status: game.status,
+      currentRound: game.currentRound, totalRounds: game.totalRounds, maxPlayers: game.maxPlayers,
+      language: game.language, category: game.categories?.join(", "), isPrivate: !!game.isPrivate,
+      customSettings: game.customSettings,
+      players: Object.values(game.players),
     });
   });
 
   // GET /api/games/leaderboard/global — Global leaderboard
   app.get("/leaderboard/global", async (req, reply) => {
-    const redis = (app as unknown as { redis: import("../lib/redis").SafeRedis }).redis;
-    if (!redis) {
-      // Fallback to database if Redis is not available
-      const users = await prisma.user.findMany({
-        
-        take: 50,
-        select: { id: true, username: true },
-      });
-      return reply.send(
-        users.map((u, i) => ({ userId: u.id, username: u.username, score: 0, rank: i + 1 }))
-      );
-    }
-
-    const entries = await redis.zrevrangebyscore(
-      KEYS.leaderboard,
-      "+inf",
-      "-inf",
-      "WITHSCORES",
-      "LIMIT",
-      0,
-      50
-    );
-
-    // Get userIds from entries
-    const userIds: string[] = [];
-    for (let i = 0; i < entries.length; i += 2) {
-      userIds.push(entries[i]);
-    }
-
-    // Fetch usernames from database
-    const users = await prisma.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, username: true },
-    });
-    const usernameMap = new Map(users.map((u) => [u.id, u.username]));
-
-    const leaderboard: { userId: string; username: string; score: number; rank: number }[] = [];
-    for (let i = 0; i < entries.length; i += 2) {
-      const userId = entries[i];
-      leaderboard.push({
-        userId,
-        username: usernameMap.get(userId) || "Unknown Warrior",
-        score: parseInt(entries[i + 1]),
-        rank: i / 2 + 1,
-      });
-    }
-
-    return reply.send(leaderboard);
+    const entries = await prisma.$queryRaw<{ userId: string; username: string; score: bigint }[]>`
+      SELECT u.id AS "userId", u.username, SUM(s.score) AS score
+      FROM "User" u
+      JOIN "PlayerGameStat" s ON s."userId" = u.id
+      JOIN "GameSession" g ON g.id = s."gameSessionId"
+      WHERE g."endedAt" IS NOT NULL
+      GROUP BY u.id, u.username
+      ORDER BY score DESC, u.id ASC
+      LIMIT 50
+    `;
+    let rank = 0;
+    return reply.send(entries.map((entry, index) => {
+      if (!index || entry.score !== entries[index - 1].score) rank = index + 1;
+      return { ...entry, score: Number(entry.score), rank };
+    }));
   });
 
   // GET /api/games/active — Get a list of currently active games for spectating
@@ -255,7 +287,7 @@ export const gamesRouter: FastifyPluginAsync = async (app) => {
     
     // Filter to only return games that are currently playing (not ended or just lobby)
     const activeGames = games
-      .filter((g) => g.status !== GameStatus.Lobby && g.status !== GameStatus.Ended)
+      .filter((g) => !g.isPrivate && g.status !== GameStatus.Lobby && g.status !== GameStatus.Ended)
       .map((g) => ({
         gameId: g.gameId,
         mode: g.mode,

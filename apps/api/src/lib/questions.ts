@@ -4,25 +4,22 @@ import {
   PowerUpType,
   ActivePowerUpEffect,
   QuestionCategory,
-  ContentSafetyLevel,
-  CATEGORY_SAFETY_LEVELS,
   QuestionType,
   toClientQuestion as sharedToClientQuestion,
+  normalizeQuestionCategory,
 } from "@quiz-battle/shared";
 import { QUESTION_BANK, getTotalQuestionCount } from "./questionBank";
 import { 
   ISLAMIC_QUESTION_BANK, 
   toClientQuestion,
-  getIslamicQuestionsByDifficulty,
   getIslamicQuestionCount 
 } from "./islamicQuestionBank";
 import {
   ENTERTAINMENT_QUESTION_BANK,
-  getEntertainmentQuestionsByCategory,
-  getEntertainmentQuestionsByDifficulty,
   getEntertainmentQuestionCount,
 } from "./entertainmentQuestionBank";
 import { getCachedQuestions, cacheQuestions } from "./cache";
+import { hasValidAnswerKey, isSingleChoiceQuestion } from "./answers";
 
 // Lazy load Prisma to avoid startup failures
 let prisma: any = null;
@@ -40,10 +37,12 @@ function getPrisma() {
 }
 
 // Track used question IDs to prevent repeats
+const issuedQuestionIds = new Map<string, Set<string>>();
 const usedQuestionIds = new Map<string, Set<string>>(); // gameId -> Set of question IDs
 
 export function clearUsedQuestions(gameId: string) {
   usedQuestionIds.delete(gameId);
+  issuedQuestionIds.delete(gameId);
 }
 
 export function markQuestionUsed(gameId: string, questionId: string) {
@@ -136,6 +135,61 @@ export function setDefaultLanguage(lang: 'en' | 'ar') {
   defaultLanguage = lang;
 }
 
+// Source identities remain stable for exhaustion tracking; every delivery gets
+// its own identity so retry/answer guards still refer to one displayed question.
+function drawOfflineQuestions(pool: Array<ClientQuestion & { id: string; correctIndex: number }>, count: number, gameId?: string, preserveSourceIds = false) {
+  const delivered: Array<ClientQuestion & { correctIndex: number }> = [];
+  const issued = gameId ? issuedQuestionIds.get(gameId) || new Set<string>() : new Set<string>();
+  let available = gameId ? pool.filter(question => !isQuestionUsed(gameId, question.id)) : [...pool];
+  while (delivered.length < count && pool.length) {
+    if (!available.length) {
+      if (gameId) pool.forEach(question => usedQuestionIds.get(gameId)?.delete(question.id));
+      available = [...pool];
+    }
+    const selected = [...available].sort(() => Math.random() - 0.5).slice(0, count - delivered.length);
+    for (const question of selected) {
+      if (gameId) markQuestionUsed(gameId, question.id);
+      const id = preserveSourceIds && !issued.has(question.id) ? question.id : generateQuestionId();
+      issued.add(id);
+      if (gameId) issuedQuestionIds.set(gameId, issued);
+      delivered.push({ ...question, id });
+    }
+    const sourceIds = new Set(selected.map(question => question.id));
+    available = available.filter(question => !sourceIds.has(question.id));
+  }
+  return delivered;
+}
+
+function convertDatabaseQuestion(row: any, category: string, difficulty: Difficulty, language: "en" | "ar") {
+  let options: unknown;
+  try { options = JSON.parse((language === "ar" ? row.optionsArJson : row.optionsEnJson) || "[]"); } catch { return undefined; }
+  if (!Array.isArray(options) || !options.every(option => typeof option === "string" && option.trim())) return undefined;
+  const type = normalizeQuestionType(row.type);
+  if (!type) return undefined;
+  const question = {
+    id: row.id, text: language === "ar" ? row.textAr : row.textEn, options,
+    category: normalizeQuestionCategory(row.category || category), difficulty: row.difficulty || difficulty,
+    timeLimit: getTimeLimitForDifficulty(difficulty), type,
+    imageUrl: row.imageUrl || undefined, audioUrl: row.audioUrl || undefined, videoUrl: row.videoUrl || undefined,
+    ...decodePersistedAnswer(type, row.correctAnswer, language),
+  } as ClientQuestion & { correctIndex: number };
+  return typeof question.text === "string" && question.text.trim() && hasValidAnswerKey(question) ? question : undefined;
+}
+
+export async function hasCuratedQuestions(category: string, difficulty: Difficulty, language: "en" | "ar", singleChoiceOnly = false): Promise<boolean> {
+  try {
+    const db = getPrisma();
+    if (!db?.question?.findMany) return false;
+    const canonical = normalizeQuestionCategory(category);
+    const rows = await db.question.findMany({ where: { category: canonical, difficulty, isActive: true } });
+    return rows.some((row: any) => {
+      const question = convertDatabaseQuestion(row, canonical, difficulty, language);
+      return question && question.category === canonical && question.difficulty === difficulty
+        && (!singleChoiceOnly || isSingleChoiceQuestion(question));
+    });
+  } catch { return false; }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HYBRID QUESTION SYSTEM
 // Priority: 1) Database (Verified) → 2) AI Generated → 3) Fallback Bank
@@ -147,13 +201,15 @@ export async function fetchQuestions(
   categories?: string | string[],
   subcategories?: string | string[],
   language: 'en' | 'ar' = defaultLanguage,
-  gameId?: string
+  gameId?: string,
+  options: { singleChoiceOnly?: boolean } = {}
 ): Promise<Array<ClientQuestion & { correctIndex: number }>> {
-  const catArray = Array.isArray(categories) ? categories : (categories ? [categories] : ["General"]);
+  const catArray = Array.isArray(categories) ? (categories.length ? categories : ["General"]) : (categories ? [categories] : ["General"]);
   const subcatArray = Array.isArray(subcategories) ? subcategories : (subcategories ? [subcategories] : []);
   
   // Get question type distribution for this difficulty
-  const typeDistribution = getQuestionTypeDistribution(difficulty);
+  const typeDistribution = getQuestionTypeDistribution(difficulty).filter(type => !options.singleChoiceOnly ||
+    ![QuestionType.FillBlank, QuestionType.MultiSelect, QuestionType.Ordering].includes(type));
   
   const results: any[] = [];
   const countPerCat = Math.ceil(count / catArray.length);
@@ -179,7 +235,8 @@ export async function fetchQuestions(
       subcatForThis,
       language,
       typesForBatch,
-      gameId
+      gameId,
+      options
     );
     results.push(...catResults);
   }
@@ -195,25 +252,35 @@ async function fetchSingleCategoryQuestions(
   subcategories?: string[],
   language: 'en' | 'ar' = 'en',
   questionTypes?: QuestionType[],
-  gameId?: string
+  gameId?: string,
+  options: { singleChoiceOnly?: boolean } = {}
 ): Promise<Array<ClientQuestion & { correctIndex: number }>> {
   const results: any[] = [];
-  const targetCategory = (category as QuestionCategory) || QuestionCategory.General;
-  const safetyLevel = CATEGORY_SAFETY_LEVELS[targetCategory] || ContentSafetyLevel.ControlledAI;
+  let curatedPool: Array<ClientQuestion & { correctIndex: number }> = [];
+  const targetCategory = (normalizeQuestionCategory(category || QuestionCategory.General)) as QuestionCategory;
   const typesToGenerate = questionTypes || Array(count).fill(QuestionType.MultipleChoice);
+  const supported = (question: ClientQuestion) => hasValidAnswerKey(question)
+    && question.difficulty === difficulty
+    && (targetCategory === QuestionCategory.General || normalizeQuestionCategory(question.category || "") === targetCategory)
+    && (!options.singleChoiceOnly || isSingleChoiceQuestion(question));
 
   // PRIORITY 0: CHECK CACHE FIRST
-  const cacheKey = `${targetCategory}:${difficulty}`;
+  const cacheKey = `${targetCategory}:${language}:${[...(subcategories || [])].sort().join(",")}${options.singleChoiceOnly ? ":single-choice" : ""}`;
   const cached = await getCachedQuestions(cacheKey, difficulty);
   if (cached && cached.length >= count) {
     const availableCached = gameId
-      ? cached.filter(q => !isQuestionUsed(gameId, q.id))
-      : cached;
+      ? cached.filter(q => supported(q) && !isQuestionUsed(gameId, q.id))
+      : cached.filter(supported);
     
     if (availableCached.length >= count) {
       const selected = availableCached.slice(0, count);
       selected.forEach(q => {
-        if (gameId) markQuestionUsed(gameId, q.id);
+        if (gameId) {
+          markQuestionUsed(gameId, q.id);
+          const issued = issuedQuestionIds.get(gameId) || new Set<string>();
+          issued.add(q.id);
+          issuedQuestionIds.set(gameId, issued);
+        }
       });
       return selected;
     }
@@ -227,42 +294,25 @@ async function fetchSingleCategoryQuestions(
         where: {
           category: targetCategory.toLowerCase(),
           difficulty: difficulty.toLowerCase(),
+          isActive: true,
+          ...(subcategories?.length ? { subcategory: { in: subcategories } } : {}),
         },
       });
 
       if (dbQuestions.length > 0) {
-        // Filter out already used questions
-        const availableQuestions = gameId 
-          ? dbQuestions.filter(q => !isQuestionUsed(gameId, q.id))
-          : dbQuestions;
-        
-        const shuffled = [...availableQuestions].sort(() => Math.random() - 0.5);
-        const selected = shuffled.slice(0, Math.min(count, shuffled.length));
-
-        const converted = selected.map(q => {
-          const questionId = generateQuestionId();
-          if (gameId) markQuestionUsed(gameId, q.id);
-          
-          return {
-            id: questionId,
-            text: language === 'ar' ? q.textAr : q.textEn,
-            options: language === 'ar' ? JSON.parse(q.optionsArJson) : JSON.parse(q.optionsEnJson),
-            correctIndex: q.correctIndex,
-            category: targetCategory,
-            difficulty: difficulty,
-            timeLimit: getTimeLimitForDifficulty(difficulty),
-            type: q.type as QuestionType || QuestionType.MultipleChoice,
-          };
+        const compatible = dbQuestions.flatMap(row => {
+          const question = convertDatabaseQuestion(row, targetCategory, difficulty, language);
+          return question && supported(question) ? [question] : [];
         });
-
-        results.push(...converted);
-        
-        // Cache the results
-        if (converted.length > 0) {
-          await cacheQuestions(cacheKey, difficulty, converted);
+        if (compatible.length) {
+          curatedPool = compatible;
+          // Use unseen curated questions first, then unseen exact offline content.
+          // Replaying this finite DB pool is the final step if no content remains.
+          await cacheQuestions(cacheKey, difficulty, compatible);
+          const freshCount = gameId ? compatible.filter(question => !isQuestionUsed(gameId, question.id)).length : compatible.length;
+          results.push(...drawOfflineQuestions(compatible, Math.min(count, freshCount), gameId, true));
+          if (results.length >= count) return results.slice(0, count);
         }
-        
-        if (results.length >= count) return results.slice(0, count);
       }
     }
   } catch (err) {
@@ -271,60 +321,24 @@ async function fetchSingleCategoryQuestions(
 
   let remaining = count - results.length;
 
-  // PRIORITY 1: STRICT VERIFIED CATEGORIES (Islamic)
-  if (targetCategory === QuestionCategory.Islamic || safetyLevel === ContentSafetyLevel.StrictVerified) {
-    const verifiedPool = targetCategory === QuestionCategory.Islamic
-      ? (subcategories 
-          ? ISLAMIC_QUESTION_BANK.filter(q => subcategories.includes(q.subcategory) && q.difficulty === difficulty)
-          : getIslamicQuestionsByDifficulty(difficulty))
-      : [];
-    
-    if (verifiedPool.length > 0) {
-      // Filter out used questions
-      const availablePool = gameId
-        ? verifiedPool.filter(q => !isQuestionUsed(gameId, q.id))
-        : verifiedPool;
-      
-      const shuffled = [...availablePool].sort(() => Math.random() - 0.5);
-      const selected = shuffled.slice(0, Math.min(remaining, shuffled.length));
-      
-      results.push(...selected.map(q => {
-        const questionId = generateQuestionId();
-        if (gameId) markQuestionUsed(gameId, q.id);
-        
-        return {
-          ...toClientQuestion(q, language),
-          id: questionId,
-        };
-      }));
-      if (results.length >= count) return results.slice(0, count);
-    }
+  // Verified offline category banks keep their real grade and category. IDs on
+  // the multilingual source records are optional, so use their stable positions.
+  if (targetCategory === QuestionCategory.Islamic) {
+    const pool = ISLAMIC_QUESTION_BANK.map((question, index) => ({
+      ...toClientQuestion(question, language), category: question.category,
+      subtopic: question.subcategory, id: `islamic:${index}`,
+    })).filter(supported);
+    results.push(...drawOfflineQuestions(pool, remaining, gameId));
+    // Verified-only categories never borrow unrelated content or AI guesses.
+    if (results.length < count && curatedPool.length) results.push(...drawOfflineQuestions(curatedPool, count - results.length, gameId));
+    return results.slice(0, count);
   }
-
-  remaining = count - results.length;
-
-  // PRIORITY 2: ENTERTAINMENT
   if ([QuestionCategory.Anime, QuestionCategory.Movies, QuestionCategory.Games].includes(targetCategory)) {
-    const pool = getEntertainmentQuestionsByCategory(targetCategory).filter(q => q.difficulty === difficulty);
-    if (pool.length > 0) {
-      const availablePool = gameId
-        ? pool.filter(q => !isQuestionUsed(gameId, q.id))
-        : pool;
-      
-      const shuffled = [...availablePool].sort(() => Math.random() - 0.5);
-      const selected = shuffled.slice(0, remaining);
-      
-      results.push(...selected.map(q => {
-        const questionId = generateQuestionId();
-        if (gameId) markQuestionUsed(gameId, q.id);
-        
-        return {
-          ...sharedToClientQuestion(q, language),
-          id: questionId,
-        };
-      }));
-      if (results.length >= count) return results.slice(0, count);
-    }
+    const pool = ENTERTAINMENT_QUESTION_BANK.map((question, index) => ({
+      ...sharedToClientQuestion(question, language), id: `entertainment:${index}`,
+    })).filter(supported);
+    results.push(...drawOfflineQuestions(pool, remaining, gameId));
+    if (results.length >= count) return results.slice(0, count);
   }
 
   remaining = count - results.length;
@@ -335,6 +349,7 @@ async function fetchSingleCategoryQuestions(
     const aiQuestions = await tryFreeAI(difficulty, 1, category, language, questionType);
     if (aiQuestions && aiQuestions.length > 0) {
       const q = aiQuestions[0];
+      if (!supported(q)) continue;
       if (gameId) markQuestionUsed(gameId, q.id);
       results.push(q);
     }
@@ -347,7 +362,7 @@ async function fetchSingleCategoryQuestions(
   if (remaining > 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "sk-your-key-here") {
     try {
       const gpt = await fetchFromOpenAI(difficulty, remaining, category, language);
-      results.push(...gpt.map(q => {
+      results.push(...gpt.filter(supported).map(q => {
         if (gameId) markQuestionUsed(gameId, q.id);
         return q;
       }));
@@ -357,27 +372,21 @@ async function fetchSingleCategoryQuestions(
 
   remaining = count - results.length;
 
-  // PRIORITY 5: Final Bank Fallback
+  // Final fallback stays inside the requested category and real grade. Mixed
+  // trivia intentionally accepts the full bank; named categories do not.
   if (remaining > 0) {
-    const pool = QUESTION_BANK[difficulty] || QUESTION_BANK[Difficulty.Novice];
-    const availablePool = gameId
-      ? pool.filter(q => !isQuestionUsed(gameId, q.id))
-      : pool;
-    
-    const shuffled = [...availablePool].sort(() => Math.random() - 0.5);
-    results.push(...shuffled.slice(0, remaining).map(q => {
-      const questionId = generateQuestionId();
-      if (gameId) markQuestionUsed(gameId, questionId);
-      
-      return {
-        ...q,
-        id: questionId,
-        text: language === 'ar' ? (q.textAr || q.text) : q.text,
-        options: language === 'ar' && q.optionsAr ? q.optionsAr : q.options,
-      };
-    }));
+    const pool = (QUESTION_BANK[difficulty] || []).map((question, index) => ({
+      ...question, id: `bank:${difficulty}:${index}`,
+      category: normalizeQuestionCategory(question.category),
+      text: language === "ar" ? question.textAr || question.text : question.text,
+      options: language === "ar" && question.optionsAr ? question.optionsAr : question.options,
+    })).filter(supported);
+    results.push(...drawOfflineQuestions(pool, remaining, gameId));
   }
 
+  if (results.length < count && curatedPool.length) {
+    results.push(...drawOfflineQuestions(curatedPool, count - results.length, gameId));
+  }
   return results.slice(0, count);
 }
 
@@ -389,10 +398,34 @@ async function fetchSingleCategoryQuestions(
 function isValidQuestion(q: any): boolean {
   if (!q || typeof q !== 'object') return false;
   if (typeof q.text !== 'string' || q.text.trim().length < 5) return false;
-  if (!Array.isArray(q.options) || q.options.length !== 4) return false;
+  if (!Array.isArray(q.options)) return false;
   if (q.options.some((o: any) => typeof o !== 'string' || o.trim().length === 0)) return false;
-  if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 3) return false;
-  return true;
+  return hasValidAnswerKey(q);
+}
+
+function normalizeQuestionType(value: unknown): QuestionType | undefined {
+  if (value === undefined || value === null || value === "") return QuestionType.MultipleChoice;
+  if (typeof value !== "string") return undefined;
+  const compact = value.toLowerCase().replace(/[_\s-]/g, "");
+  return Object.values(QuestionType).find(type => type.replace(/_/g, "") === compact);
+}
+
+function decodePersistedAnswer(type: QuestionType, raw: unknown, language: "en" | "ar") {
+  if (typeof raw !== "string" || !raw.trim()) return { correctIndex: -1 };
+  let parsed: unknown = raw;
+  try { parsed = JSON.parse(raw); } catch { /* Plain text answers are valid storage. */ }
+  if (type === QuestionType.FillBlank) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) parsed = parsed[language];
+    const alternatives = Array.isArray(parsed) && parsed.every(value => typeof value === "string") ? parsed : [];
+    return {
+      correctIndex: -1,
+      correctAnswer: typeof parsed === "string" ? parsed : alternatives[0],
+      acceptedAnswers: alternatives,
+    };
+  }
+  if (type === QuestionType.MultiSelect) return { correctIndex: -1, correctIndices: parsed as number[] };
+  if (type === QuestionType.Ordering) return { correctIndex: -1, correctOrder: parsed as number[] };
+  return { correctIndex: typeof parsed === "number" ? parsed : Number(raw) };
 }
 
 // Try to extract a JSON array from messy AI text output
@@ -450,7 +483,7 @@ async function tryFreeAI(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          inputs: generateAIPrompt(difficulty, count, category, language),
+          inputs: generateAIPrompt(difficulty, count, category, language, questionType),
           parameters: {
             max_new_tokens: 2000,
             temperature: 0.7,
@@ -478,12 +511,22 @@ async function tryFreeAI(
 
     // Validate each question, filter out bad ones
     const valid = questions
+      .map((q: any) => ({ ...q, type: normalizeQuestionType(q.type) || questionType, options: q.options || [] }))
       .filter(isValidQuestion)
       .map((q: any) => ({
         id: generateQuestionId(),
         text: q.text.trim(),
         options: q.options.map((o: string) => o.trim()),
-        correctIndex: q.correctIndex,
+        correctIndex: q.correctIndex ?? -1,
+        correctIndices: q.correctIndices,
+        correctOrder: q.correctOrder,
+        correctAnswer: q.correctAnswer,
+        acceptedAnswers: q.acceptedAnswers,
+        type: q.type,
+        hint: q.hint,
+        imageUrl: q.imageUrl,
+        audioUrl: q.audioUrl,
+        videoUrl: q.videoUrl,
         category: q.category || category || "General",
         difficulty,
         timeLimit: getTimeLimitForDifficulty(difficulty),

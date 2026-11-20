@@ -1,45 +1,19 @@
 "use client";
 
 import Link from "next/link";
+import { useGameStore } from "@/store/gameStore";
+import { AccountShell } from "@/components/account/AccountShell";
+import styles from "@/components/account/Account.module.css";
 
 export default function CancelPage() {
-  return (
-    <main className="page" style={{ padding: "40px 20px", minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="container" style={{ maxWidth: 480, textAlign: "center" }}>
-        <div className="glass-card p-8 animate-scale-in">
-          {/* Cancel Icon */}
-          <div
-            style={{
-              width: 100,
-              height: 100,
-              borderRadius: "50%",
-              background: "linear-gradient(135deg, #ffa502 0%, #ff6348 100%)",
-              margin: "0 auto 24px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "2.5rem",
-            }}
-          >
-            ✕
-          </div>
-
-          <h1 className="font-black text-2xl mb-2">Payment Cancelled</h1>
-          <p className="text-muted mb-6">
-            No worries! You can try again whenever you are ready.
-          </p>
-
-          {/* Actions */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <Link href="/store" className="btn btn-primary btn-lg">
-              🏪 Return to Store
-            </Link>
-            <Link href="/" className="btn btn-ghost">
-              🏠 Back to Home
-            </Link>
-          </div>
-        </div>
-      </div>
-    </main>
-  );
+  const language = useGameStore(state => state.language);
+  const ar = language === "ar";
+  return <AccountShell title={ar ? "تم إغلاق صفحة الدفع" : "Checkout closed"}>
+    <section className={`${styles.panel} ${styles.outcome}`}>
+      <span className={styles.outcomeMark} aria-hidden="true">—</span>
+      <h2>{ar ? "عد إلى المعركة عندما تكون مستعداً." : "Return to the arena when you are ready."}</h2>
+      <p className={styles.muted}>{ar ? "لم يتم تأكيد عملية شراء هنا. يمكنك مراجعة حالة المتجر أو المتابعة إلى اللعبة." : "No purchase has been confirmed here. Check the store status or continue to the game."}</p>
+      <div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "العودة إلى الرئيسية" : "Back to Home"}</Link><Link href="/store" className={styles.secondary}>{ar ? "العودة إلى المتجر" : "Return to store"}</Link></div>
+    </section>
+  </AccountShell>;
 }

@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from "express";
+import { FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "@quiz-battle/db";
 
 interface RateLimitConfig {
@@ -14,10 +14,10 @@ const configs: Record<string, RateLimitConfig> = {
 };
 
 export function rateLimit(type: keyof typeof configs = "default") {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (req: FastifyRequest, res: FastifyReply) => {
     const config = configs[type];
-    const identifier = req.ip || req.socket.remoteAddress || "unknown";
-    const endpoint = `${type}:${req.path}`;
+    const identifier = req.ip || req.raw.socket.remoteAddress || "unknown";
+    const endpoint = `${type}:${req.routeOptions.url || req.url.split("?")[0]}`;
 
     try {
       const windowStart = new Date(Date.now() - config.windowMs);
@@ -41,7 +41,7 @@ export function rateLimit(type: keyof typeof configs = "default") {
             },
           });
         } else if (existing.count >= config.maxRequests) {
-          return res.status(429).json({
+          return res.status(429).send({
             error: "Too many requests",
             retryAfter: Math.ceil((existing.windowStart.getTime() + config.windowMs - Date.now()) / 1000),
           });
@@ -62,10 +62,8 @@ export function rateLimit(type: keyof typeof configs = "default") {
         });
       }
 
-      next();
     } catch (error) {
       console.error("Rate limit error:", error);
-      next();
     }
   };
 }
@@ -79,4 +77,6 @@ export async function cleanupOldRateLimits() {
   });
 }
 
-setInterval(cleanupOldRateLimits, 60 * 60 * 1000);
+setInterval(() => {
+  cleanupOldRateLimits().catch((error) => console.error("Rate limit cleanup failed:", error));
+}, 60 * 60 * 1000).unref();

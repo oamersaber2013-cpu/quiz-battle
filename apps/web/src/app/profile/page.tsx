@@ -1,320 +1,60 @@
 "use client";
-import { useEffect } from "react";
-import { useGameStore } from "@/store/gameStore";
+
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { useGameStore } from "@/store/gameStore";
+import { usePlayerStats } from "@/hooks/usePlayerStats";
+import { AccountShell, AccountState } from "@/components/account/AccountShell";
+import styles from "@/components/account/Account.module.css";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { userId, username, role, isSubscribed, language, logout, balanceQar } = useGameStore();
-  const isRTL = language === "ar";
-
-  const T = {
-    profile: { en: "Warrior Profile", ar: "ملف المحارب" },
-    wins: { en: "Wins", ar: "الانتصارات" },
-    subscriber: { en: "⭐ SUBSCRIBER ⭐", ar: "⭐ مشترك مميز ⭐" },
-    subscriberDesc: { en: "Unlimited games & premium features", ar: "ألعاب غير محدودة ومميزات حصرية" },
-    getCredits: { en: "💎 Get Credits or Subscribe", ar: "💎 احصل على رصيد أو اشترك" },
-    accountStatus: { en: "Account Status", ar: "حالة الحساب" },
-    signOut: { en: "🚪 Sign Out", ar: "🚪 تسجيل الخروج" },
-    viewStats: { en: "📊 View Statistics", ar: "📊 عرض الإحصائيات" },
-    balance: { en: "Balance", ar: "الرصيد" },
-    memberSince: { en: "Member Since", ar: "عضو منذ" },
-    achievements: { en: "Achievements", ar: "الإنجازات" },
-    quickActions: { en: "Quick Actions", ar: "إجراءات سريعة" },
-    playNow: { en: "⚔️ Play Now", ar: "⚔️ العب الآن" },
-    store: { en: "🛒 Store", ar: "🛒 المتجر" },
-    spectate: { en: "👁️ Spectate", ar: "👁️ شاهد" },
-  };
-
-  useEffect(() => {
-    if (!userId) {
-      router.push("/");
-    }
-  }, [userId, router]);
-
-  if (!userId) return null;
-
-  function handleLogout() {
-    logout();
-    router.push("/");
-  }
-
-  // Generate member since date
-  const memberSince = new Date().toLocaleDateString(language === "ar" ? "ar-QA" : "en-US", {
-    year: "numeric",
-    month: "short"
-  });
-
-  // Sample achievements (placeholder)
-  const achievements = [
-    { icon: "🏆", name: { en: "First Victory", ar: "أول انتصار" }, color: "#FFD700" },
-    { icon: "⚡", name: { en: "Speed Demon", ar: "شيطان السرعة" }, color: "#00BFFF" },
-    { icon: "🎯", name: { en: "Sharp Shooter", ar: "القناص" }, color: "#32CD32" },
-  ];
-
-  return (
-    <main className="page" dir={isRTL ? "rtl" : "ltr"} style={{ padding: "24px 20px" }}>
-      <div className="container" style={{ maxWidth: 700 }}>
-
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}
-        >
-          <h1 className="font-black text-2xl">{T.profile[language]}</h1>
-          <div style={{ display: "flex", gap: 12 }}>
-            <Link href="/" className="btn btn-secondary text-sm" style={{ padding: "8px 16px" }}>
-              🏠 {isRTL ? "الرئيسية" : "Home"}
-            </Link>
-            <button onClick={handleLogout} className="btn btn-ghost text-sm" style={{ padding: "8px 16px" }}>
-              {T.signOut[language]}
-            </button>
-          </div>
-        </motion.div>
-
-        {/* Profile Card */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.1 }}
-          className="glass-card p-8 text-center"
-          style={{ marginBottom: 20, position: "relative", overflow: "hidden" }}
-        >
-          {/* Animated background glow for subscribers */}
-          {isSubscribed && (
-            <motion.div
-              animate={{ opacity: [0.3, 0.6, 0.3] }}
-              transition={{ repeat: Infinity, duration: 3 }}
-              style={{
-                position: "absolute",
-                inset: 0,
-                background: "radial-gradient(circle at 50% 0%, rgba(255,215,0,0.15), transparent 60%)",
-                pointerEvents: "none"
-              }}
-            />
-          )}
-
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: "spring", stiffness: 200, delay: 0.2 }}
-            style={{
-              width: 80, height: 80, borderRadius: "50%",
-              background: isSubscribed ? "linear-gradient(135deg, #FFD700, #FFA500)" : "var(--grad-primary)",
-              margin: "0 auto 16px",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "2.5rem", fontWeight: "bold",
-              boxShadow: isSubscribed ? "0 0 30px rgba(255,215,0,0.4)" : "none"
-            }}
-          >
-            {username?.charAt(0).toUpperCase() || "W"}
-          </motion.div>
-
-          <motion.h2
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="text-2xl font-bold mb-2"
-          >
-            {username || "Unknown Warrior"}
-          </motion.h2>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="text-sm text-muted mb-4"
-          >
-            {T.memberSince[language]}: {memberSince}
-          </motion.div>
-
-          {/* Stats Grid */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
-            style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginTop: 24 }}
-          >
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              className="glass-card p-4"
-              style={{ flex: 1, minWidth: 120 }}
-            >
-              <div className="text-muted text-xs uppercase tracking-wider mb-1">{isRTL ? "إجمالي المعارك" : "Total Battles"}</div>
-              <div className="font-black text-xl">—</div>
-            </motion.div>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              className="glass-card p-4"
-              style={{ flex: 1, minWidth: 120 }}
-            >
-              <div className="text-muted text-xs uppercase tracking-wider mb-1">{T.wins[language]}</div>
-              <div className="font-black text-xl" style={{ color: "var(--clr-gold)" }}>—</div>
-            </motion.div>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              className="glass-card p-4"
-              style={{ flex: 1, minWidth: 120 }}
-            >
-              <div className="text-muted text-xs uppercase tracking-wider mb-1">{T.balance[language]}</div>
-              <div className="font-black text-xl" style={{ color: "var(--clr-primary)" }}>
-                {balanceQar.toLocaleString()} QAR
-              </div>
-            </motion.div>
-          </motion.div>
-
-          {/* Subscriber Badge or Store CTA */}
-          {isSubscribed ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.6 }}
-              className="mt-6 p-4 text-center"
-              style={{ background: "linear-gradient(135deg, #FFD700, #FFA500)", borderRadius: "var(--radius-md)", color: "#000" }}
-            >
-              <motion.div
-                animate={{ textShadow: ["0 0 10px rgba(0,0,0,0.2)", "0 0 20px rgba(0,0,0,0.4)", "0 0 10px rgba(0,0,0,0.2)"] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-                className="font-bold"
-              >
-                {T.subscriber[language]}
-              </motion.div>
-              <div className="text-sm opacity-80">{T.subscriberDesc[language]}</div>
-            </motion.div>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.6 }}
-              className="mt-6 text-center"
-            >
-              <Link href="/store" className="btn btn-secondary btn-lg w-full">
-                {T.getCredits[language]}
-              </Link>
-            </motion.div>
-          )}
-        </motion.div>
-
-        {/* Quick Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.7 }}
-          className="glass-card p-6 mb-4"
-        >
-          <h3 className="font-bold mb-4">{T.quickActions[language]}</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Link href="/game/play" className="btn btn-primary w-full text-center p-4">
-                {T.playNow[language]}
-              </Link>
-            </motion.div>
-            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Link href="/store" className="btn btn-secondary w-full text-center p-4">
-                {T.store[language]}
-              </Link>
-            </motion.div>
-            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <Link href="/spectate" className="btn btn-ghost w-full text-center p-4" style={{ border: "1px solid var(--clr-border)" }}>
-                {T.spectate[language]}
-              </Link>
-            </motion.div>
-          </div>
-        </motion.div>
-
-        {/* Achievements Preview */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.8 }}
-          className="glass-card p-6 mb-4"
-        >
-          <h3 className="font-bold mb-4">{T.achievements[language]}</h3>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: isRTL ? "flex-end" : "flex-start" }}>
-            {achievements.map((achievement, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, scale: 0 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.9 + index * 0.1 }}
-                whileHover={{ scale: 1.1, rotate: 5 }}
-                className="flex flex-col items-center p-3 rounded-xl bg-white/5 border border-white/10"
-                style={{ minWidth: 80 }}
-              >
-                <motion.div
-                  animate={{ rotate: [0, 10, -10, 0] }}
-                  transition={{ repeat: Infinity, duration: 2, delay: index * 0.3 }}
-                  style={{ fontSize: "2rem", filter: `drop-shadow(0 0 8px ${achievement.color})` }}
-                >
-                  {achievement.icon}
-                </motion.div>
-                <span className="text-xs text-muted mt-1 text-center">{achievement.name[language]}</span>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Account Status */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.0 }}
-          className="glass-card p-6 mb-4"
-        >
-          <h3 className="font-bold mb-4">{T.accountStatus[language]}</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="text-muted">{isRTL ? "نوع الحساب" : "Account Type"}</span>
-              <span className="font-bold px-3 py-1 rounded-full bg-white/10">{role || "WARRIOR"}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="text-muted">{isRTL ? "الاشتراك" : "Subscription"}</span>
-              <span className="font-bold px-3 py-1 rounded-full" style={{
-                color: isSubscribed ? "#000" : "inherit",
-                background: isSubscribed ? "linear-gradient(135deg, #FFD700, #FFA500)" : "rgba(255,255,255,0.1)"
-              }}>
-                {isSubscribed ? (isRTL ? "⭐ نشط" : "⭐ Active") : (isRTL ? "لا يوجد" : "None")}
-              </span>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Stats Link */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.1 }}
-        >
-          <Link
-            href="/stats"
-            className="glass-card p-6 mb-20 flex items-center justify-between hover:bg-white/5 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <motion.span
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-                className="text-2xl"
-              >
-                📊
-              </motion.span>
-              <div>
-                <div className="font-bold">{isRTL ? "إحصائياتك" : "Your Statistics"}</div>
-                <div className="text-sm text-muted">{isRTL ? "عرض تفاصيل أدائك" : "View your performance details"}</div>
-              </div>
-            </div>
-            <motion.span
-              animate={{ x: isRTL ? [-5, 0, -5] : [0, 5, 0] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-              className="text-2xl"
-            >
-              {isRTL ? "←" : "→"}
-            </motion.span>
-          </Link>
-        </motion.div>
+  const { userId, username, role, isGuest, isSubscribed, language, logout, balanceQar } = useGameStore();
+  const { ready, signedIn, stats, failed, needsSignIn, retry } = usePlayerStats();
+  const [leaving, setLeaving] = useState(false);
+  const ar = language === "ar";
+  const number = new Intl.NumberFormat(language);
+  const since = stats && Number.isFinite(new Date(stats.memberSince).getTime())
+    ? new Date(stats.memberSince).toLocaleDateString(language, { year: "numeric", month: "long" }) : "—";
+  async function signOut() { setLeaving(true); await logout(); router.push("/"); }
+  return <AccountShell title={ar ? "ملف المحارب" : "Warrior Profile"} active="profile">
+    {!ready ? <AccountState title={ar ? "جارٍ تحميل الملف…" : "Loading your profile…"} loading />
+      : !userId || !signedIn ? <AccountState title={ar ? "مساحتك تبدأ هنا" : "Your place starts here"}>
+        <p>{ar ? "سجّل الدخول لعرض ملفك، أو عد إلى الرئيسية للعب كضيف." : "Sign in to view your profile, or return home to play as a guest."}</p>
+        <div className={styles.actions}><Link className={styles.primary} href="/login?returnTo=%2Fprofile">{ar ? "تسجيل الدخول" : "Sign in"}</Link><Link className={styles.secondary} href="/">{ar ? "العب كضيف" : "Play as guest"}</Link></div>
+      </AccountState> : <>
+      {failed && <AccountState error title={needsSignIn ? (ar ? "سجّل الدخول مجدداً" : "Sign in again") : (ar ? "تعذر تحميل إحصائياتك" : "Your statistics could not be loaded")}>
+        <p>{needsSignIn ? (ar ? "انتهت صلاحية جلستك. سجّل الدخول لعرض البيانات المحفوظة." : "Your session has expired. Sign in to view your saved data.") : (ar ? "لم تتغير نتائجك المحفوظة. حاول مجدداً عند استعادة الاتصال." : "Your saved results are unchanged. Try again when your connection is available.")}</p>
+        <div className={styles.actions}>{needsSignIn ? <Link className={styles.primary} href="/login?returnTo=%2Fprofile">{ar ? "تسجيل الدخول" : "Sign in"}</Link> : <button className={styles.secondary} onClick={retry}>{ar ? "أعد المحاولة" : "Retry"}</button>}</div>
+      </AccountState>}
+      <div className={styles.profileGrid}>
+        <section className={styles.panel} aria-labelledby="profile-name">
+          <div className={styles.identity}><span className={styles.avatar} aria-hidden="true">{username?.charAt(0).toUpperCase() || "W"}</span><div>
+            <h2 id="profile-name">{username || (ar ? "محارب" : "Warrior")}</h2><p className={styles.muted}>{ar ? "عضو منذ" : "Member since"} <bdi>{since}</bdi></p>
+          </div></div>
+          {!stats && !failed && <p role="status" className={styles.muted}>{ar ? "جارٍ تحميل الإحصائيات…" : "Loading statistics…"}</p>}
+          <dl className={styles.metrics}>
+            {[[ar ? "المعارك المكتملة" : "Completed battles", stats ? number.format(stats.totalGames) : "—"],
+              [ar ? "الانتصارات" : "Wins", stats ? number.format(stats.wins) : "—"],
+              [ar ? "الرصيد" : "Balance", `${number.format(balanceQar)} QAR`],
+              [ar ? "الحساب" : "Account", isGuest ? (ar ? "ضيف" : "Guest") : (ar ? "مسجّل" : "Registered")]].map(([label, value]) => <div className={styles.metric} key={label}><dt>{label}</dt><dd><bdi>{value}</bdi></dd></div>)}
+          </dl>
+          <div className={styles.actions}><Link href="/" className={styles.primary}>{ar ? "ابدأ معركة" : "Play now"}</Link><Link href="/stats" className={styles.secondary}>{ar ? "عرض الإحصائيات" : "View statistics"}</Link></div>
+        </section>
+        <div className={styles.stack}>
+          <section className={styles.panel} aria-labelledby="account-status"><h2 id="account-status">{ar ? "حالة الحساب" : "Account status"}</h2>
+            <dl className={styles.accountRows}><div><dt>{ar ? "نوع الحساب" : "Account type"}</dt><dd>{isGuest ? (ar ? "ضيف" : "Guest") : role?.toLowerCase() === "admin" ? (ar ? "مسؤول" : "Administrator") : (ar ? "لاعب مسجّل" : "Registered player")}</dd></div>
+              <div><dt>{ar ? "الاشتراك" : "Subscription"}</dt><dd>{isSubscribed ? (ar ? "نشط" : "Active") : (ar ? "لا يوجد اشتراك" : "No subscription")}</dd></div></dl>
+            <p className={styles.muted}>{ar ? "عمليات الشراء غير متاحة حاليًا." : "Purchases are currently unavailable."}</p>
+            <button className={styles.secondary} style={{ marginTop: 20 }} onClick={signOut} disabled={leaving}>{leaving ? (ar ? "جارٍ الخروج…" : "Signing out…") : (ar ? "تسجيل الخروج" : "Sign out")}</button>
+          </section>
+          <section className={`${styles.panel} ${styles.paper}`} aria-labelledby="earned-achievements"><h2 id="earned-achievements">{ar ? "إنجازاتك" : "Your achievements"}</h2>
+            {stats?.achievements.length ? <ul className={styles.achievementList}>{stats.achievements.map(item => <li key={item.nameEn}>{ar ? item.nameAr : item.nameEn}</li>)}</ul>
+              : <p>{stats ? (ar ? "ستظهر إنجازاتك هنا عندما تحققها في المعارك." : "Your achievements will appear here as you earn them in battle.") : (ar ? "تظهر الإنجازات بعد تحميل إحصائياتك." : "Achievements appear once your statistics are loaded.")}</p>}
+          </section>
+        </div>
       </div>
-    </main>
-  );
+    </>}
+  </AccountShell>;
 }

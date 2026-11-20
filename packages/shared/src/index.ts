@@ -3,6 +3,7 @@
 // ============================================================
 
 export * from "./enums";
+export * from "./territories";
 
 import {
   Difficulty,
@@ -106,6 +107,35 @@ export interface ClientQuestion {
   activePowerUps?: ActivePowerUpEffect[];
 }
 
+export type SubmittedAnswer = number | string | number[];
+export interface AnswerReveal {
+  correct: boolean;
+  correctIndex: number;
+  correctIndices?: number[];
+  correctOrder?: number[];
+  correctAnswer?: string;
+}
+export type SafeClientQuestion = Omit<ClientQuestion,
+  "correctIndex" | "correctIndices" | "correctOrder" | "correctAnswer" | "acceptedAnswers" |
+  "explanation" | "explanationEn" | "explanationAr">;
+
+// Explicitly allow presentation fields. Answer keys and future server metadata
+// cannot accidentally cross the question/reconnection boundary.
+export function toSafeClientQuestion(question: ClientQuestion): SafeClientQuestion {
+  const safe: SafeClientQuestion = {
+    id: question.id, category: question.category, difficulty: question.difficulty,
+    timeLimit: question.timeLimit, text: question.text, options: [...question.options],
+  };
+  const optionalFields = [
+    "topic", "subtopic", "type", "imageUrl", "audioUrl", "videoUrl", "optionImages", "hint",
+    "textEn", "textAr", "optionsEn", "optionsAr", "hintEn", "hintAr", "activePowerUps",
+  ] as const;
+  for (const field of optionalFields) {
+    if (question[field] !== undefined) (safe as unknown as Record<string, unknown>)[field] = question[field];
+  }
+  return safe;
+}
+
 export function toClientQuestion(
   question: MultilingualQuestion,
   lang: "en" | "ar" = "en"
@@ -179,6 +209,27 @@ export interface ChatMessage {
   isSystem?: boolean;
 }
 
+export interface CustomGameSettings {
+  name: string;
+  rounds: number;
+  timePerQuestion: number;
+  difficulty: Difficulty;
+  enabledPowerUps: PowerUpType[];
+  maxPlayers: number;
+  categoryFilter: string | null;
+}
+
+export const DEFAULT_CUSTOM_SETTINGS: CustomGameSettings = {
+  name: "Custom Battle",
+  rounds: 10,
+  timePerQuestion: 15,
+  difficulty: Difficulty.Scholar,
+  enabledPowerUps: [PowerUpType.Shield, PowerUpType.FiftyFifty, PowerUpType.DoubleDown,
+    PowerUpType.Freeze, PowerUpType.Sandstorm, PowerUpType.Steal],
+  maxPlayers: 8,
+  categoryFilter: null,
+};
+
 export interface GameRoom {
   gameId: string;
   joinCode: string;
@@ -190,6 +241,7 @@ export interface GameRoom {
   currentRound: number;
   totalRounds: number;
   maxPlayers: number;
+  customSettings?: CustomGameSettings;
   category?: string;
   subcategory?: string;
   language?: "en" | "ar";
@@ -205,9 +257,64 @@ export interface TeamScoreState {
   blue: { players: string[]; score: number };
 }
 
+export const CHAOS_VOTE_OPTIONS = ["FORGIVE", "REDUCE_SCORE"] as const;
+export type ChaosVote = typeof CHAOS_VOTE_OPTIONS[number];
+
+export interface ChaosDramaSnapshot {
+  id: string;
+  type: string;
+  playerId: string;
+  username: string;
+  expiresAt: number;
+}
+
+export interface ChaosClientSnapshot {
+  serverNow?: number;
+  gameId: string;
+  level: number;
+  state: "CALM" | "UNSTABLE" | "CHAOTIC" | "INSANITY" | "ANARCHY";
+  personality: "TRICKSTER" | "AGGRESSIVE" | "RANDOM" | "REVENGE";
+  pendingDrama: ChaosDramaSnapshot | null;
+  votingSession: {
+    dramaEventId: string;
+    targetPlayerId: string;
+    targetUsername: string;
+    durationMs: number;
+    endsAt: number;
+    timeRemainingMs: number;
+    totalVotes: number;
+    options: ChaosVote[];
+    canVote: boolean;
+    hasVoted: boolean;
+  } | null;
+  activeTrap: {
+    targetPlayerId: string;
+    targetUsername: string;
+    level: number;
+    isTarget: boolean;
+  } | null;
+  evaluatingTrap: boolean;
+}
+
 export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
+  serverNow?: number;
   players: PlayerState[];
+  chaos?: ChaosClientSnapshot | null;
   activeEffects?: ActivePowerUpEffect[];
+  currentQuestion?: SafeClientQuestion | null;
+  questionStartedAt?: number;
+  eliminatedOptions?: number[];
+  selectedAnswer?: SubmittedAnswer | null;
+  answeredAt?: number | null;
+  lastAnswerResult?: AnswerReveal | null;
+  finalResults?: FinalResult[];
+  powerUpSelection?: {
+    availablePowerUps: PowerUpType[];
+    selectedPowerUps: PowerUpType[];
+    maxSelections: number;
+    timeLeft: number;
+    isSelecting: boolean;
+  };
   teams?: TeamScoreState;
   territories?: Record<string, string | null>;
   playerTerritories?: Record<string, string[]>;
@@ -215,6 +322,15 @@ export interface SyncedGameRoom extends Omit<GameRoom, "players"> {
 
 export interface PowerUpAppliedPayload extends ActivePowerUpEffect {
   eliminatedIndices?: number[];
+}
+
+export interface PowerUpBlockedPayload {
+  gameId: string;
+  questionId: string;
+  type: PowerUpType;
+  sourceUserId: string;
+  targetUserId: string;
+  shieldExpiresAt?: number;
 }
 
 // Conquest mode types
@@ -234,6 +350,7 @@ export interface ConquestDuelQuestion {
 }
 
 export interface ConquestClientState {
+  serverNow?: number;
   territories: Record<string, string | null>;      // territoryId -> ownerId
   fortHealth: Record<string, number>;              // playerId -> 1-3
   fortTerritoryId: Record<string, string>;         // playerId -> their fort's territory id
@@ -243,6 +360,12 @@ export interface ConquestClientState {
   eliminatedPlayers: string[];
   draftPhase?: {
     currentRound: number;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
+    selectedAnswer?: number | null;
+    answeredAt?: number | null;
+    pickTurnId?: string | null;
+    pickEndsAt?: number | null;
     question: ConquestDuelQuestion | null;
     answered: number;
     totalPlayers: number;
@@ -257,6 +380,9 @@ export interface ConquestClientState {
     targetTerritoryId: string;
     isAttackingFort: boolean;
     question: ConquestDuelQuestion;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
+    selectedAnswer?: number | null;
     attackerAnswered: boolean;
     defenderAnswered: boolean;
     consecutiveCorrect: number;
@@ -264,17 +390,34 @@ export interface ConquestClientState {
   rebuildSession: {
     playerId: string;
     question: ConquestDuelQuestion;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
     answered: boolean;
   } | null;
 }
 
 // Invasion Mode State (Phase 2 of conquest)
 export interface InvasionClientState {
-  territories: { id: string | number; ownerId: string | null; troopCount: number; }[];
+  serverNow?: number;
+  territories: {
+    id: string | number;
+    ownerId: string | null;
+    troopCount: number;
+    name?: string;
+    nameAr?: string;
+    path?: string;
+    center?: { x: number; y: number };
+  }[];
   currentRound: number;
   totalRounds: number;
   phase: 'question' | 'ranking' | 'selection' | 'ended';
   currentQuestion: { id: string; text: string; options: string[]; timeLimit: number; } | null;
+  questionStartedAt?: number;
+  selectedAnswer?: number | null;
+  answeredAt?: number | null;
+  currentTurn?: string | null;
+  picksRemaining?: number;
+  selectableTerritories?: number[];
   lastRanking: { playerId: string; playerName: string; rank: number; picks: number; responseTimeMs: number; }[];
   selectionPhase: {
     isActive: boolean;
@@ -293,7 +436,9 @@ export interface ServerToClientEvents {
   "game:error": (data: { message: string }) => void;
   "game:countdown": (data: { seconds: number }) => void;
   "game:question": (data: {
-    question: Omit<ClientQuestion, "correctIndex">;
+    serverNow?: number;
+    questionStartedAt?: number;
+    question: SafeClientQuestion;
     round: number;
     totalRounds: number;
   }) => void;
@@ -303,12 +448,16 @@ export interface ServerToClientEvents {
     scoreDelta: number;
     newScore: number;
     correctIndex: number;
+    correctIndices?: number[];
+    correctOrder?: number[];
+    correctAnswer?: string;
   }) => void;
   "game:scoreboard": (data: { players: PlayerState[] }) => void;
   "game:playerEliminated": (data: { userId: string; reason: string }) => void;
   "game:powerUpApplied": (
     data: PowerUpAppliedPayload
   ) => void;
+  "game:powerUpBlocked": (data: PowerUpBlockedPayload) => void;
   "game:end": (data: {
     results: Array<{
       userId: string;
@@ -321,6 +470,7 @@ export interface ServerToClientEvents {
       xpEarned: number;
     }>;
     xpAwarded: number;
+    resultsPersisted?: boolean;
   }) => void;
   "game:emote": (data: { userId: string; emote: string }) => void;
   "game:message": (data: {
@@ -333,7 +483,7 @@ export interface ServerToClientEvents {
     room: SyncedGameRoom;
   }) => void;
   "game:playerJoined": (data: { player: PlayerState }) => void;
-  "game:playerLeft": (data: { userId: string }) => void;
+  "game:playerLeft": (data: { userId: string; retained?: boolean }) => void;
   // PowerUp selection phase
   "game:powerUpSelectStart": (data: {
     availablePowerUps: PowerUpType[];
@@ -400,6 +550,8 @@ export interface ServerToClientEvents {
   // Conquest Draft Phase events (Splitting the world)
   "conquest:draftQuestion": (data: {
     round: number;
+    questionStartedAt?: number;
+    questionEndsAt?: number;
     question: { id: string; text: string; options: string[]; timeLimit: number };
   }) => void;
   "conquest:draftRanking": (data: {
@@ -412,6 +564,8 @@ export interface ServerToClientEvents {
     playerName: string;
     picksRemaining: number;
     availableTerritories: string[];
+    turnId?: string;
+    endsAt?: number;
   }) => void;
   "conquest:territoryClaimed": (data: {
     territoryId: string;
@@ -427,6 +581,8 @@ export interface ServerToClientEvents {
   "invasion:init": (data: { gameId: string; playerIds: string[]; totalRounds?: number }) => void;
   "invasion:state": (data: InvasionClientState) => void;
   "invasion:roundStart": (data: {
+    serverNow?: number;
+    questionStartedAt?: number;
     round: number;
     totalRounds: number;
     question: { id: string; text: string; options: string[]; timeLimit: number; };
@@ -472,20 +628,24 @@ export interface ServerToClientEvents {
     targetPlayerId: string;
     targetUsername: string;
     duration: number;
+    endsAt?: number;
     options: string[];
   }) => void;
   "chaos:votingUpdate": (data: {
+    dramaEventId?: string;
     totalVotes: number;
     voteCounts: Record<string, number>;
     timeRemaining: number;
   }) => void;
   "chaos:votingComplete": (data: {
+    dramaEventId?: string;
     result: string;
     targetPlayerId: string;
     targetUsername: string;
     voteCounts: Record<string, number>;
+    scorePenalty?: number;
   }) => void;
-  "chaos:voteConfirmed": (data: { vote: string }) => void;
+  "chaos:voteConfirmed": (data: { vote: string; dramaEventId?: string }) => void;
   "chaos:trapActivated": (data: {
     targetPlayerId: string;
     targetUsername: string;
@@ -508,13 +668,7 @@ export interface ServerToClientEvents {
     playerResults: any[];
     summary: string;
   }) => void;
-  "chaos:state": (data: {
-    chaosLevel: number;
-    chaosState: string;
-    personality: string;
-    factors: any;
-    momentum: any;
-  }) => void;
+  "chaos:state": (data: ChaosClientSnapshot) => void;
   "chaos:advantages": (data: {
     timeBonus: number;
     eliminatedOptions: number;
@@ -522,8 +676,9 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  "clock:sync": (acknowledge: (sample: { serverNow: number }) => void) => void;
   "game:join": (
-    data: { joinCode?: string; gameId?: string; userId?: string; username?: string },
+    data: { joinCode?: string; gameId?: string; userId?: string; username?: string; password?: string },
     cb?: (response: JoinResponse) => void
   ) => void;
   "game:start": (
@@ -539,7 +694,8 @@ export interface ClientToServerEvents {
   "player:answer": (data: {
     gameId: string;
     questionId: string;
-    answerIndex: number;
+    answer?: SubmittedAnswer;
+    answerIndex?: number;
     timestamp: number;
   }) => void;
   "game:emote": (data: { gameId: string; emote: string }) => void;
@@ -553,7 +709,7 @@ export interface ClientToServerEvents {
     cb?: (response: AckResponse) => void
   ) => void;
   "game:leave": (data: { gameId: string }) => void;
-  "game:spectate": (data: { gameId: string }) => void;
+  "game:spectate": (data: { gameId: string; password?: string }, cb?: (response: AckResponse) => void) => void;
   // PowerUp selection
   "game:selectPowerUp": (
     data: { gameId: string; powerUp: PowerUpType },
@@ -574,9 +730,12 @@ export interface ClientToServerEvents {
     cb?: (res: AckResponse) => void
   ) => void;
   "conquest:rebuildAnswer": (data: { gameId: string; answerIndex: number }) => void;
-  "conquest:draftAnswer": (data: { gameId: string; answerIndex: number; responseTimeMs: number }) => void;
+  "conquest:draftAnswer": (
+    data: { gameId: string; answerIndex: number; responseTimeMs: number; questionId?: string; round?: number },
+    cb?: (res: AckResponse) => void
+  ) => void;
   "conquest:selectDraftTerritory": (
-    data: { gameId: string; territoryId: string },
+    data: { gameId: string; territoryId: string; turnId?: string },
     cb?: (res: AckResponse) => void
   ) => void;
   "conquest:answer": (data: { gameId: string; answerIndex: number; responseTimeMs: number }) => void;
@@ -600,8 +759,14 @@ export interface ClientToServerEvents {
   // CHAOS mode events
   "chaos:init": (data: { gameId: string; personality: string }) => void;
   "chaos:drama": (data: { gameId: string; type: string }) => void;
-  "chaos:startVoting": (data: { gameId: string; dramaEventId: string; targetPlayerId: string; targetUsername: string }) => void;
-  "chaos:vote": (data: { gameId: string; vote: string }) => void;
+  "chaos:startVoting": (
+    data: { gameId: string; dramaEventId: string; targetPlayerId?: string; targetUsername?: string },
+    cb?: (response: AckResponse) => void
+  ) => void;
+  "chaos:vote": (
+    data: { gameId: string; dramaEventId: string; vote: ChaosVote },
+    cb?: (response: AckResponse) => void
+  ) => void;
   "chaos:activateTrap": (data: { gameId: string; targetPlayerId: string }) => void;
   "chaos:answer": (data: { gameId: string; questionId: string; answerIndex: number; mode: string }) => void;
   "chaos:evaluateTrap": (data: { gameId: string }) => void;
@@ -621,11 +786,23 @@ export interface JoinResponse {
   >;
   players?: PlayerState[];
   error?: string;
+  code?: "PASSWORD_REQUIRED" | "INVALID_PASSWORD" | "RATE_LIMITED";
 }
 
 export interface AckResponse {
   success: boolean;
   error?: string;
+  code?: "PASSWORD_REQUIRED" | "INVALID_PASSWORD" | "RATE_LIMITED";
+}
+
+export interface SavedGameResults {
+  gameId: string;
+  mode: GameMode;
+  difficulty: Difficulty;
+  language: "en" | "ar";
+  totalRounds: number;
+  endedAt: string;
+  results: FinalResult[];
 }
 
 export interface FinalResult {
@@ -719,3 +896,5 @@ export const GAME_MODE_CONFIG: Record<
 
 export * from "./quotes";
 export * from "./characters";
+
+export * from "./questionAvailability";

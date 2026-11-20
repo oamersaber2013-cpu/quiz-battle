@@ -6,18 +6,58 @@ import {
   GameStatus,
   Difficulty,
   PlayerState,
+  SafeClientQuestion,
   ClientQuestion,
   FinalResult,
   ActivePowerUpEffect,
   SyncedGameRoom,
   PowerUpType,
+  SubmittedAnswer,
+  AnswerReveal,
+  ChaosClientSnapshot,
+  CustomGameSettings,
 } from "@quiz-battle/shared";
 import { soundManager } from "@/lib/sounds";
+import { getServerTime, synchronizeServerClock } from "@/lib/gameClock";
 
 export interface Toast {
   id: string;
   type: "success" | "error" | "info" | "warning";
   message: string;
+}
+
+export type LastAnswerResult = AnswerReveal;
+
+type ChaosTrapResult = {
+  outcome: string;
+  title: string;
+  emoji: string;
+  color: string;
+  message: string;
+  heroUsername?: string;
+};
+
+type ChaosStoreState = ChaosClientSnapshot & {
+  voteDeadline: number | null;
+  lastTrapResult: ChaosTrapResult | null;
+  chaosLog: Array<{ timestamp: number; event: string; message: string }>;
+};
+
+function mergeChaosSnapshot(
+  previous: ChaosStoreState | null,
+  snapshot: ChaosClientSnapshot | null
+): ChaosStoreState | null {
+  if (!snapshot) return null;
+  synchronizeServerClock(snapshot.serverNow);
+  const existing = previous?.gameId === snapshot.gameId ? previous : null;
+  return {
+    ...snapshot,
+    voteDeadline: snapshot.votingSession
+      ? getServerTime() + snapshot.votingSession.timeRemainingMs
+      : null,
+    lastTrapResult: snapshot.activeTrap ? null : existing?.lastTrapResult ?? null,
+    chaosLog: existing?.chaosLog ?? [],
+  };
 }
 
 export interface GameStore {
@@ -40,6 +80,7 @@ export interface GameStore {
   mode: GameMode | null;
   difficulty: Difficulty | null;
   category: string | null;
+  customSettings: CustomGameSettings | null;
   status: GameStatus;
   players: PlayerState[];
   currentPlayer: PlayerState | null;
@@ -48,9 +89,9 @@ export interface GameStore {
   currentQuestion: ClientQuestion | null;
   currentRound: number;
   totalRounds: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   answeredAt: number | null;
-  lastAnswerResult: { correct: boolean; correctIndex: number } | null;
+  lastAnswerResult: LastAnswerResult | null;
   eliminatedOptions: number[];
   timeLeft: number;
   questionStartedAt: number | null;
@@ -91,51 +132,7 @@ export interface GameStore {
     selectableTerritories: number[];
   } | null;
 
-  // CHAOS mode state
-  chaosState: {
-    level: number;
-    state: "CALM" | "UNSTABLE" | "CHAOTIC" | "INSANITY" | "ANARCHY";
-    personality: "TRICKSTER" | "AGGRESSIVE" | "RANDOM" | "REVENGE";
-    isVoting: boolean;
-    activeDrama: {
-      id: string;
-      type: string;
-      playerId: string;
-      username: string;
-    } | null;
-    votingSession: {
-      dramaEventId: string;
-      targetPlayerId: string;
-      targetUsername: string;
-      timeRemaining: number;
-      totalVotes: number;
-      hasVoted: boolean;
-    } | null;
-    activeTrap: {
-      targetPlayerId: string;
-      targetUsername: string;
-      level: number;
-      isTarget: boolean;
-      advantages?: {
-        timeBonus: number;
-        eliminatedOptions: number;
-      };
-    } | null;
-    evaluatingTrap: boolean;
-    lastTrapResult: {
-      outcome: string;
-      title: string;
-      emoji: string;
-      color: string;
-      message: string;
-      heroUsername?: string;
-    } | null;
-    chaosLog: Array<{
-      timestamp: number;
-      event: string;
-      message: string;
-    }>;
-  } | null;
+  chaosState: ChaosStoreState | null;
 
   activeEffects: ActivePowerUpEffect[];
 
@@ -168,8 +165,8 @@ export interface GameStore {
   addPlayer: (player: PlayerState) => void;
   removePlayer: (userId: string) => void;
   updatePlayer: (userId: string, updates: Partial<PlayerState>) => void;
-  setQuestion: (question: ClientQuestion, round: number, totalRounds: number) => void;
-  selectAnswer: (index: number) => void;
+  setQuestion: (question: SafeClientQuestion, round: number, totalRounds: number, startedAt?: number) => void;
+  selectAnswer: (answer: SubmittedAnswer) => void;
   setTimeLeft: (t: number) => void;
   applyTimeWarpBonus: (seconds: number) => void;
   setFinalResults: (results: FinalResult[]) => void;
@@ -188,7 +185,7 @@ export interface GameStore {
   setGameId: (gameId: string | null) => void;
   setPowerUpSelection: (data: any) => void;
   setAllPowerUpSelections: (selections: Record<string, any[]>) => void;
-  setLastAnswerResult: (result: any) => void;
+  setLastAnswerResult: (result: LastAnswerResult | null) => void;
   addEffect: (effect: any) => void;
   removeEffect: (effectId: string) => void;
   setEliminatedOptions: (options: number[]) => void;
@@ -196,18 +193,9 @@ export interface GameStore {
   setReadyPlayers: (players: string[]) => void;
 
   // CHAOS actions
-  setChaosState: (state: any) => void;
-  setChaosVoting: (voting: any) => void;
-  updateChaosVoting: (update: any) => void;
-  completeChaosVoting: (result: any) => void;
-  setActiveDrama: (drama: any) => void;
-  castChaosVote: (vote: string) => void;
-  setActiveTrap: (trap: any) => void;
-  setTrapEvaluating: (evaluating: any) => void;
-  setTrapResult: (result: any) => void;
-  setChaosAdvantages: (advantages: any) => void;
+  syncChaos: (snapshot: ChaosClientSnapshot) => void;
+  setTrapResult: (result: ChaosTrapResult | null) => void;
   addChaosLog: (event: string, message: string) => void;
-  clearChaosState: () => void;
 }
 
 const initialGameState = {
@@ -219,6 +207,7 @@ const initialGameState = {
   mode: null,
   difficulty: null,
   category: null,
+  customSettings: null,
   status: GameStatus.Lobby,
   players: [],
   currentPlayer: null,
@@ -249,6 +238,8 @@ const initialGameState = {
     allSelections: {},
   },
 };
+
+let nextToastId = 0;
 
 export const useGameStore = create<GameStore>()(
   persist(
@@ -301,6 +292,7 @@ export const useGameStore = create<GameStore>()(
           mode: data.mode,
           difficulty: data.difficulty,
           category: data.category ?? null,
+          customSettings: data.customSettings ?? null,
           language: data.language ?? state.language,
         })),
 
@@ -336,9 +328,12 @@ export const useGameStore = create<GameStore>()(
           players: state.players.map((p) =>
             p.userId === userId ? { ...p, ...updates } : p
           ),
+          currentPlayer: state.currentPlayer?.userId === userId
+            ? { ...state.currentPlayer, ...updates }
+            : state.currentPlayer,
         })),
 
-      setQuestion: (question, round, totalRounds) => {
+      setQuestion: (question, round, totalRounds, startedAt = getServerTime()) => {
         set({
           currentQuestion: question,
           currentRound: round,
@@ -347,8 +342,9 @@ export const useGameStore = create<GameStore>()(
           answeredAt: null,
           lastAnswerResult: null,
           eliminatedOptions: [],
-          timeLeft: question.timeLimit,
-          questionStartedAt: Date.now(),
+          timeLeft: Math.max(0, Math.ceil(question.timeLimit - (getServerTime() - startedAt) / 1000)),
+          questionStartedAt: startedAt,
+          timeWarpBonusSeconds: 0,
           status: GameStatus.Question,
           activeEffects: [],
         });
@@ -358,17 +354,17 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
-      selectAnswer: (index) =>
+      selectAnswer: (answer) =>
         set((state) => {
           if (state.selectedAnswer !== null) return state;
 
           if (state.soundEnabled) {
-            soundManager.play("CORRECT");
+            soundManager.play("CLICK");
           }
 
           return {
-            selectedAnswer: index,
-            answeredAt: Date.now(),
+            selectedAnswer: Array.isArray(answer) ? [...answer] : answer,
+            answeredAt: getServerTime(),
           };
         }),
 
@@ -376,7 +372,13 @@ export const useGameStore = create<GameStore>()(
 
       applyTimeWarpBonus: (seconds) =>
         set((state) => ({
-          timeLeft: Math.min(state.timeLeft + seconds, 60),
+          timeWarpBonusSeconds: Math.max(state.timeWarpBonusSeconds, seconds),
+          timeLeft: state.currentQuestion && state.questionStartedAt
+            ? Math.max(0, Math.ceil(
+                state.currentQuestion.timeLimit + Math.max(state.timeWarpBonusSeconds, seconds)
+                - (getServerTime() - state.questionStartedAt) / 1000
+              ))
+            : Math.min(state.timeLeft + seconds, 60),
         })),
 
       setFinalResults: (results) =>
@@ -384,7 +386,33 @@ export const useGameStore = create<GameStore>()(
 
   // Conquest / Invasion actions
 
-      setConquestState: (state) => set({ conquestState: state }),
+      setConquestState: (nextState) => set((state) => {
+        synchronizeServerClock(nextState?.serverNow);
+        const previousBattle = state.conquestState?.currentBattle;
+        const nextBattle = nextState?.currentBattle;
+        if (nextState && nextBattle && previousBattle && nextBattle.selectedAnswer === undefined
+            && previousBattle.selectedAnswer != null && previousBattle.attackerId === nextBattle.attackerId
+            && previousBattle.defenderId === nextBattle.defenderId && previousBattle.question.id === nextBattle.question.id
+            && previousBattle.consecutiveCorrect === nextBattle.consecutiveCorrect && previousBattle.questionStartedAt === nextBattle.questionStartedAt) {
+          return { conquestState: { ...nextState, currentBattle: { ...nextBattle, selectedAnswer: previousBattle.selectedAnswer } } };
+        }
+        const previousDraft = state.conquestState?.draftPhase;
+        const nextDraft = nextState?.draftPhase;
+        const sameQuestion = previousDraft && nextDraft
+          && previousDraft.currentRound === nextDraft.currentRound
+          && previousDraft.question?.id === nextDraft.question?.id;
+        if (!nextState || !sameQuestion) return { conquestState: nextState };
+        return {
+          conquestState: {
+            ...nextState,
+            draftPhase: {
+              ...nextDraft,
+              selectedAnswer: nextDraft.selectedAnswer === undefined ? previousDraft.selectedAnswer : nextDraft.selectedAnswer,
+              answeredAt: nextDraft.answeredAt === undefined ? previousDraft.answeredAt : nextDraft.answeredAt,
+            },
+          },
+        };
+      }),
       setInvasionState: (state) => set({ invasionState: state }),
       setInvasionQuestion: (question) => set((state) => ({ 
         invasionState: state.invasionState ? {
@@ -424,31 +452,66 @@ export const useGameStore = create<GameStore>()(
 
       syncRoom: (room) =>
         set((state) => {
+          synchronizeServerClock(room.serverNow);
           const userId = state.userId;
+          const previous = state.gameId === room.gameId ? state : initialGameState;
+          const effects = (room.activeEffects || []).filter(
+            (effect) => !effect.expiresAt || effect.expiresAt > getServerTime()
+          );
+          const question = room.currentQuestion === undefined
+            ? previous.currentQuestion
+            : room.currentQuestion;
+          const questionStartedAt = room.questionStartedAt ?? previous.questionStartedAt;
+          const isNewQuestion = room.currentQuestion !== undefined && room.currentQuestion?.id !== previous.currentQuestion?.id;
+          const ownTimeWarp = effects.find(
+            (effect) => effect.type === PowerUpType.TimeWarp && effect.sourceUserId === userId
+          );
+          const timeWarpBonusSeconds = question && questionStartedAt && ownTimeWarp?.expiresAt
+            ? Math.max(0, (ownTimeWarp.expiresAt - questionStartedAt) / 1000 - question.timeLimit)
+            : room.currentQuestion === undefined ? previous.timeWarpBonusSeconds : 0;
 
           return {
-            ...state,
+            ...previous,
             gameId: room.gameId,
             joinCode: room.joinCode,
             hostId: room.hostId || null,
             mode: room.mode,
+            customSettings: room.customSettings ?? null,
             difficulty: room.difficulty,
             category: room.category || null,
             status: room.status,
+            currentRound: room.currentRound,
+            totalRounds: room.totalRounds,
+            currentQuestion: question,
+            questionStartedAt,
+            timeWarpBonusSeconds,
+            timeLeft: question && questionStartedAt
+              ? Math.max(0, Math.ceil(question.timeLimit + timeWarpBonusSeconds - (getServerTime() - questionStartedAt) / 1000))
+              : previous.timeLeft,
+            eliminatedOptions: room.eliminatedOptions ?? (isNewQuestion ? [] : previous.eliminatedOptions),
+            selectedAnswer: room.selectedAnswer === undefined ? (isNewQuestion ? null : previous.selectedAnswer) : room.selectedAnswer,
+            answeredAt: room.answeredAt === undefined ? (isNewQuestion ? null : previous.answeredAt) : room.answeredAt,
+            lastAnswerResult: room.lastAnswerResult === undefined ? (isNewQuestion ? null : previous.lastAnswerResult) : room.lastAnswerResult,
+            finalResults: room.finalResults ?? previous.finalResults,
+            chaosState: room.chaos === undefined
+              ? previous.chaosState
+              : mergeChaosSnapshot(previous.chaosState, room.chaos),
+            powerUpSelection: room.powerUpSelection
+              ? { ...previous.powerUpSelection, ...room.powerUpSelection }
+              : previous.powerUpSelection,
             players: room.players,
             currentPlayer:
               room.players.find((p) => p.userId === userId) || null,
-            activeEffects: (room.activeEffects || []).filter(
-              (e) => !e.expiresAt || e.expiresAt > Date.now()
-            ),
+            activeEffects: effects,
             language: room.language || state.language,
           };
         }),
 
       addToast: (type, message) => {
-        const id = `toast_${Date.now()}`;
-        set((state) => ({
-          toasts: [...state.toasts, { id, type, message }],
+        if (get().toasts.some(item => item.type === type && item.message === message)) return;
+        const id = `toast_${++nextToastId}`;
+        set(state => ({
+          toasts: [...state.toasts.slice(-1), { id, type, message }],
         }));
 
         setTimeout(() => get().removeToast(id), 3000);
@@ -465,7 +528,13 @@ export const useGameStore = create<GameStore>()(
       setGameId: (gameId) => set({ gameId }),
       setPowerUpSelection: (data) => set({ powerUpSelection: { ...get().powerUpSelection, ...data } }),
       setAllPowerUpSelections: (selections) => set({ allPowerUpSelections: selections }),
-      setLastAnswerResult: (result) => set({ lastAnswerResult: result }),
+      setLastAnswerResult: (result) => {
+        const state = get();
+        if (result && !state.lastAnswerResult && state.selectedAnswer !== null && state.soundEnabled) {
+          soundManager.play(result.correct ? "CORRECT" : "WRONG");
+        }
+        set({ lastAnswerResult: result });
+      },
       addEffect: (effect) => set((state) => ({ activeEffects: [...state.activeEffects, effect] })),
       removeEffect: (effectId) => set((state) => ({ activeEffects: state.activeEffects.filter((e: any) => e.id !== effectId) })),
       setEliminatedOptions: (options) => set({ eliminatedOptions: options }),
@@ -473,54 +542,11 @@ export const useGameStore = create<GameStore>()(
       setReadyPlayers: (players) => set({ readyPlayers: players }),
       confirmPowerUpSelection: () => set((state) => ({ powerUpSelection: { ...state.powerUpSelection, isSelecting: false } })),
 
-      // CHAOS actions
-      setChaosState: (chaosState) => set({ chaosState }),
-      setChaosVoting: (voting) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, votingSession: voting, isVoting: !!voting } : null,
-      })),
-      updateChaosVoting: (update) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          votingSession: state.chaosState.votingSession
-            ? { ...state.chaosState.votingSession, ...update }
-            : null,
-        } : null,
-      })),
-      completeChaosVoting: (result) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          isVoting: false,
-          votingSession: null,
-          activeDrama: null,
-        } : null,
-      })),
-      setActiveDrama: (drama) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, activeDrama: drama } : null,
-      })),
-      castChaosVote: (vote) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          votingSession: state.chaosState.votingSession
-            ? { ...state.chaosState.votingSession, hasVoted: true }
-            : null,
-        } : null,
-      })),
-      setActiveTrap: (trap) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, activeTrap: trap } : null,
-      })),
-      setTrapEvaluating: (evaluating) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, evaluatingTrap: true } : null,
-      })),
+      syncChaos: (snapshot) => set((state) => state.gameId === snapshot.gameId && state.mode === GameMode.Chaos
+        ? { chaosState: mergeChaosSnapshot(state.chaosState, snapshot) }
+        : state),
       setTrapResult: (result) => set((state) => ({
-        chaosState: state.chaosState ? { ...state.chaosState, lastTrapResult: result, activeTrap: null, evaluatingTrap: false } : null,
-      })),
-      setChaosAdvantages: (advantages) => set((state) => ({
-        chaosState: state.chaosState ? {
-          ...state.chaosState,
-          activeTrap: state.chaosState.activeTrap
-            ? { ...state.chaosState.activeTrap, advantages }
-            : null,
-        } : null,
+        chaosState: state.chaosState ? { ...state.chaosState, lastTrapResult: result } : null,
       })),
       addChaosLog: (event, message) => set((state) => ({
         chaosState: state.chaosState
@@ -530,7 +556,6 @@ export const useGameStore = create<GameStore>()(
             }
           : null,
       })),
-      clearChaosState: () => set({ chaosState: null }),
 
       resetGame: () =>
         set({

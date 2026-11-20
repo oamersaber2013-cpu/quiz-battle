@@ -1,1 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="48" fill="#08090d"/><text x="256" y="320" font-size="200" text-anchor="middle" fill="#6c63ff">⚔️</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 96 96">
+  <rect width="96" height="96" rx="19" fill="#101923"/>
+  <circle cx="48" cy="48" r="34" fill="none" stroke="#b08a4f" stroke-width="2"/>
+  <path d="M48 8v10m0 60v10M8 48h10m60 0h10" stroke="#e6b65c" stroke-width="2"/>
+  <path d="m68 24-14 32-12-12z" fill="#efd299"/>
+  <path d="M42 44 27 72l27-16z" fill="#8eacb1"/>
+  <circle cx="48" cy="50" r="3" fill="#101923"/>
+</svg>

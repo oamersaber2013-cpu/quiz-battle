@@ -6,6 +6,8 @@ import { rateLimits, createRateLimitHook } from "../lib/rateLimiter";
 import { registerUser, loginUser, loginWithGoogle, loginWithFacebook } from "../lib/auth";
 import { validateEmail, validateUsername } from "../lib/sanitize";
 import { trackEvent } from "../lib/analytics";
+import { SocialLoginError } from "../lib/googleIdentity";
+import { randomBytes } from "node:crypto";
 
 const authRateLimit = createRateLimitHook(rateLimits.auth);
 
@@ -13,12 +15,17 @@ const authRateLimit = createRateLimitHook(rateLimits.auth);
 const registerSchema = z.object({
   email: z.string().email(),
   username: z.string().min(3).max(20),
-  password: z.string().min(8),
-});
+  password: z.string().min(8).max(128),
+}).strict();
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string(),
-});
+  password: z.string().min(1).max(128),
+}).strict();
+const googleSchema = z.object({ idToken: z.string().min(1).max(10000) }).strict();
+const facebookSchema = z.object({ accessToken: z.string().min(1).max(10000) }).strict();
+const guestSchema = z.object({
+  username: z.string().trim().min(1).max(20).regex(/^[\p{L}\p{M}\p{N}_ -]+$/u).optional(),
+}).strict();
 
 export type JWTPayload = {
   userId: string;
@@ -38,31 +45,44 @@ export const authRouter: FastifyPluginAsync = async (app) => {
 
   // ─── POST /api/auth/guest ─────────────────────────────────────
   app.post("/guest", async (req, reply) => {
-    const username = `Warrior${Math.floor(Math.random() * 9999)}`;
-    try {
-      const user = await prisma.user.create({ data: { username } });
-      const token = await reply.jwtSign({ userId: user.id, username: user.username });
-      return reply.send({
-        userId: user.id,
-        username: user.username,
-        token,
-        isGuest: true,
-        hasPurchasedGame: user.hasPurchasedGame,
-        shortGames: user.shortGamesRemaining,
-        longGames: user.longGamesRemaining,
-      });
-    } catch (err) {
-      console.error("[Auth] Guest create error:", err);
-      return reply.status(500).send({ error: "Database error" });
+    const parsed = guestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.status(400).send({ error: "Invalid guest name" });
+    const requestedName = parsed.data.username;
+    let username = requestedName ?? `Warrior${randomBytes(4).toString("hex")}`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const user = await prisma.user.create({ data: { username } });
+        const token = await reply.jwtSign({ userId: user.id, username: user.username });
+        return reply.send({
+          userId: user.id,
+          username: user.username,
+          token,
+          isGuest: true,
+          hasPurchasedGame: user.hasPurchasedGame,
+          shortGames: user.shortGamesRemaining,
+          longGames: user.longGamesRemaining,
+        });
+      } catch (err) {
+        if ((err as { code?: string } | null)?.code === "P2002") {
+          username = requestedName
+            ? `${requestedName.slice(0, 13)}_${randomBytes(3).toString("hex")}`
+            : `Warrior${randomBytes(4).toString("hex")}`;
+          continue;
+        }
+        console.error("[Auth] Guest create error:", err);
+        return reply.status(500).send({ error: "Database error" });
+      }
     }
+    return reply.status(503).send({ error: "Unable to create guest. Please try again." });
   });
 
   // ─── POST /api/auth/register ──────────────────────────────────
   app.post<{ Body: { email: string; password: string; username: string } }>(
     "/register",
-    { onRequest: authRateLimit },
     async (req, reply) => {
-      const { email, username, password } = req.body;
+      const parsed = registerSchema.safeParse(req.body);
+      if (!parsed.success) return reply.status(400).send({ error: "Invalid registration details" });
+      const { email, username, password } = parsed.data;
       
       if (!validateEmail(email) || !validateUsername(username)) {
         return reply.status(400).send({ error: "Invalid input" });
@@ -90,7 +110,9 @@ export const authRouter: FastifyPluginAsync = async (app) => {
   app.post<{ Body: { email: string; password: string } }>(
     "/login",
     async (req, reply) => {
-      const { email, password } = req.body;
+      const parsed = loginSchema.safeParse(req.body);
+      if (!parsed.success) return reply.status(400).send({ error: "Invalid login details" });
+      const { email, password } = parsed.data;
 
       try {
         const { user, token } = await loginUser(email, password);
@@ -152,13 +174,14 @@ export const authRouter: FastifyPluginAsync = async (app) => {
   });
 
   // ─── POST /api/auth/google ────────────────────────────────────
-  app.post<{ Body: { googleId: string; email: string; name: string } }>(
+  app.post<{ Body: { idToken: string } }>(
     "/google",
     async (req, reply) => {
-      const { googleId, email, name } = req.body;
+      const parsed = googleSchema.safeParse(req.body);
+      if (!parsed.success) return reply.status(400).send({ error: "A Google ID token is required" });
 
       try {
-        const { user, token } = await loginWithGoogle(googleId, email, name);
+        const { user, token } = await loginWithGoogle(parsed.data.idToken);
         await trackEvent("user_login_google", user.id);
         
         return reply.send({
@@ -170,31 +193,23 @@ export const authRouter: FastifyPluginAsync = async (app) => {
           role: user.role,
         });
       } catch (err: any) {
-        return reply.status(500).send({ error: err.message });
+        if (err instanceof SocialLoginError) return reply.status(err.statusCode).send({ error: err.message });
+        return reply.status(500).send({ error: "Unable to sign in with Google" });
       }
     }
   );
 
   // ─── POST /api/auth/facebook ──────────────────────────────────
-  app.post<{ Body: { facebookId: string; email: string; name: string } }>(
+  app.post<{ Body: { accessToken: string } }>(
     "/facebook",
     async (req, reply) => {
-      const { facebookId, email, name } = req.body;
-
+      const parsed = facebookSchema.safeParse(req.body);
+      if (!parsed.success) return reply.status(400).send({ error: "A Facebook access token is required" });
       try {
-        const { user, token } = await loginWithFacebook(facebookId, email, name);
-        await trackEvent("user_login_facebook", user.id);
-        
-        return reply.send({
-          userId: user.id,
-          email: user.email,
-          username: user.username,
-          token,
-          isGuest: false,
-          role: user.role,
-        });
+        await loginWithFacebook(parsed.data.accessToken);
       } catch (err: any) {
-        return reply.status(500).send({ error: err.message });
+        if (err instanceof SocialLoginError) return reply.status(err.statusCode).send({ error: err.message });
+        return reply.status(500).send({ error: "Unable to sign in with Facebook" });
       }
     }
   );

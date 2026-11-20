@@ -1,28 +1,34 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { GameStatus } from "@quiz-battle/shared";
+import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
+import { safeMediaUrl } from "@/lib/apiOrigin";
 
 interface ImageQuestionProps {
   question: any;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: any;
   language: "en" | "ar";
+  disabled?: boolean;
   onAnswer: (index: number) => void;
 }
 
 export function ImageQuestion({
   question,
   status,
+  timeLeft,
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   onAnswer,
 }: ImageQuestionProps) {
   const isAr = language === "ar";
   const hasAnswered = selectedAnswer !== null;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !lastAnswerResult;
+  const imageUrl = safeMediaUrl(question.imageUrl);
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
   const options = isAr
@@ -39,14 +45,14 @@ export function ImageQuestion({
       </div>
 
       {/* Image Display */}
-      {question.imageUrl && (
+      {imageUrl && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="mb-6 rounded-2xl overflow-hidden border-2 border-gray-800"
         >
           <img
-            src={question.imageUrl}
+            src={imageUrl}
             alt="Question"
             className="w-full max-h-64 object-contain bg-gray-950"
             onError={(e) => {
@@ -55,12 +61,13 @@ export function ImageQuestion({
           />
         </motion.div>
       )}
+      {question.imageUrl && !imageUrl && <p role="status">{isAr ? "صورة السؤال غير متاحة." : "Question image is unavailable."}</p>}
 
       {/* Options Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {(options || []).map((option: string, index: number) => {
           const selected = selectedAnswer === index;
-          const isCorrect = question.correctAnswer === index;
+          const isCorrect = lastAnswerResult?.correctIndex === index;
           const showResult = status === GameStatus.AnswerReveal || lastAnswerResult;
 
           let borderColor = "border-gray-700";
@@ -89,12 +96,12 @@ export function ImageQuestion({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
-              whileHover={!hasAnswered && !showResult ? { scale: 1.02 } : {}}
-              whileTap={!hasAnswered && !showResult ? { scale: 0.98 } : {}}
-              disabled={hasAnswered || showResult}
-              onClick={() => onAnswer(index)}
+              whileHover={canAnswer ? { scale: 1.02 } : {}}
+              whileTap={canAnswer ? { scale: 0.98 } : {}}
+              disabled={!canAnswer}
+              onClick={() => { if (canAnswer) onAnswer(index); }}
               className={`p-5 rounded-2xl border-2 font-bold text-lg transition-all ${borderColor} ${bgColor} ${textColor} ${
-                hasAnswered || showResult ? "cursor-default" : "hover:border-amber-500/50"
+                !canAnswer ? "cursor-default" : "hover:border-amber-500/50"
               }`}
             >
               <span className="inline-block w-8 h-8 rounded-full bg-gray-700 text-center leading-8 mr-3 text-sm">

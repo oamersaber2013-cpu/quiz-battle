@@ -1,7 +1,11 @@
 "use client";
 
-import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { CONQUEST_TERRITORIES } from "@quiz-battle/shared";
+import { playCue } from "@/lib/sounds";
+import { useGameStore } from "@/store/gameStore";
+import { motion } from "framer-motion";
+import { useEffect, useRef } from "react";
+import styles from "./WorldMap.module.css";
 
 // MAP CAPACITY CONFIGURATION
 export const MAP_CAPACITY = {
@@ -21,46 +25,30 @@ interface WorldMapProps {
   phase: string;
   onTerritoryCaptured?: (territoryId: string, isEnemy: boolean) => void;
   currentPlayerId: string;
+  language?: "en" | "ar";
+  availableTerritories?: string[];
+  troops?: Record<string, number>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 24 REAL WORLD REGIONS - Dynamically selected based on player count
-// ═══════════════════════════════════════════════════════════════════════════════
-export const TERRITORIES = [
-  // NORTH AMERICA (4 territories)
-  { id: "0", name: "Alaska", nameAr: "ألاسكا", icon: "🏔️", x: 12, y: 20 },
-  { id: "1", name: "Canada", nameAr: "كندا", icon: "🍁", x: 22, y: 25 },
-  { id: "2", name: "USA West", nameAr: "الغرب الأمريكي", icon: "🦅", x: 18, y: 38 },
-  { id: "3", name: "USA East", nameAr: "الشرق الأمريكي", icon: "🗽", x: 28, y: 38 },
+const MAP_IMAGE_SIZE = 1024;
+// Separate nearby controls while retaining the canonical geographic anchor.
+const MAP_MARKER_OFFSETS: Readonly<Record<number, readonly [number, number]>> = {
+  3: [-20, -10], 4: [15, 10], 6: [-58, 20], 7: [-64, -16],
+  8: [-18, 22], 9: [35, -20], 11: [-12, -12], 12: [12, 12],
+};
 
-  // SOUTH AMERICA (3 territories)
-  { id: "4", name: "Mexico", nameAr: "المكسيك", icon: "🌵", x: 22, y: 48 },
-  { id: "5", name: "Brazil", nameAr: "البرازيل", icon: "🦜", x: 32, y: 65 },
-  { id: "6", name: "Andes", nameAr: "جبال الأنديز", icon: "🦙", x: 28, y: 72 },
-
-  // EUROPE (5 territories)
-  { id: "7", name: "Greenland", nameAr: "جرينلاند", icon: "🧊", x: 38, y: 15 },
-  { id: "8", name: "Scandinavia", nameAr: "إسكندنافيا", icon: "❄️", x: 48, y: 22 },
-  { id: "9", name: "Britain", nameAr: "بريطانيا", icon: "💂", x: 42, y: 32 },
-  { id: "10", name: "Western Europe", nameAr: "أوروبا الغربية", icon: "🏰", x: 46, y: 38 },
-  { id: "11", name: "Eastern Europe", nameAr: "أوروبا الشرقية", icon: "⛪", x: 52, y: 35 },
-
-  // AFRICA (5 territories)
-  { id: "12", name: "North Africa", nameAr: "شمال أفريقيا", icon: "🐪", x: 48, y: 50 },
-  { id: "13", name: "West Africa", nameAr: "غرب أفريقيا", icon: "🌍", x: 42, y: 58 },
-  { id: "14", name: "Central Africa", nameAr: "وسط أفريقيا", icon: "🦁", x: 52, y: 60 },
-  { id: "15", name: "East Africa", nameAr: "شرق أفريقيا", icon: "🦒", x: 58, y: 58 },
-  { id: "16", name: "South Africa", nameAr: "جنوب أفريقيا", icon: "💎", x: 52, y: 72 },
-
-  // ASIA (7 territories)
-  { id: "17", name: "Siberia", nameAr: "سيبيريا", icon: "🐻", x: 68, y: 18 },
-  { id: "18", name: "Central Asia", nameAr: "آسيا الوسطى", icon: "🏛️", x: 60, y: 40 },
-  { id: "19", name: "Middle East", nameAr: "الشرق الأوسط", icon: "🕌", x: 55, y: 48 },
-  { id: "20", name: "India", nameAr: "الهند", icon: "🛕", x: 65, y: 52 },
-  { id: "21", name: "East Asia", nameAr: "شرق آسيا", icon: "🏯", x: 72, y: 42 },
-  { id: "22", name: "Southeast Asia", nameAr: "جنوب شرق آسيا", icon: "🎋", x: 75, y: 55 },
-  { id: "23", name: "Australia", nameAr: "أستراليا", icon: "🦘", x: 82, y: 75 },
-];
+// Country identity remains shared with server ownership and scoring.
+export const TERRITORIES = CONQUEST_TERRITORIES.map((territory) => {
+  const anchorX = Math.round(territory.worldMap.x / 100 * MAP_IMAGE_SIZE);
+  const anchorY = Math.round(territory.worldMap.y / 100 * MAP_IMAGE_SIZE);
+  const [offsetX, offsetY] = MAP_MARKER_OFFSETS[territory.id] ?? [0, 0];
+  return {
+    id: String(territory.id), name: territory.name, nameAr: territory.nameAr,
+    icon: territory.worldMap.icon,
+    x: anchorX / MAP_IMAGE_SIZE * 100, y: anchorY / MAP_IMAGE_SIZE * 100,
+    anchorX, anchorY, buttonX: anchorX + offsetX, buttonY: anchorY + offsetY,
+  };
+});
 
 // For backward compatibility
 export const CONTINENTS = TERRITORIES;
@@ -83,68 +71,6 @@ const DEFEAT_STATEMENTS = [
 ];
 
 // Sound effects using Web Audio API
-class SoundEffects {
-  private ctx: AudioContext | null = null;
-
-  constructor() {
-    if (typeof window !== "undefined") {
-      try {
-        this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      } catch { /* Audio not supported */ }
-    }
-  }
-
-  playCapture() {
-    if (!this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.1);
-      gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
-      osc.start(this.ctx.currentTime);
-      osc.stop(this.ctx.currentTime + 0.3);
-    } catch { /* ignore */ }
-  }
-
-  playVictory() {
-    if (!this.ctx) return;
-    try {
-      const notes = [523.25, 659.25, 783.99, 1046.5];
-      notes.forEach((freq, i) => {
-        const osc = this.ctx!.createOscillator();
-        const gain = this.ctx!.createGain();
-        osc.connect(gain);
-        gain.connect(this.ctx!.destination);
-        osc.frequency.setValueAtTime(freq, this.ctx!.currentTime + i * 0.15);
-        gain.gain.setValueAtTime(0.2, this.ctx!.currentTime + i * 0.15);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx!.currentTime + i * 0.15 + 0.4);
-        osc.start(this.ctx!.currentTime + i * 0.15);
-        osc.stop(this.ctx!.currentTime + i * 0.15 + 0.4);
-      });
-    } catch { /* ignore */ }
-  }
-
-  playDefeat() {
-    if (!this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.5);
-      gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
-      osc.start(this.ctx.currentTime);
-      osc.stop(this.ctx.currentTime + 0.5);
-    } catch { /* ignore */ }
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORLD MAP COMPONENT
 // Uses a real world map image with interactive territory marker overlays
@@ -160,13 +86,12 @@ export function WorldMap({
   phase,
   onTerritoryCaptured,
   currentPlayerId,
+  language = "ar",
+  availableTerritories,
+  troops,
 }: WorldMapProps) {
-  const soundRef = useRef<SoundEffects | null>(null);
   const prevTerritories = useRef(territories);
 
-  useEffect(() => {
-    soundRef.current = new SoundEffects();
-  }, []);
 
   // Detect territory changes and play capture sound
   useEffect(() => {
@@ -177,7 +102,7 @@ export function WorldMap({
     Object.entries(territories).forEach(([tid, ownerId]) => {
       const prevOwner = prevTerritories.current[tid];
       if (ownerId && ownerId !== prevOwner) {
-        soundRef.current?.playCapture();
+        if (useGameStore.getState().soundEnabled) playCue("conquest");
         onTerritoryCaptured?.(tid, prevOwner !== null);
       }
     });
@@ -186,6 +111,8 @@ export function WorldMap({
 
   const isClickable = (tid: string) => {
     if (!isMyTurn) return false;
+    if (availableTerritories && !availableTerritories.includes(tid)) return false;
+    if (phase === "invasion_selection") return availableTerritories?.includes(tid) ?? false;
     if (phase === "draft_selection") return !territories[tid]; // Can pick unclaimed
     if (phase === "select_target") {
       const owner = territories[tid];
@@ -196,9 +123,11 @@ export function WorldMap({
 
   return (
     <div
+      className={styles.map}
       style={{
         width: "100%",
-        maxWidth: "1100px",
+        maxWidth: "820px",
+        margin: "0 auto",
         position: "relative",
         borderRadius: "16px",
         overflow: "hidden",
@@ -209,7 +138,7 @@ export function WorldMap({
       {/* Real world map image as background */}
       <img
         src="/world-map.png"
-        alt="World Map"
+        alt={language === "ar" ? "خريطة العالم" : "World map"}
         draggable={false}
         style={{
           width: "100%",
@@ -218,6 +147,16 @@ export function WorldMap({
           filter: "brightness(0.85) contrast(1.1)",
         }}
       />
+
+      <svg className={styles.anchors} viewBox={`0 0 ${MAP_IMAGE_SIZE} ${MAP_IMAGE_SIZE}`} aria-hidden="true">
+        {TERRITORIES.filter(marker => territories[marker.id] !== undefined).map(marker => (
+          <g key={marker.id}>
+            <line data-territory-leader={marker.id} x1={marker.anchorX} y1={marker.anchorY}
+              x2={marker.buttonX} y2={marker.buttonY} />
+            <circle data-territory-anchor={marker.id} cx={marker.anchorX} cy={marker.anchorY} r={4} />
+          </g>
+        ))}
+      </svg>
 
       {/* Territory markers overlay */}
       {TERRITORIES.filter(t => territories[t.id] !== undefined).map((marker) => {
@@ -229,18 +168,26 @@ export function WorldMap({
         const isMyTerritory = ownerId === currentPlayerId;
 
         return (
-          <motion.div
+          <button
             key={marker.id}
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: parseInt(marker.id) * 0.06, type: "spring", stiffness: 200, damping: 15 }}
+            type="button"
+            className={styles.marker}
+            data-map-territory={marker.id}
+            disabled={!clickable}
+            aria-label={`${language === "ar" ? marker.nameAr : marker.name}${isFort ? (language === "ar" ? " · حصن" : " · fort") : ""}`}
+            aria-description={troops ? `${troops[marker.id] ?? 0} ${language === "ar" ? "جندي" : "troops"}` : undefined}
+            aria-pressed={isSelected}
             onClick={() => clickable && onTerritoryClick?.(marker.id)}
             style={{
               position: "absolute",
-              left: `${marker.x}%`,
-              top: `${marker.y}%`,
+              left: `${marker.buttonX / MAP_IMAGE_SIZE * 100}%`,
+              top: `${marker.buttonY / MAP_IMAGE_SIZE * 100}%`,
               transform: "translate(-50%, -50%)",
               cursor: clickable ? "pointer" : "default",
+              padding: 0,
+              border: 0,
+              background: "transparent",
+              color: "#fff",
               zIndex: isSelected ? 30 : 10,
             }}
           >
@@ -249,7 +196,7 @@ export function WorldMap({
               <div
                 style={{
                   position: "absolute",
-                  inset: -8,
+                  inset: 0,
                   borderRadius: "50%",
                   border: "2px solid rgba(255, 215, 0, 0.4)",
                   animation: "pulse 1.5s ease-in-out infinite",
@@ -264,7 +211,7 @@ export function WorldMap({
                 transition={{ duration: 1.2, repeat: Infinity }}
                 style={{
                   position: "absolute",
-                  inset: -10,
+                  inset: -3,
                   borderRadius: "50%",
                   border: "3px solid #FFD700",
                   boxShadow: "0 0 20px rgba(255, 215, 0, 0.5)",
@@ -274,11 +221,10 @@ export function WorldMap({
 
             {/* Main territory badge */}
             <motion.div
+              className={styles.badge}
               whileHover={clickable ? { scale: 1.15, y: -3 } : {}}
               whileTap={clickable ? { scale: 0.95 } : {}}
               style={{
-                width: 52,
-                height: 52,
                 borderRadius: "50%",
                 background: ownerColor
                   ? `radial-gradient(circle at 30% 30%, ${ownerColor}ee, ${ownerColor}88)`
@@ -293,7 +239,6 @@ export function WorldMap({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "22px",
                 boxShadow: isSelected
                   ? "0 0 25px rgba(255, 215, 0, 0.6), 0 4px 12px rgba(0,0,0,0.4)"
                   : ownerColor
@@ -303,17 +248,16 @@ export function WorldMap({
                 position: "relative",
               }}
             >
-              {marker.icon}
+              {troops ? <strong>{troops[marker.id] ?? 0}</strong> : marker.icon}
 
               {/* Fort shield indicator */}
               {isFort && (
                 <div
+                  className={styles.fort}
                   style={{
                     position: "absolute",
                     top: -6,
                     right: -6,
-                    width: 20,
-                    height: 20,
                     borderRadius: "50%",
                     background: "linear-gradient(135deg, #FFD700, #B8860B)",
                     display: "flex",
@@ -331,6 +275,7 @@ export function WorldMap({
 
             {/* Territory name label */}
             <div
+              className={styles.label}
               style={{
                 position: "absolute",
                 top: "100%",
@@ -362,20 +307,11 @@ export function WorldMap({
                     textShadow: "0 1px 3px rgba(0,0,0,0.6)",
                   }}
                 >
-                  {marker.nameAr}
-                </div>
-                <div
-                  style={{
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: "8px",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {marker.name}
+                  {language === "ar" ? marker.nameAr : marker.name}
                 </div>
               </div>
             </div>
-          </motion.div>
+          </button>
         );
       })}
 
@@ -390,4 +326,4 @@ export function WorldMap({
   );
 }
 
-export { SoundEffects, VICTORY_STATEMENTS, DEFEAT_STATEMENTS };
+export { VICTORY_STATEMENTS, DEFEAT_STATEMENTS };

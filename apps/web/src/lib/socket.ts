@@ -1,13 +1,15 @@
 "use client";
 import { io, Socket } from "socket.io-client";
-import { ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus } from "@quiz-battle/shared";
+import { getApiOrigin } from "./apiOrigin";
+import { CONQUEST_TERRITORIES, ServerToClientEvents, ClientToServerEvents, PowerUpType, getPowerUpMessage, GameStatus, Difficulty, SubmittedAnswer, ChaosVote } from "@quiz-battle/shared";
 import { useGameStore } from "../store/gameStore";
+import { getMonotonicTime, getServerTime, synchronizeServerClock } from "./gameClock";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 let socket: TypedSocket | null = null;
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:4000";
+const API_URL = getApiOrigin();
 
 export function getSocket(): TypedSocket {
   if (!socket) {
@@ -36,13 +38,21 @@ export function connectSocket(
   token?: string,
   isGuest?: boolean
 ): TypedSocket {
-  if (socket?.connected) return socket;
+  const auth = { token, userId, username, guestId: isGuest ? userId : undefined };
+  const previousAuth = socket?.auth as typeof auth | undefined;
+  if (socket && previousAuth?.userId === userId && previousAuth?.token === token) {
+    socket.auth = auth;
+    if (!socket.connected) socket.connect();
+    return socket;
+  }
+
+  disconnectSocket();
 
   socket = io(API_URL, {
     autoConnect: true,
     reconnection: true,
     reconnectionAttempts: 5,
-    auth: { token, userId, username, guestId: isGuest ? userId : undefined },
+    auth,
   }) as TypedSocket;
 
   registerHandlers(socket);
@@ -51,16 +61,92 @@ export function connectSocket(
 
 export function disconnectSocket() {
   socket?.disconnect();
+  socket?.removeAllListeners();
   socket = null;
 }
 
+// Room membership belongs to a socket connection, so it must be restored after
+// every reconnect as well as when a game URL is opened directly.
+export function subscribeGameRoom(
+  s: TypedSocket,
+  gameId: string,
+  isSpectating: boolean,
+  callbacks: {
+    onJoining: () => void;
+    onJoined: () => void;
+    onError: (message?: string, code?: import("@quiz-battle/shared").AckResponse["code"]) => void;
+    onTimeout?: () => void;
+  },
+  options: { password?: string } = {}
+): () => void {
+  let active = true;
+  let requestId = 0;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let password = options.password;
+
+  const onDisconnect = () => {
+    const currentRequest = ++requestId;
+    clearTimeout(timeout);
+    if (active) {
+      callbacks.onJoining();
+      timeout = setTimeout(() => {
+        if (active && requestId === currentRequest) (callbacks.onTimeout || callbacks.onError)();
+      }, 10000);
+    }
+  };
+
+  const joinRoom = () => {
+    if (!active) return;
+    callbacks.onJoining();
+    clearTimeout(timeout);
+    const currentRequest = ++requestId;
+
+    timeout = setTimeout(() => {
+      if (active && requestId === currentRequest) {
+        (callbacks.onTimeout || callbacks.onError)();
+      }
+    }, 10000);
+
+    const acknowledge = (response: import("@quiz-battle/shared").AckResponse) => {
+      if (!active || requestId !== currentRequest) return;
+      clearTimeout(timeout);
+      password = undefined;
+      if (response.success) callbacks.onJoined();
+      else callbacks.onError(response.error, response.code);
+    };
+    const request = { gameId, ...(password === undefined ? {} : { password }) };
+    if (isSpectating) s.emit("game:spectate", request, acknowledge);
+    else s.emit("game:join", request, acknowledge);
+  };
+
+  s.on("connect", joinRoom);
+  s.on("disconnect", onDisconnect);
+  if (s.connected) joinRoom();
+  else onDisconnect();
+  return () => {
+    active = false;
+    clearTimeout(timeout);
+    s.off("connect", joinRoom);
+    s.off("disconnect", onDisconnect);
+  };
+}
+
 function registerHandlers(s: TypedSocket) {
+  let clockRequestId = 0;
+  let blockedQuestion = "";
+  const blockedPowerNotices = new Set<string>();
   s.on("connect", () => {
     console.log("✅ Socket connected:", s.id);
     useGameStore.getState().setConnected(true);
+    const requestId = ++clockRequestId;
+    const startedAt = getMonotonicTime();
+    s.emit("clock:sync", (sample) => {
+      if (requestId === clockRequestId && s.connected) synchronizeServerClock(sample?.serverNow, startedAt);
+    });
   });
 
   s.on("disconnect", () => {
+    clockRequestId++;
     console.log("❌ Socket disconnected");
     useGameStore.getState().setConnected(false);
   });
@@ -77,14 +163,15 @@ function registerHandlers(s: TypedSocket) {
     }
   });
 
-  s.on("game:playerLeft", ({ userId }) => {
+  s.on("game:playerLeft", ({ userId, retained }) => {
     const gs = useGameStore.getState();
     const player = gs.players.find(p => p.userId === userId);
-    gs.removePlayer(userId);
-    if (player && userId !== gs.userId) {
+    if (retained) gs.updatePlayer(userId, { isConnected: false });
+    else gs.removePlayer(userId);
+    if (player?.isConnected && userId !== gs.userId) {
       const msg = gs.language === "ar"
-        ? `${player.username} غادر المعركة`
-        : `${player.username} left the battle`;
+        ? (retained ? `انقطع اتصال ${player.username}` : `${player.username} غادر المعركة`)
+        : (retained ? `${player.username} disconnected` : `${player.username} left the battle`);
       gs.addToast("info", msg);
     }
   });
@@ -113,12 +200,8 @@ function registerHandlers(s: TypedSocket) {
     gs.addToast("info", msg);
   });
 
-  s.on("game:powerUpSelected", ({ userId, powerUp, remainingSlots }) => {
-    const gs = useGameStore.getState();
-    if (userId === gs.userId) {
-      gs.selectPowerUp(powerUp);
-    }
-  });
+  // PowerUpSelection applies the player's click locally. Reapplying its server
+  // echo would toggle the same power-up off again; reconnect uses a full snapshot.
 
   s.on("game:powerUpSelectEnd", ({ selections }) => {
     const gs = useGameStore.getState();
@@ -130,26 +213,31 @@ function registerHandlers(s: TypedSocket) {
     gs.addToast("success", msg);
   });
 
-  s.on("game:question", ({ question, round, totalRounds }) => {
-    useGameStore.getState().setQuestion(question, round, totalRounds);
+  s.on("game:question", ({ question, round, totalRounds, serverNow, questionStartedAt }) => {
+    synchronizeServerClock(serverNow);
+    useGameStore.getState().setQuestion(question, round, totalRounds, questionStartedAt);
   });
 
-  s.on("game:answerResult", ({ userId, correct, scoreDelta, newScore, correctIndex }) => {
+  s.on("game:answerResult", ({ userId, correct, scoreDelta, newScore, correctIndex, correctIndices, correctOrder, correctAnswer }) => {
     const gs = useGameStore.getState();
     const isAr = gs.language === "ar";
 
     if (userId === gs.userId) {
-      gs.setLastAnswerResult({ correct, correctIndex });
+      gs.setLastAnswerResult({ correct, correctIndex, correctIndices, correctOrder, correctAnswer });
+      gs.setStatus(GameStatus.AnswerReveal);
       if (correct) {
         const msg = isAr
           ? `✓ صحيح! +${scoreDelta} نقطة`
           : `✓ Correct! +${scoreDelta} pts`;
         gs.addToast("success", msg);
       } else {
-        const letter = String.fromCharCode(65 + correctIndex);
+        const answerLabel = correctAnswer
+          ?? correctIndices?.map((index) => String.fromCharCode(65 + index)).join(", ")
+          ?? correctOrder?.map((index) => String.fromCharCode(65 + index)).join(" → ")
+          ?? (correctIndex >= 0 ? String.fromCharCode(65 + correctIndex) : null);
         const msg = isAr
-          ? `✗ خطأ! الإجابة الصحيحة: ${letter}`
-          : `✗ Wrong! Correct: ${letter}`;
+          ? (answerLabel ? `✗ خطأ! الإجابة الصحيحة: ${answerLabel}` : "✗ إجابة خاطئة")
+          : (answerLabel ? `✗ Wrong! Correct: ${answerLabel}` : "✗ Wrong answer");
         gs.addToast("error", msg);
       }
     }
@@ -161,11 +249,44 @@ function registerHandlers(s: TypedSocket) {
     useGameStore.getState().setPlayers(players);
   });
 
+  s.on("game:powerUpBlocked", (blocked) => {
+    const gs = useGameStore.getState();
+    if (gs.gameId !== blocked.gameId || gs.currentQuestion?.id !== blocked.questionId) return;
+    const questionKey = `${blocked.gameId}:${blocked.questionId}`;
+    if (blockedQuestion !== questionKey) { blockedQuestion = questionKey; blockedPowerNotices.clear(); }
+    const key = `${blocked.sourceUserId}:${blocked.targetUserId}:${blocked.type}:${blocked.shieldExpiresAt}`;
+    if (blockedPowerNotices.has(key)) return;
+    blockedPowerNotices.add(key);
+    const source = gs.players.find(player => player.userId === blocked.sourceUserId);
+    const target = gs.players.find(player => player.userId === blocked.targetUserId);
+    const index = source?.powerUpInventory.indexOf(blocked.type) ?? -1;
+    if (source && index >= 0) gs.updatePlayer(source.userId, { powerUpInventory: source.powerUpInventory.filter((_power, position) => position !== index) });
+    useGameStore.setState(state => ({ activeEffects: state.activeEffects.filter(effect => !(effect.type === PowerUpType.Shield &&
+      effect.sourceUserId === blocked.targetUserId && effect.expiresAt === blocked.shieldExpiresAt)) }));
+    const ar = gs.language === "ar";
+    const targetName = target?.username || (ar ? "الخصم" : "opponent");
+    const sourceName = source?.username || (ar ? "لاعب" : "a player");
+    const message = gs.userId === blocked.targetUserId
+      ? (ar ? `🛡️ صدّ درعك هجوم ${sourceName}. استُهلك الدرع.` : `🛡️ Your shield blocked ${sourceName}'s attack. The shield was consumed.`)
+      : gs.userId === blocked.sourceUserId
+        ? (ar ? `🛡️ صدّ درع ${targetName} هجومك. استُهلكت القوة والدرع.` : `🛡️ ${targetName}'s shield blocked your attack. Both powers were consumed.`)
+        : (ar ? `🛡️ صدّ درع ${targetName} هجومًا واستهُلك.` : `🛡️ ${targetName}'s shield blocked an attack and was consumed.`);
+    gs.addToast(gs.userId === blocked.targetUserId ? "success" : "info", message);
+  });
+
   s.on("game:powerUpApplied", (effect) => {
     const gs = useGameStore.getState();
+    const source = gs.players.find(player => player.userId === effect.sourceUserId);
+    const inventoryIndex = source?.powerUpInventory.indexOf(effect.type) ?? -1;
+    if (source && inventoryIndex >= 0) {
+      gs.updatePlayer(source.userId, { powerUpInventory: source.powerUpInventory.filter((_power, index) => index !== inventoryIndex) });
+    }
+    const alreadyApplied = gs.activeEffects.some(existing => existing.type === effect.type &&
+      existing.sourceUserId === effect.sourceUserId && existing.targetUserId === effect.targetUserId && existing.expiresAt === effect.expiresAt);
+    if (alreadyApplied || (effect.expiresAt && effect.expiresAt <= getServerTime())) return;
     gs.addEffect(effect);
 
-    if (effect.type === "fifty_fifty") {
+    if (effect.type === "fifty_fifty" && effect.sourceUserId === gs.userId) {
       const eliminatedIndices = (effect as typeof effect & { eliminatedIndices?: number[] }).eliminatedIndices;
       if (eliminatedIndices) {
         gs.setEliminatedOptions(eliminatedIndices);
@@ -369,35 +490,57 @@ function registerHandlers(s: TypedSocket) {
     const isAr = gs.language === "ar";
     const isMe = playerId === gs.userId;
 
+    const country = CONQUEST_TERRITORIES.find(territory => String(territory.id) === String(territoryId));
+    const countryName = (isAr ? country?.nameAr : country?.name) ?? String(territoryId);
     const msg = isMe
-      ? (isAr ? `🏰 احتلت ${territoryId}${isFort ? " (حصن!)" : ""}` : `🏰 You claimed ${territoryId}${isFort ? " (Fort!)" : ""}`)
-      : (isAr ? `🌍 ${playerName} احتل ${territoryId}` : `🌍 ${playerName} claimed ${territoryId}`);
+      ? (isAr ? `🏰 احتلت ${countryName}${isFort ? " (حصن!)" : ""}` : `🏰 You claimed ${countryName}${isFort ? " (Fort!)" : ""}`)
+      : (isAr ? `🌍 ${playerName} احتل ${countryName}` : `🌍 ${playerName} claimed ${countryName}`);
     gs.addToast(isMe ? "success" : "info", msg);
   });
 
   // ─── Invasion Events ─────────────────────────────────────
-  s.on("invasion:init", ({ gameId, playerIds }) => {
-    console.log("[Socket] invasion:init received - transitioning to invasion mode", { gameId, playerCount: playerIds.length });
+  s.on("invasion:init", ({ gameId }) => {
     const gs = useGameStore.getState();
+    if (gs.gameId !== gameId) return;
     const isAr = gs.language === "ar";
-    
-    // Show transition toast
     gs.addToast("info", isAr ? "⚔️ بدأت مرحلة الغزو!" : "⚔️ Invasion phase began!");
-    
-    // Request initial invasion state and auto-start first round
-    setTimeout(() => {
-      emitInvasionGetState(gameId);
-      // Auto-start first round after brief delay to let clients transition
-      setTimeout(() => emitInvasionStartRound(gameId), 1000);
-    }, 500);
   });
 
   s.on("invasion:state", (invasionState) => {
-    console.log("[Socket] invasion:state received:", invasionState);
-    useGameStore.getState().setInvasionState(invasionState);
+    synchronizeServerClock(invasionState.serverNow);
+    const store = useGameStore.getState();
+    store.setInvasionState({
+      ...invasionState,
+      territories: invasionState.territories.map((territory) => ({ ...territory, id: Number(territory.id) })),
+      currentTurn: invasionState.currentTurn ?? invasionState.selectionPhase.pickingPlayerId,
+      picksRemaining: invasionState.picksRemaining ?? invasionState.selectionPhase.picksRemaining,
+      selectableTerritories: invasionState.selectableTerritories || [],
+    });
+    if (invasionState.currentQuestion) {
+      const question = invasionState.currentQuestion;
+      const previous = useGameStore.getState();
+      const isSameQuestion = previous.currentQuestion?.id === question.id;
+      const startedAt = invasionState.questionStartedAt ?? (isSameQuestion ? previous.questionStartedAt : null) ?? getServerTime();
+      useGameStore.setState({
+        currentQuestion: { ...question, category: "general", difficulty: Difficulty.Scholar },
+        questionStartedAt: startedAt,
+        currentRound: invasionState.currentRound,
+        totalRounds: invasionState.totalRounds,
+        selectedAnswer: invasionState.selectedAnswer === undefined
+          ? (isSameQuestion ? previous.selectedAnswer : null)
+          : invasionState.selectedAnswer,
+        answeredAt: invasionState.answeredAt === undefined
+          ? (isSameQuestion ? previous.answeredAt : null)
+          : invasionState.answeredAt,
+        timeWarpBonusSeconds: 0,
+        timeLeft: Math.max(0, Math.ceil(question.timeLimit - (getServerTime() - startedAt) / 1000)),
+        status: invasionState.phase === "question" ? GameStatus.Question : GameStatus.AnswerReveal,
+      });
+    }
   });
 
-  s.on("invasion:roundStart", ({ round, totalRounds, question }) => {
+  s.on("invasion:roundStart", ({ round, totalRounds, question, serverNow, questionStartedAt }) => {
+    synchronizeServerClock(serverNow);
     const gs = useGameStore.getState();
     gs.setInvasionQuestion(question);
     // Also populate standard game state so the existing question UI renders
@@ -409,10 +552,11 @@ function registerHandlers(s: TypedSocket) {
           options: question.options,
           timeLimit: question.timeLimit || 15,
           category: "General",
-          difficulty: "Scholar" as any,
+          difficulty: Difficulty.Scholar,
         },
         round,
-        totalRounds
+        totalRounds,
+        questionStartedAt
       );
     }
     console.log(`[Socket] invasion:roundStart round=${round}/${totalRounds}`);
@@ -421,6 +565,7 @@ function registerHandlers(s: TypedSocket) {
   s.on("invasion:ranking", ({ ranking, correctAnswer }) => {
     const gs = useGameStore.getState();
     const isAr = gs.language === "ar";
+    gs.setStatus(GameStatus.AnswerReveal);
     
     // Update invasion state with ranking
     if (gs.invasionState) {
@@ -558,15 +703,8 @@ function registerHandlers(s: TypedSocket) {
 
   // ─── CHAOS MODE ─────────────────────────────────────────────
   
-  s.on("chaos:init", ({ chaosLevel, chaosState, personality, message }) => {
+  s.on("chaos:drama", ({ type, username }) => {
     const gs = useGameStore.getState();
-    gs.setChaosState({ chaosLevel, chaosState, personality });
-    gs.addToast("info", message);
-  });
-  
-  s.on("chaos:drama", ({ id, type, playerId, username }) => {
-    const gs = useGameStore.getState();
-    const isMe = playerId === gs.userId;
     
     const dramaMessages: Record<string, { ar: string; en: string }> = {
       TAB_LEFT: { ar: "غادر اللعبة أثناء السؤال", en: "left during the question" },
@@ -577,36 +715,14 @@ function registerHandlers(s: TypedSocket) {
     
     const msg = dramaMessages[type];
     if (msg) {
-      gs.addToast("warning", gs.language === "ar" 
-        ? `⚠️ ${username} ${msg.ar}` 
-        : `⚠️ ${username} ${msg.en}`);
-      
-      // Trigger voting UI if chaos level high enough
-      gs.setActiveDrama({ id, type, playerId, username });
+      const message = `⚠️ ${username} ${msg[gs.language]}`;
+      gs.addToast("warning", message);
+      gs.addChaosLog(type, message);
     }
   });
-  
-  s.on("chaos:votingStart", ({ dramaEventId, targetPlayerId, targetUsername, duration, options }) => {
+
+  s.on("chaos:votingComplete", ({ result, targetUsername }) => {
     const gs = useGameStore.getState();
-    gs.setChaosVoting({
-      isActive: true,
-      dramaEventId,
-      targetPlayerId,
-      targetUsername,
-      duration,
-      options,
-      votes: {},
-    });
-  });
-  
-  s.on("chaos:votingUpdate", ({ totalVotes, voteCounts, timeRemaining }) => {
-    const gs = useGameStore.getState();
-    gs.updateChaosVoting({ totalVotes, voteCounts, timeRemaining });
-  });
-  
-  s.on("chaos:votingComplete", ({ result, targetPlayerId, targetUsername, voteCounts }) => {
-    const gs = useGameStore.getState();
-    gs.completeChaosVoting({ result, targetPlayerId, targetUsername, voteCounts });
     
     const resultMessages: Record<string, { ar: string; en: string }> = {
       FORGIVE: { ar: "✅ تم التسامح!", en: "✅ Forgiven!" },
@@ -618,14 +734,13 @@ function registerHandlers(s: TypedSocket) {
     if (msg) {
       gs.addToast(result === "FORGIVE" ? "success" : "warning", 
         gs.language === "ar" ? msg.ar : msg.en);
+      gs.addChaosLog(result, msg[gs.language]);
     }
   });
   
-  s.on("chaos:trapActivated", ({ targetPlayerId, targetUsername, trapLevel, message }) => {
+  s.on("chaos:trapActivated", ({ targetPlayerId, targetUsername, trapLevel }) => {
     const gs = useGameStore.getState();
     const isMe = targetPlayerId === gs.userId;
-    
-    gs.setActiveTrap({ targetPlayerId, targetUsername, trapLevel });
     
     gs.addToast(isMe ? "error" : "warning", 
       gs.language === "ar" 
@@ -633,30 +748,14 @@ function registerHandlers(s: TypedSocket) {
         : `🚨 Level ${trapLevel} trap activated against ${targetUsername}!`);
   });
   
-  s.on("chaos:evaluating", ({ message, correctRatio, playerCount }) => {
+  s.on("chaos:result", ({ outcome, title, emoji, color, heroUsername, summary }) => {
     const gs = useGameStore.getState();
-    gs.setTrapEvaluating({ message, correctRatio, playerCount });
-  });
-  
-  s.on("chaos:result", ({ outcome, title, emoji, color, correctRatio, targetUsername, heroUsername, playerResults, summary }) => {
-    const gs = useGameStore.getState();
-    gs.setTrapResult({ outcome, title, emoji, color, correctRatio, targetUsername, heroUsername, playerResults, summary });
+    gs.setTrapResult({ outcome, title, emoji, color, heroUsername, message: summary });
     gs.addToast(outcome === "FULL_TRAP" || outcome === "PARTIAL_TRAP" ? "error" : "success", summary);
   });
   
-  s.on("chaos:state", ({ chaosLevel, chaosState, personality, factors, momentum }) => {
-    const gs = useGameStore.getState();
-    gs.setChaosState({ chaosLevel, chaosState, personality, factors, momentum });
-  });
-  
-  s.on("chaos:advantages", ({ timeBonus, eliminatedOptions }) => {
-    const gs = useGameStore.getState();
-    gs.setChaosAdvantages({ timeBonus, eliminatedOptions });
-    if (timeBonus > 0) {
-      gs.addToast("info", gs.language === "ar" 
-        ? `⏱️ مكافأة زمنية: +${timeBonus} ثوانٍ!` 
-        : `⏱️ Time bonus: +${timeBonus}s!`);
-    }
+  s.on("chaos:state", (snapshot) => {
+    useGameStore.getState().syncChaos(snapshot);
   });
 
 }
@@ -696,9 +795,13 @@ export function emitSpectateGame(gameId: string) {
   s.emit("game:spectate", { gameId });
 }
 
-export function emitAnswer(gameId: string, questionId: string, answerIndex: number) {
+export function emitAnswer(gameId: string, questionId: string, answer: SubmittedAnswer) {
   const s = getSocket();
-  s.emit("player:answer", { gameId, questionId, answerIndex, timestamp: Date.now() });
+  s.emit("player:answer", {
+    gameId, questionId, answer,
+    ...(typeof answer === "number" ? { answerIndex: answer } : {}),
+    timestamp: getServerTime(),
+  });
 }
 
 export function emitPowerUp(
@@ -823,26 +926,12 @@ export function emitInvasionGetState(gameId: string) {
 
 export function emitChaosVote(
   gameId: string,
-  vote: "FORGIVE" | "REDUCE_SCORE" | "BLOCK_QUESTION"
+  dramaEventId: string,
+  vote: ChaosVote
 ) {
-  const s = getSocket();
-  s.emit("chaos:vote", { gameId, vote });
+  return getSocket().timeout(5000).emitWithAck("chaos:vote", { gameId, dramaEventId, vote });
 }
 
-export function emitChaosAnswer(
-  gameId: string,
-  questionId: string,
-  answerIndex: number,
-  mode: "SAFE" | "RISK"
-) {
-  const s = getSocket();
-  s.emit("chaos:answer", { gameId, questionId, answerIndex, mode });
-}
-
-export function emitChaosInit(
-  gameId: string,
-  personality: "TRICKSTER" | "AGGRESSIVE" | "RANDOM" | "REVENGE" = "RANDOM"
-) {
-  const s = getSocket();
-  s.emit("chaos:init", { gameId, personality });
+export function emitChaosStartVoting(gameId: string, dramaEventId: string) {
+  return getSocket().timeout(5000).emitWithAck("chaos:startVoting", { gameId, dramaEventId });
 }

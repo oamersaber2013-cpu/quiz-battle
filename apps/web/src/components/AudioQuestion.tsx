@@ -2,28 +2,34 @@
 
 import { useState, useRef } from "react";
 import { motion } from "framer-motion";
-import { GameStatus } from "@quiz-battle/shared";
+import { GameStatus, SubmittedAnswer } from "@quiz-battle/shared";
+import { safeMediaUrl } from "@/lib/apiOrigin";
 
 interface AudioQuestionProps {
   question: any;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
+  selectedAnswer: SubmittedAnswer | null;
   lastAnswerResult: any;
   language: "en" | "ar";
+  disabled?: boolean;
   onAnswer: (index: number) => void;
 }
 
 export function AudioQuestion({
   question,
   status,
+  timeLeft,
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   onAnswer,
 }: AudioQuestionProps) {
   const isAr = language === "ar";
   const hasAnswered = selectedAnswer !== null;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !lastAnswerResult;
+  const audioUrl = safeMediaUrl(question.audioUrl);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -57,7 +63,7 @@ export function AudioQuestion({
       </div>
 
       {/* Audio Player */}
-      {question.audioUrl && (
+      {audioUrl && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -65,7 +71,7 @@ export function AudioQuestion({
         >
           <audio
             ref={audioRef}
-            src={question.audioUrl}
+            src={audioUrl}
             onEnded={handleAudioEnded}
             className="hidden"
           />
@@ -109,11 +115,13 @@ export function AudioQuestion({
         </motion.div>
       )}
 
+      {question.audioUrl && !audioUrl && <p role="status">{isAr ? "الصوت غير متاح." : "Question audio is unavailable."}</p>}
+
       {/* Options Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {(options || []).map((option: string, index: number) => {
           const selected = selectedAnswer === index;
-          const isCorrect = question.correctAnswer === index;
+          const isCorrect = lastAnswerResult?.correctIndex === index;
           const showResult = status === GameStatus.AnswerReveal || lastAnswerResult;
 
           let borderColor = "border-gray-700";
@@ -142,12 +150,12 @@ export function AudioQuestion({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
-              whileHover={!hasAnswered && !showResult ? { scale: 1.02 } : {}}
-              whileTap={!hasAnswered && !showResult ? { scale: 0.98 } : {}}
-              disabled={hasAnswered || showResult}
-              onClick={() => onAnswer(index)}
+              whileHover={canAnswer ? { scale: 1.02 } : {}}
+              whileTap={canAnswer ? { scale: 0.98 } : {}}
+              disabled={!canAnswer}
+              onClick={() => { if (canAnswer) onAnswer(index); }}
               className={`p-5 rounded-2xl border-2 font-bold text-lg transition-all ${borderColor} ${bgColor} ${textColor} ${
-                hasAnswered || showResult ? "cursor-default" : "hover:border-amber-500/50"
+                !canAnswer ? "cursor-default" : "hover:border-amber-500/50"
               }`}
             >
               <span className="inline-block w-8 h-8 rounded-full bg-gray-700 text-center leading-8 mr-3 text-sm">

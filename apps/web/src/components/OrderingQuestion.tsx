@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, Reorder, AnimatePresence } from "framer-motion";
-import { GameStatus } from "@quiz-battle/shared";
+import { GameStatus, type ClientQuestion, type SubmittedAnswer } from "@quiz-battle/shared";
+import type { LastAnswerResult } from "@/store/gameStore";
 
 interface OrderingItem {
   id: string;
@@ -11,63 +12,89 @@ interface OrderingItem {
 }
 
 interface OrderingQuestionProps {
-  question: any;
+  question: ClientQuestion;
   status: GameStatus;
   timeLeft: number;
-  selectedAnswer: number | null;
-  lastAnswerResult: any;
+  selectedAnswer: SubmittedAnswer | null;
+  lastAnswerResult: LastAnswerResult | null;
   language: "en" | "ar";
+  disabled?: boolean;
   onSubmit: (orderedIndices: number[]) => void;
 }
 
 export function OrderingQuestion({
   question,
   status,
+  timeLeft,
   selectedAnswer,
   lastAnswerResult,
   language,
+  disabled = false,
   onSubmit,
 }: OrderingQuestionProps) {
   const isAr = language === "ar";
-  const [items, setItems] = useState<OrderingItem[]>(() => {
-    // Shuffle items initially
-    const options: string[] = question.options || [];
-    return options.map((text: string, index: number) => ({
+  const options: string[] = (isAr ? question.optionsAr : question.optionsEn) || question.options || [];
+  const buildItems = (): OrderingItem[] => {
+    const source = options.map((text: string, index: number) => ({
       id: `item-${index}`,
       text,
       originalIndex: index,
-    })).sort(() => Math.random() - 0.5);
-  });
-  const [submitted, setSubmitted] = useState(false);
+    }));
+    if (Array.isArray(selectedAnswer)) {
+      return selectedAnswer.map((index) => source[index]).filter(Boolean);
+    }
+    return source.sort(() => Math.random() - 0.5);
+  };
+  const [items, setItems] = useState<OrderingItem[]>(buildItems);
+  const [moveAnnouncement, setMoveAnnouncement] = useState("");
+  const movedWithButton = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    setItems(buildItems());
+    setMoveAnnouncement("");
+  }, [question.id, selectedAnswer, language]);
 
-  const hasAnswered = selectedAnswer !== null || submitted;
-  const showResult = status === GameStatus.AnswerReveal || lastAnswerResult;
+  useEffect(() => {
+    const button = movedWithButton.current;
+    movedWithButton.current = null;
+    if (button?.isConnected && document.activeElement === document.body) button.focus();
+  }, [items]);
+
+  const hasAnswered = selectedAnswer !== null;
+  const showResult = status === GameStatus.AnswerReveal || !!lastAnswerResult;
+  const canAnswer = !disabled && status === GameStatus.Question && timeLeft > 0 && !hasAnswered && !showResult;
 
   const text = isAr ? question.textAr || question.text : question.textEn || question.text;
-  const correctOrder: number[] = question.correctOrder || question.options?.map((_: string, i: number) => i);
+  const correctOrder = lastAnswerResult?.correctOrder || [];
 
   const handleSubmit = () => {
-    if (hasAnswered) return;
+    if (!canAnswer) return;
     const currentOrder = items.map((item: OrderingItem) => item.originalIndex);
-    setSubmitted(true);
     onSubmit(currentOrder);
   };
 
   const isOrderCorrect = () => {
-    const currentOrder = items.map((item: OrderingItem) => item.originalIndex);
-    return JSON.stringify(currentOrder) === JSON.stringify(correctOrder);
+    return lastAnswerResult?.correct === true;
   };
 
-  const getItemPosition = (originalIndex: number) => {
-    return items.findIndex((item: OrderingItem) => item.originalIndex === originalIndex);
-  };
-
-  // Handle reorder - only allow when not answered
   const handleReorder = (newOrder: OrderingItem[]) => {
-    if (!hasAnswered) {
+    if (canAnswer) {
       setItems(newOrder);
     }
   };
+
+  function moveItem(position: number, direction: -1 | 1, button: HTMLButtonElement | null) {
+    const destination = position + direction;
+    if (!canAnswer || destination < 0 || destination >= items.length) return;
+    const next = [...items];
+    const item = next[position];
+    next[position] = next[destination];
+    next[destination] = item;
+    if (button && document.activeElement === button) movedWithButton.current = button;
+    setItems(next);
+    setMoveAnnouncement(isAr
+      ? `انتقل ${item.text} إلى الموضع ${destination + 1} من ${items.length}`
+      : `${item.text} moved to position ${destination + 1} of ${items.length}`);
+  }
 
   return (
     <div className="w-full">
@@ -78,14 +105,15 @@ export function OrderingQuestion({
         </p>
         <p className="text-sm text-amber-400 text-center mt-2">
           {isAr
-            ? "رتب العناصر بالترتيب الصحيح (اسحب وأفلت)"
-            : "Arrange items in the correct order (drag & drop)"}
+            ? "رتّب العناصر بالسحب أو باستخدام زري التحريك لأعلى ولأسفل."
+            : "Drag the items or use the move up and down buttons to arrange them."}
         </p>
       </div>
 
       {/* Draggable List */}
       <div className="mb-6">
         <Reorder.Group
+          aria-label={isAr ? "ترتيب الإجابة" : "Answer order"}
           axis="y"
           values={items}
           onReorder={handleReorder}
@@ -96,8 +124,8 @@ export function OrderingQuestion({
               <Reorder.Item
                 key={item.id}
                 value={item}
-                disabled={hasAnswered || showResult}
-                className={`relative ${hasAnswered || showResult ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
+                dragListener={canAnswer}
+                className={`relative ${!canAnswer ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
               >
                 <motion.div
                   layout
@@ -126,8 +154,8 @@ export function OrderingQuestion({
                   </div>
 
                   {/* Drag Handle */}
-                  {!hasAnswered && !showResult && (
-                    <div className="text-gray-500">
+                  {canAnswer && (
+                    <div className="text-muted" aria-hidden="true">
                       <svg
                         width="20"
                         height="20"
@@ -145,7 +173,30 @@ export function OrderingQuestion({
                   )}
 
                   {/* Item Text */}
-                  <span className="flex-1">{item.text}</span>
+                  <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{item.text}</span>
+
+                  {canAnswer && (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {([-1, 1] as const).map((direction) => {
+                        const unavailable = position + direction < 0 || position + direction >= items.length;
+                        const movement = direction === -1 ? (isAr ? "لأعلى" : "up") : (isAr ? "لأسفل" : "down");
+                        return (
+                          <button
+                            key={direction}
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ width: 44, height: 44, padding: 0, opacity: unavailable ? 0.45 : undefined }}
+                            aria-label={isAr ? `حرّك ${item.text} ${movement}` : `Move ${item.text} ${movement}`}
+                            aria-disabled={unavailable}
+                            onPointerDownCapture={(event) => event.stopPropagation()}
+                            onClick={(event) => moveItem(position, direction, event.currentTarget)}
+                          >
+                            <span aria-hidden="true">{direction === -1 ? "↑" : "↓"}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Result Indicator */}
                   {showResult && (
@@ -167,18 +218,19 @@ export function OrderingQuestion({
           </AnimatePresence>
         </Reorder.Group>
       </div>
+      <p className="sr-only" role="status" aria-atomic="true">{moveAnnouncement}</p>
 
       {/* Submit Button */}
       {!showResult && (
         <motion.button
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          whileHover={!hasAnswered ? { scale: 1.02 } : {}}
-          whileTap={!hasAnswered ? { scale: 0.98 } : {}}
-          disabled={hasAnswered}
+          whileHover={canAnswer ? { scale: 1.02 } : {}}
+          whileTap={canAnswer ? { scale: 0.98 } : {}}
+          disabled={!canAnswer}
           onClick={handleSubmit}
           className={`w-full p-4 rounded-2xl font-bold text-lg transition-all ${
-            !hasAnswered
+            canAnswer
               ? "bg-amber-500 text-white hover:bg-amber-600"
               : "bg-gray-700 text-gray-400 cursor-not-allowed"
           }`}
@@ -194,7 +246,7 @@ export function OrderingQuestion({
       )}
 
       {/* Results Summary */}
-      {showResult && (
+      {showResult && lastAnswerResult && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -229,7 +281,7 @@ export function OrderingQuestion({
                     <span className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold">
                       {position + 1}
                     </span>
-                    <span>{question.options[index]}</span>
+                    <span>{options[index]}</span>
                   </div>
                 ))}
               </div>

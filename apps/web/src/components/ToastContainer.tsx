@@ -2,7 +2,7 @@
 import { useGameStore } from "@/store/gameStore";
 
 export function ToastContainer() {
-  const { toasts, removeToast } = useGameStore();
+  const { toasts, removeToast, language } = useGameStore();
 
   return (
     <div className="toast-container">
@@ -10,10 +10,10 @@ export function ToastContainer() {
         <div
           key={toast.id}
           className={`toast toast-${toast.type}`}
-          onClick={() => removeToast(toast.id)}
-          role="alert"
+          role={toast.type === "error" ? "alert" : "status"}
         >
-          {toast.message}
+          <span>{toast.message}</span>
+          <button type="button" onClick={() => removeToast(toast.id)} aria-label={language === "ar" ? "إغلاق" : "Dismiss"}>×</button>
         </div>
       ))}
     </div>

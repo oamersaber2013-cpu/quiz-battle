@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGameStore } from "../store/gameStore";
 import { getSocket } from "../lib/socket";
@@ -45,7 +45,7 @@ export function EmoteSystem() {
     setIsOpen(false);
   };
 
-  const addFloatingEmote = (userId: string, username: string, emoji: string) => {
+  const addFloatingEmote = useCallback((userId: string, username: string, emoji: string) => {
     const id = `emote_${Date.now()}_${Math.random()}`;
     const x = Math.random() * 80 + 10; // 10% - 90% of screen width
     const y = Math.random() * 40 + 50; // 50% - 90% of screen height
@@ -65,18 +65,18 @@ export function EmoteSystem() {
     setTimeout(() => {
       setFloatingEmotes((prev) => prev.filter((e) => e.id !== id));
     }, 2000);
-  };
+  }, []);
 
   // Listen for emotes from other players
-  socket.on("game:emote", ({ userId: senderId, emote }: { userId: string; emote: string }) => {
-    const emoteData = EMOTES.find((e) => e.id === emote);
-    if (!emoteData) return;
-
-    const player = players.find((p) => p.userId === senderId);
-    if (player) {
-      addFloatingEmote(senderId, player.username, emoteData.emoji);
-    }
-  });
+  useEffect(() => {
+    const onEmote = ({ userId: senderId, emote }: { userId: string; emote: string }) => {
+      const emoteData = EMOTES.find((e) => e.id === emote);
+      const player = players.find((p) => p.userId === senderId);
+      if (emoteData && player) addFloatingEmote(senderId, player.username, emoteData.emoji);
+    };
+    socket.on("game:emote", onEmote);
+    return () => { socket.off("game:emote", onEmote); };
+  }, [socket, players, addFloatingEmote]);
 
   return (
     <>
